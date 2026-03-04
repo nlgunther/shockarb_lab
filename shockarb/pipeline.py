@@ -39,6 +39,7 @@ from loguru import logger
 
 from shockarb.config import UniverseConfig, ExecutionConfig
 from shockarb.engine import FactorModel
+from shockarb.cache import CacheManager
 
 
 # =============================================================================
@@ -73,95 +74,94 @@ class Pipeline:
     # =========================================================================
 
     @staticmethod
+    def _get_cache_manager(exec_cfg: ExecutionConfig) -> CacheManager:
+        """Return a CacheManager rooted in exec_cfg's data directory."""
+        cache_dir = os.path.join(exec_cfg.data_dir, "cache")
+        backup_dir = os.path.join(exec_cfg.data_dir, "backups")
+        # Pass yf.download from this module so that patches on
+        # `shockarb.pipeline.yf.download` are correctly intercepted.
+        return CacheManager(cache_dir=cache_dir, backup_dir=backup_dir, downloader=yf.download)
+
+    @staticmethod
     def fetch_prices(
         tickers: List[str],
         start: str,
         end: str,
         cache_path: Optional[str] = None,
+        cache_name: Optional[str] = None,
+        exec_config: Optional[ExecutionConfig] = None,
     ) -> pd.DataFrame:
         """
-        Download adjusted close prices from yfinance with parquet caching.
-        
+        Download adjusted close prices from yfinance with OHLCV parquet caching.
+
+        The full OHLCV download is cached internally; only 'Adj Close' is
+        returned by this method. This means a second call with the same
+        tickers and dates costs zero yfinance API calls.
+
         Parameters
         ----------
-        tickers : List[str]
+        tickers : list of str
             Ticker symbols to download.
-        
         start : str
             Start date (YYYY-MM-DD), inclusive.
-        
         end : str
             End date (YYYY-MM-DD), exclusive per yfinance convention.
-        
-        cache_path : str, optional
-            If provided, read from/write to this parquet file.
-        
+        cache_name : str
+            Logical name for the cache file (e.g. ``"us_etf"``).
+        exec_config : ExecutionConfig, optional
+            Controls caching and paths.
+
         Returns
         -------
         DataFrame
             (dates × tickers) adjusted close prices.
-        
+
         Notes
         -----
-        If yfinance fails (network issues, proxy blocks), returns synthetic
-        crisis data for testing. This is clearly logged at ERROR level.
+        If yfinance fails and the cache is also unavailable, returns synthetic
+        crisis data for testing. This is logged at ERROR level.
         """
-        # Try cache first
-        if cache_path and os.path.exists(cache_path):
-            try:
-                cached = pd.read_parquet(cache_path)
-                if not cached.empty:
-                    logger.info(f"Loaded from cache: {cache_path} ({len(cached)} rows)")
-                    return cached
-            except Exception as e:
-                logger.warning(f"Cache read failed ({e}), re-downloading...")
+        from shockarb.pipeline import Pipeline  # local to avoid circular import
+        exec_cfg = Pipeline._get_exec_config(exec_config)
 
-        # Live download
-        logger.info(f"Downloading {len(tickers)} tickers: {start} → {end}")
-        
-        try:
-            raw = yf.download(
-                tickers, 
-                start=start, 
-                end=end,
-                progress=False, 
-                auto_adjust=False
-            )
-        except Exception as e:
-            logger.error(f"yfinance exception: {e}")
-            raw = pd.DataFrame()
+        # Backwards-compatibility: derive cache_name and cache dir from legacy cache_path
+        if cache_name is None:
+            if cache_path is not None:
+                p = Path(cache_path)
+                cache_name = p.stem
+                if cache_name.endswith("_ohlcv"):
+                    cache_name = cache_name[:-6]
+                # Use the legacy path's directory as the cache dir so the
+                # file lands where the test / caller expects it
+                cache_dir = str(p.parent)
+                backup_dir = str(p.parent.parent / "backups")
+                mgr = CacheManager(
+                    cache_dir=cache_dir,
+                    backup_dir=backup_dir,
+                    downloader=yf.download,
+                )
+            else:
+                cache_name = "prices"
+                mgr = Pipeline._get_cache_manager(exec_cfg)
+        else:
+            mgr = Pipeline._get_cache_manager(exec_cfg)
 
-        if raw.empty:
+        ohlcv = mgr.fetch_ohlcv(tickers, start, end, cache_name)
+
+        if ohlcv is None or ohlcv.empty:
             logger.error(
-                "yfinance returned no data. Possible causes: network proxy, "
-                "all tickers delisted, or date range outside market history. "
+                "CacheManager returned no data. "
                 "*** FALLING BACK TO SYNTHETIC DATA ***"
             )
             return Pipeline._synthetic_prices(tickers, start, end)
 
-        # Extract Adj Close
-        if isinstance(raw.columns, pd.MultiIndex):
-            if "Adj Close" in raw.columns.get_level_values(0):
-                prices = raw["Adj Close"]
-            elif "Close" in raw.columns.get_level_values(0):
-                logger.warning("No 'Adj Close' found; using 'Close'")
-                prices = raw["Close"]
-            else:
-                raise KeyError(f"No price data found. Columns: {raw.columns.tolist()}")
-        else:
-            prices = raw  # Single ticker case
+        prices = mgr.extract_adj_close(ohlcv)
 
         # Report coverage
         received = set(prices.columns)
-        missing = set(tickers) - received
-        if missing:
-            logger.warning(f"{len(missing)} tickers missing: {sorted(missing)}")
-
-        # Cache
-        if cache_path:
-            os.makedirs(os.path.dirname(os.path.abspath(cache_path)), exist_ok=True)
-            prices.to_parquet(cache_path)
-            logger.info(f"Cached to {cache_path}")
+        missing_tickers = set(tickers) - received
+        if missing_tickers:
+            logger.warning(f"{len(missing_tickers)} tickers missing: {sorted(missing_tickers)}")
 
         return prices
 
@@ -290,24 +290,20 @@ class Pipeline:
         exec_cfg = cls._get_exec_config(exec_config)
         logger.info(f"Building model: {universe.name}")
         
-        # Determine cache paths
-        etf_cache = stock_cache = None
-        if exec_cfg.use_cache:
-            etf_cache = exec_cfg.resolve_path(f"{universe.name}_etf_prices.parquet")
-            stock_cache = exec_cfg.resolve_path(f"{universe.name}_stock_prices.parquet")
-        
-        # Fetch prices
+        # Fetch prices via CacheManager (full OHLCV cached; Adj Close returned)
         etf_prices = cls.fetch_prices(
             universe.market_etfs, 
             universe.start_date, 
             universe.end_date,
-            cache_path=etf_cache
+            cache_name=f"{universe.name}_etf",
+            exec_config=exec_cfg,
         )
         stock_prices = cls.fetch_prices(
             universe.individual_stocks,
             universe.start_date,
             universe.end_date,
-            cache_path=stock_cache
+            cache_name=f"{universe.name}_stock",
+            exec_config=exec_cfg,
         )
         
         # Convert to returns
