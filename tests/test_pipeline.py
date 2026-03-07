@@ -1,0 +1,471 @@
+"""
+Tests for shockarb.pipeline — all I/O, caching, and model lifecycle functions.
+
+Covers:
+  - prices_to_returns(): NaN handling, coverage filtering, forward-fill
+  - fetch_prices(): cache hit/miss, fallback to synthetic data
+  - fetch_live_returns(): basic use, empty-response guard
+  - build(): end-to-end with mocked yfinance
+  - save_model() / load_model(): file creation, JSON structure
+  - find_latest_model(): ordering, None when absent
+  - export_csvs(): file creation, column presence
+  - Integration: save → load → score consistency
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import time
+from unittest.mock import patch
+
+import numpy as np
+import pandas as pd
+import pytest
+
+import shockarb.pipeline as pipeline
+from shockarb.config import ExecutionConfig, UniverseConfig
+
+
+# =============================================================================
+# prices_to_returns()
+# =============================================================================
+
+class TestPricesToReturns:
+
+    def test_basic_return_calculation(self):
+        prices = pd.DataFrame(
+            {"A": [100.0, 101.0, 102.0, 103.0],
+             "B": [50.0, 51.0, 50.0, 52.0]},
+            index=pd.date_range("2022-01-01", periods=4),
+        )
+        rets = pipeline.prices_to_returns(prices)
+        assert len(rets) == 3
+        assert abs(rets.iloc[0]["A"] - 0.01) < 1e-10
+
+    def test_drops_low_coverage_tickers(self):
+        prices = pd.DataFrame(
+            {"GOOD": [100.0, 101.0, 102.0, 103.0, 104.0],
+             "BAD":  [100.0, np.nan, np.nan, np.nan, np.nan]},
+            index=pd.date_range("2022-01-01", periods=5),
+        )
+        rets = pipeline.prices_to_returns(prices, min_coverage=0.8)
+        assert "GOOD" in rets.columns
+        assert "BAD" not in rets.columns
+
+    def test_forward_fills_gaps(self):
+        """Holiday gaps (NaN in middle of series) should be forward-filled, not dropped."""
+        prices = pd.DataFrame(
+            {"A": [100.0, np.nan, 102.0, 103.0, 104.0]},
+            index=pd.date_range("2022-01-01", periods=5),
+        )
+        rets = pipeline.prices_to_returns(prices, min_coverage=0.5)
+        assert not rets.isna().any().any()
+        assert len(rets) == 4
+
+    def test_no_nan_in_output(self):
+        prices = pd.DataFrame(
+            {"A": [100.0, np.nan, 102.0, 103.0],
+             "B": [50.0, 51.0, np.nan, 53.0]},
+            index=pd.date_range("2022-01-01", periods=4),
+        )
+        rets = pipeline.prices_to_returns(prices, min_coverage=0.5)
+        assert not rets.isna().any().any()
+
+    def test_output_length_is_input_minus_one(self):
+        prices = pd.DataFrame(
+            {"A": [100.0, 101.0, 102.0]},
+            index=pd.date_range("2022-01-01", periods=3),
+        )
+        assert len(pipeline.prices_to_returns(prices)) == 2
+
+
+# =============================================================================
+# _synthetic_prices()
+# =============================================================================
+
+class TestSyntheticPrices:
+
+    def test_reproducible_across_calls(self):
+        tickers = ["VOO", "TLT", "GLD"]
+        p1 = pipeline._synthetic_prices(tickers, "2022-02-10", "2022-03-31")
+        p2 = pipeline._synthetic_prices(tickers, "2022-02-10", "2022-03-31")
+        pd.testing.assert_frame_equal(p1, p2)
+
+    def test_all_tickers_present(self):
+        tickers = ["VOO", "TLT", "GLD", "UNKNOWN"]
+        prices = pipeline._synthetic_prices(tickers, "2022-02-10", "2022-03-31")
+        assert set(tickers) == set(prices.columns)
+
+    def test_anchored_near_100(self):
+        """Synthetic prices start at 100 as a deliberate flag for callers."""
+        prices = pipeline._synthetic_prices(["VOO", "TLT"], "2022-02-10", "2022-03-31")
+        for col in prices.columns:
+            assert abs(prices[col].iloc[0] - 100) < 5
+
+
+# =============================================================================
+# fetch_prices()
+# =============================================================================
+
+class TestFetchPrices:
+
+    @patch("shockarb.pipeline.yf.download")
+    def test_caches_on_first_call(self, mock_dl, temp_dir):
+        mock_data = pd.DataFrame(
+            {("Adj Close", "AAPL"): [150.0, 151.0, 152.0]},
+            index=pd.date_range("2022-01-03", periods=3),
+        )
+        mock_data.columns = pd.MultiIndex.from_tuples(mock_data.columns)
+        mock_dl.return_value = mock_data
+
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        pipeline.fetch_prices(["AAPL"], "2022-01-01", "2022-01-10",
+                              cache_name="test_etf", exec_config=cfg)
+        assert mock_dl.called
+
+    @patch("shockarb.pipeline.yf.download")
+    def test_cache_hit_skips_download(self, mock_dl, temp_dir):
+        mock_data = pd.DataFrame(
+            {("Adj Close", "AAPL"): [150.0, 151.0, 152.0]},
+            index=pd.date_range("2022-01-03", periods=3),
+        )
+        mock_data.columns = pd.MultiIndex.from_tuples(mock_data.columns)
+        mock_dl.return_value = mock_data
+
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        pipeline.fetch_prices(["AAPL"], "2022-01-01", "2022-01-10",
+                              cache_name="test_etf", exec_config=cfg)
+        mock_dl.reset_mock()
+
+        # Second call — should not hit network
+        pipeline.fetch_prices(["AAPL"], "2022-01-01", "2022-01-10",
+                              cache_name="test_etf", exec_config=cfg)
+        assert not mock_dl.called
+
+    @patch("shockarb.pipeline.yf.download")
+    def test_falls_back_to_synthetic_on_empty_response(self, mock_dl):
+        mock_dl.return_value = pd.DataFrame()
+        prices = pipeline.fetch_prices(["VOO", "TLT"], "2022-02-10", "2022-03-31")
+        assert not prices.empty
+        # Synthetic prices anchor at 100
+        assert abs(prices.iloc[0, 0] - 100) < 5
+
+
+# =============================================================================
+# fetch_live_returns()
+# =============================================================================
+
+class TestFetchLiveReturns:
+
+    @patch("shockarb.pipeline.yf.download")
+    def test_returns_series_with_correct_tickers(self, mock_dl):
+        mock_data = pd.DataFrame(
+            {("Adj Close", "AAPL"): [150.0, 151.0, 152.0, 153.0, 154.0],
+             ("Adj Close", "MSFT"): [300.0, 303.0, 306.0, 309.0, 312.0]},
+            index=pd.date_range("2022-01-01", periods=5),
+        )
+        mock_data.columns = pd.MultiIndex.from_tuples(mock_data.columns)
+        mock_dl.return_value = mock_data
+
+        returns = pipeline.fetch_live_returns(["AAPL", "MSFT"])
+        assert isinstance(returns, pd.Series)
+        assert len(returns) == 2
+
+    @patch("shockarb.pipeline.yf.download")
+    def test_raises_on_empty_response(self, mock_dl):
+        mock_dl.return_value = pd.DataFrame()
+        with pytest.raises(ValueError, match="no data"):
+            pipeline.fetch_live_returns(["AAPL"])
+
+
+# =============================================================================
+# Model lifecycle — save / load / find
+# =============================================================================
+
+class TestModelLifecycle:
+
+    def test_save_creates_json_file(self, fitted_model, temp_dir):
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        path = pipeline.save_model(fitted_model, "test", cfg)
+        assert path.endswith(".json")
+
+    def test_save_file_exists_on_disk(self, fitted_model, temp_dir):
+        import os
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        path = pipeline.save_model(fitted_model, "test", cfg)
+        assert os.path.exists(path)
+
+    def test_saved_json_structure(self, fitted_model, temp_dir):
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        path = pipeline.save_model(fitted_model, "test", cfg)
+        data = json.loads(open(path).read())
+        # Required top-level keys
+        for key in ("metadata", "Vt", "etf_columns", "loadings",
+                    "stock_columns", "etf_mean", "stock_mean"):
+            assert key in data, f"Missing key: {key}"
+        # Metadata extras written by save_model
+        assert "created_at" in data["metadata"]
+        assert data["metadata"]["name"] == "test"
+
+    def test_saved_json_excludes_raw_matrices(self, fitted_model, temp_dir):
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        path = pipeline.save_model(fitted_model, "test", cfg)
+        data = json.loads(open(path).read())
+        assert "etf_returns" not in data
+        assert "stock_returns" not in data
+
+    def test_load_model_restores_fitted_state(self, fitted_model, temp_dir):
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        path = pipeline.save_model(fitted_model, "test", cfg)
+        loaded = pipeline.load_model(path)
+        assert loaded._fitted is True
+
+    def test_load_model_preserves_loadings(self, fitted_model, temp_dir):
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        path = pipeline.save_model(fitted_model, "test", cfg)
+        loaded = pipeline.load_model(path)
+        pd.testing.assert_frame_equal(loaded.loadings, fitted_model.loadings)
+
+    def test_find_latest_model_returns_most_recent(self, fitted_model, temp_dir):
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        pipeline.save_model(fitted_model, "test", cfg)
+        time.sleep(0.05)
+        path2 = pipeline.save_model(fitted_model, "test", cfg)
+        assert pipeline.find_latest_model("test", cfg) == path2
+
+    def test_find_latest_model_returns_none_when_absent(self, temp_dir):
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        assert pipeline.find_latest_model("nonexistent", cfg) is None
+
+
+# =============================================================================
+# export_csvs()
+# =============================================================================
+
+class TestExportCsvs:
+
+    def test_creates_both_csv_files(self, fitted_model, temp_dir):
+        import os
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        basis_path, loadings_path = pipeline.export_csvs(fitted_model, "test", cfg)
+        assert os.path.exists(basis_path)
+        assert os.path.exists(loadings_path)
+
+    def test_basis_csv_has_factor_columns(self, fitted_model, temp_dir):
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        basis_path, _ = pipeline.export_csvs(fitted_model, "test", cfg)
+        df = pd.read_csv(basis_path, index_col=0)
+        assert "Factor_1" in df.columns
+
+    def test_loadings_csv_has_diagnostic_columns(self, fitted_model, temp_dir):
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        _, loadings_path = pipeline.export_csvs(fitted_model, "test", cfg)
+        df = pd.read_csv(loadings_path, index_col=0)
+        assert "R_squared" in df.columns
+        assert "Residual_Vol" in df.columns
+
+    def test_loadings_sorted_by_r_squared_descending(self, fitted_model, temp_dir):
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        _, loadings_path = pipeline.export_csvs(fitted_model, "test", cfg)
+        df = pd.read_csv(loadings_path, index_col=0)
+        r2 = df["R_squared"].values
+        assert all(r2[i] >= r2[i+1] for i in range(len(r2) - 1))
+
+
+# =============================================================================
+# build() — end-to-end
+# =============================================================================
+
+class TestBuild:
+
+    @patch("shockarb.pipeline.yf.download")
+    def test_build_returns_fitted_model(self, mock_dl, temp_dir):
+        mock_dl.return_value = pd.DataFrame()  # triggers synthetic fallback
+        universe = UniverseConfig(
+            name="test", market_etfs=["VOO", "TLT", "GLD"],
+            individual_stocks=["AAPL", "MSFT"],
+            n_components=2, start_date="2022-02-10", end_date="2022-03-31",
+        )
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        model = pipeline.build(universe, cfg)
+        assert model._fitted is True
+
+    @patch("shockarb.pipeline.yf.download")
+    def test_build_model_has_correct_n_components(self, mock_dl, temp_dir):
+        mock_dl.return_value = pd.DataFrame()
+        universe = UniverseConfig(
+            name="test", market_etfs=["VOO", "TLT", "GLD"],
+            individual_stocks=["AAPL", "MSFT"],
+            n_components=2, start_date="2022-02-10", end_date="2022-03-31",
+        )
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        model = pipeline.build(universe, cfg)
+        assert model.diagnostics.n_factors == 2
+
+
+# =============================================================================
+# Integration — save → load → score roundtrip
+# =============================================================================
+
+class TestIntegration:
+
+    def test_save_load_score_consistency(self, fitted_model, temp_dir,
+                                         sample_etf_returns, sample_stock_returns):
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        etf_ret = sample_etf_returns.iloc[-1]
+        stk_ret = sample_stock_returns.iloc[-1]
+
+        before = fitted_model.score(etf_ret, stk_ret)
+        path = pipeline.save_model(fitted_model, "roundtrip", cfg)
+        after = pipeline.load_model(path).score(etf_ret, stk_ret)
+        pd.testing.assert_frame_equal(before, after)
+
+    @patch("shockarb.pipeline.yf.download")
+    def test_full_workflow(self, mock_dl, temp_dir):
+        mock_dl.return_value = pd.DataFrame()
+        universe = UniverseConfig(
+            name="test", market_etfs=["VOO", "TLT", "GLD"],
+            individual_stocks=["AAPL", "MSFT"],
+            n_components=2, start_date="2022-02-10", end_date="2022-03-31",
+        )
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        model = pipeline.build(universe, cfg)
+        path = pipeline.save_model(model, universe.name, cfg)
+        loaded = pipeline.load_model(path)
+        scores = loaded.score(
+            pd.Series({"VOO": -0.02, "TLT": 0.01, "GLD": 0.015}),
+            pd.Series({"AAPL": -0.03, "MSFT": -0.025}),
+        )
+        assert len(scores) == 2
+        assert "confidence_delta" in scores.columns
+
+
+# =============================================================================
+# save_live_tape()
+# =============================================================================
+
+class TestSaveLiveTape:
+
+    def _make_intraday_ohlcv(self, tickers, n_bars_yesterday=5, n_bars_today=5):
+        """
+        Synthetic 15-minute OHLCV matching yfinance intraday MultiIndex output.
+
+        Two calendar days of bars so _minimal_tape can identify
+        yesterday-close, today-open, and today-last as three distinct rows.
+        """
+        yesterday = pd.Timestamp("2022-03-14")
+        today     = pd.Timestamp("2022-03-15")
+
+        y_times = pd.date_range(
+            yesterday.replace(hour=14, minute=0), periods=n_bars_yesterday, freq="15min"
+        )
+        t_times = pd.date_range(
+            today.replace(hour=9, minute=30), periods=n_bars_today, freq="15min"
+        )
+        index = y_times.append(t_times)
+
+        fields = ["Adj Close", "Close", "High", "Low", "Open", "Volume"]
+        cols = pd.MultiIndex.from_product([fields, tickers], names=["field", "ticker"])
+        data = np.random.rand(len(index), len(cols)) * 100 + 50
+        return pd.DataFrame(data, index=index, columns=cols)
+
+    @patch("shockarb.pipeline.yf.download")
+    def test_creates_parquet_file(self, mock_dl, temp_dir):
+        etf_tickers   = ["VOO", "TLT"]
+        stock_tickers = ["AAPL", "MSFT"]
+        mock_dl.return_value = self._make_intraday_ohlcv(etf_tickers + stock_tickers)
+
+        path = os.path.join(temp_dir, "tapes", "us_20220315.parquet")
+        result = pipeline.save_live_tape(etf_tickers, stock_tickers, path)
+
+        assert result is not None
+        assert os.path.exists(path)
+
+    @patch("shockarb.pipeline.yf.download")
+    def test_preserves_multiindex_columns(self, mock_dl, temp_dir):
+        tickers = ["VOO", "TLT", "AAPL"]
+        mock_dl.return_value = self._make_intraday_ohlcv(tickers)
+
+        path = os.path.join(temp_dir, "tapes", "test.parquet")
+        pipeline.save_live_tape(["VOO", "TLT"], ["AAPL"], path)
+
+        loaded = pd.read_parquet(path)
+        assert isinstance(loaded.columns, pd.MultiIndex)
+
+    @patch("shockarb.pipeline.yf.download")
+    def test_contains_all_tickers(self, mock_dl, temp_dir):
+        etfs   = ["VOO", "TLT"]
+        stocks = ["AAPL", "MSFT"]
+        mock_dl.return_value = self._make_intraday_ohlcv(etfs + stocks)
+
+        path = os.path.join(temp_dir, "tapes", "test.parquet")
+        pipeline.save_live_tape(etfs, stocks, path)
+
+        loaded = pd.read_parquet(path)
+        tickers_in_file = set(loaded.columns.get_level_values(1).unique())
+        assert set(etfs + stocks) == tickers_in_file
+
+    @patch("shockarb.pipeline.yf.download")
+    def test_sliced_to_three_rows(self, mock_dl, temp_dir):
+        """Tape must contain exactly 3 rows: yesterday-close, today-open, today-last."""
+        mock_dl.return_value = self._make_intraday_ohlcv(["VOO", "AAPL"])
+
+        path = os.path.join(temp_dir, "tapes", "test.parquet")
+        result = pipeline.save_live_tape(["VOO"], ["AAPL"], path)
+
+        assert len(result) == 3
+
+    @patch("shockarb.pipeline.yf.download")
+    def test_three_rows_span_two_calendar_dates(self, mock_dl, temp_dir):
+        """Row 0 is yesterday; rows 1 and 2 are both today."""
+        mock_dl.return_value = self._make_intraday_ohlcv(["VOO", "AAPL"])
+
+        path = os.path.join(temp_dir, "tapes", "test.parquet")
+        result = pipeline.save_live_tape(["VOO"], ["AAPL"], path)
+
+        dates = [ts.date() for ts in result.index]
+        assert dates[0] < dates[1]   # row 0 is yesterday
+        assert dates[1] == dates[2]  # rows 1 and 2 are both today
+
+    @patch("shockarb.pipeline.yf.download")
+    def test_today_open_is_first_bar_of_day(self, mock_dl, temp_dir):
+        """Row 1 (today-open) is the earliest 15m bar of the session."""
+        mock_dl.return_value = self._make_intraday_ohlcv(
+            ["VOO", "AAPL"], n_bars_yesterday=4, n_bars_today=6
+        )
+
+        path = os.path.join(temp_dir, "tapes", "test.parquet")
+        result = pipeline.save_live_tape(["VOO"], ["AAPL"], path)
+
+        assert result.index[1].hour == 9
+        assert result.index[1].minute == 30
+
+    @patch("shockarb.pipeline.yf.download")
+    def test_creates_parent_directory(self, mock_dl, temp_dir):
+        mock_dl.return_value = self._make_intraday_ohlcv(["VOO", "AAPL"])
+        nested = os.path.join(temp_dir, "a", "b", "c", "tape.parquet")
+        pipeline.save_live_tape(["VOO"], ["AAPL"], nested)
+        assert os.path.exists(nested)
+
+    @patch("shockarb.pipeline.yf.download")
+    def test_returns_none_on_empty_response(self, mock_dl, temp_dir):
+        mock_dl.return_value = pd.DataFrame()
+        path = os.path.join(temp_dir, "tapes", "test.parquet")
+        result = pipeline.save_live_tape(["VOO"], ["AAPL"], path)
+        assert result is None
+
+    @patch("shockarb.pipeline.yf.download")
+    def test_calls_yfinance_with_15m_interval(self, mock_dl, temp_dir):
+        mock_dl.return_value = self._make_intraday_ohlcv(["VOO", "AAPL"])
+        path = os.path.join(temp_dir, "tapes", "test.parquet")
+        pipeline.save_live_tape(["VOO"], ["AAPL"], path)
+        assert mock_dl.call_args[1].get("interval") == "15m"
+
+    @patch("shockarb.pipeline.yf.download")
+    def test_calls_yfinance_with_auto_adjust_false(self, mock_dl, temp_dir):
+        mock_dl.return_value = self._make_intraday_ohlcv(["VOO", "AAPL"])
+        path = os.path.join(temp_dir, "tapes", "test.parquet")
+        pipeline.save_live_tape(["VOO"], ["AAPL"], path)
+        assert mock_dl.call_args[1].get("auto_adjust") is False
+
