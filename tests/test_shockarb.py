@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from shockarb.config import UniverseConfig, ExecutionConfig, US_UNIVERSE, GLOBAL_UNIVERSE
 from shockarb.engine import FactorModel, FactorDiagnostics
-from shockarb.pipeline import Pipeline, fetch_live_returns, fetch_intraday_returns
+from shockarb.pipeline import Pipeline
 
 
 # =============================================================================
@@ -669,7 +669,7 @@ class TestLiveDataFetching:
     """Tests for live data fetching utilities."""
     
     @patch('shockarb.pipeline.yf.download')
-    def test_fetch_live_returns_basic(self, mock_download):
+    def test_pipeline_fetch_live_returns_basic(self, mock_download):
         """Test basic live return fetching."""
         mock_data = pd.DataFrame({
             ("Adj Close", "AAPL"): [150, 151, 152, 153, 154],
@@ -678,18 +678,18 @@ class TestLiveDataFetching:
         mock_data.columns = pd.MultiIndex.from_tuples(mock_data.columns)
         mock_download.return_value = mock_data
         
-        returns = fetch_live_returns(["AAPL", "MSFT"])
+        returns = Pipeline.fetch_live_returns(["AAPL", "MSFT"])
         
         assert isinstance(returns, pd.Series)
         assert len(returns) == 2
     
     @patch('shockarb.pipeline.yf.download')
-    def test_fetch_live_returns_empty_response(self, mock_download):
+    def test_pipeline_fetch_live_returns_empty_response(self, mock_download):
         """Test error handling for empty response."""
         mock_download.return_value = pd.DataFrame()
         
         with pytest.raises(ValueError, match="no data"):
-            fetch_live_returns(["AAPL"])
+            Pipeline.fetch_live_returns(["AAPL"])
 
 
 # =============================================================================

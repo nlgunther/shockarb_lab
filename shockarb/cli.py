@@ -40,7 +40,7 @@ from shockarb.config import (
     UniverseConfig, 
     ExecutionConfig
 )
-from shockarb.pipeline import Pipeline, fetch_live_returns
+from shockarb.pipeline import Pipeline
 
 
 # =============================================================================
@@ -113,8 +113,8 @@ def cmd_score(args):
         title = f"{universe.name.upper()} | {args.date}"
     else:
         # Live scoring
-        etf_returns = fetch_live_returns(etf_tickers)
-        stock_returns = fetch_live_returns(stock_tickers)
+        etf_returns = Pipeline.fetch_live_returns(etf_tickers)
+        stock_returns = Pipeline.fetch_live_returns(stock_tickers)
         title = f"{universe.name.upper()} | LIVE"
     
     # Score

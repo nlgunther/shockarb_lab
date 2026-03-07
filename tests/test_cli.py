@@ -243,7 +243,7 @@ class TestCmdExport:
 class TestCmdScore:
     """Tests for score command."""
     
-    @patch('shockarb.cli.fetch_live_returns')
+    @patch('shockarb.cli.Pipeline.fetch_live_returns')
     def test_cmd_score_live(self, mock_fetch, mock_fitted_model, temp_data_dir, capsys):
         """Test live scoring command."""
         exec_cfg = ExecutionConfig(data_dir=temp_data_dir, log_to_file=False)
@@ -274,7 +274,7 @@ class TestCmdScore:
         captured = capsys.readouterr()
         assert "SHOCKARB SCORES" in captured.out
     
-    @patch('shockarb.cli.fetch_live_returns')
+    @patch('shockarb.cli.Pipeline.fetch_live_returns')
     def test_cmd_score_with_output(self, mock_fetch, mock_fitted_model, temp_data_dir, capsys):
         """Test scoring with CSV output."""
         exec_cfg = ExecutionConfig(data_dir=temp_data_dir, log_to_file=False)
