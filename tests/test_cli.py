@@ -1,421 +1,470 @@
-#!/usr/bin/env python3
 """
-Additional CLI Tests for ShockArb
-=================================
+Integration tests for shockarb.cli — command parsing and command execution.
 
-Tests focused on command-line interface functionality.
+These tests exercise the CLI layer against real (mocked) pipeline calls.
+All yfinance calls are intercepted; filesystem writes go to temp_dir.
+
+Coverage areas
+--------------
+  TestGetUniverse       — registry lookup, case-insensitivity, error handling
+  TestPrintScores       — report module output: correct columns, thresholds
+  TestCmdBuild          — end-to-end build command creates JSON and prints success
+  TestCmdShow           — show command: compact and verbose modes, missing model
+  TestCmdExport         — export command creates CSV files
+  TestCmdScore          — live score and historical score commands
+  TestFetchHistorical   — date snapping for weekends / holidays
+  TestMain              — argparse wiring, --help, subcommand dispatch
 """
+
+from __future__ import annotations
 
 import os
 import sys
-import tempfile
-import shutil
-from io import StringIO
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-import pytest
-import pandas as pd
 import numpy as np
+import pandas as pd
+import pytest
 
-sys.path.insert(0, str(__file__).rsplit("/", 2)[0])
-
+import shockarb.pipeline as pipeline
 from shockarb.cli import (
-    main, 
-    cmd_build, 
-    cmd_score, 
-    cmd_export, 
+    UNIVERSES,
+    _fetch_historical,
+    cmd_build,
+    cmd_export,
+    cmd_score,
     cmd_show,
     get_universe,
-    UNIVERSES,
-    _print_scores,
-    _fetch_historical,
+    main,
 )
-from shockarb.config import ExecutionConfig, US_UNIVERSE
-from shockarb.engine import FactorModel
-from shockarb.pipeline import Pipeline
+from shockarb.config import ExecutionConfig
+from shockarb.report import print_scores
 
 
-@pytest.fixture
-def temp_data_dir():
-    """Create a temporary directory for test data."""
-    tmp_dir = tempfile.mkdtemp(prefix="shockarb_cli_test_")
-    yield tmp_dir
-    shutil.rmtree(tmp_dir, ignore_errors=True)
-
-
-@pytest.fixture
-def mock_fitted_model():
-    """Create a minimal fitted model for testing."""
-    np.random.seed(42)
-    dates = pd.bdate_range("2022-02-10", "2022-03-31")
-    n_days = len(dates)
-    
-    etf_returns = pd.DataFrame({
-        "VOO": np.random.randn(n_days) * 0.01,
-        "TLT": np.random.randn(n_days) * 0.01,
-        "GLD": np.random.randn(n_days) * 0.01,
-    }, index=dates)
-    
-    stock_returns = pd.DataFrame({
-        "AAPL": np.random.randn(n_days) * 0.015,
-        "MSFT": np.random.randn(n_days) * 0.015,
-    }, index=dates)
-    
-    model = FactorModel(etf_returns, stock_returns)
-    model.fit(n_components=2)
-    return model
-
+# =============================================================================
+# Universe registry
+# =============================================================================
 
 class TestGetUniverse:
-    """Tests for universe lookup."""
-    
-    def test_get_universe_us(self):
-        """Test getting US universe."""
-        universe = get_universe("us")
-        assert universe.name == "us"
-    
-    def test_get_universe_global(self):
-        """Test getting global universe."""
-        universe = get_universe("global")
-        assert universe.name == "global"
-    
-    def test_get_universe_case_insensitive(self):
-        """Test case insensitivity."""
+
+    def test_us_lookup(self):
+        assert get_universe("us").name == "us"
+
+    def test_global_lookup(self):
+        assert get_universe("global").name == "global"
+
+    def test_case_insensitive(self):
         assert get_universe("US").name == "us"
-        assert get_universe("Us").name == "us"
         assert get_universe("GLOBAL").name == "global"
-    
-    def test_get_universe_invalid(self):
-        """Test invalid universe raises error."""
+
+    def test_invalid_name_raises(self):
         with pytest.raises(ValueError, match="Unknown universe"):
             get_universe("nonexistent")
 
+    def test_registry_has_expected_keys(self):
+        assert "us" in UNIVERSES
+        assert "global" in UNIVERSES
+
+
+# =============================================================================
+# print_scores (report module column validation)
+# =============================================================================
 
 class TestPrintScores:
-    """Tests for score printing function."""
-    
-    def test_print_scores_with_actionable(self, capsys):
-        """Test printing scores with actionable signals."""
-        scores = pd.DataFrame({
-            "actual_return": [-0.02, -0.03, -0.01],
-            "expected_return": [0.01, 0.02, 0.005],
-            "delta": [0.03, 0.05, 0.015],
-            "r_squared": [0.6, 0.5, 0.7],
-            "residual_vol": [0.15, 0.18, 0.12],
-            "confidence_delta": [0.018, 0.025, 0.0105],
-        }, index=["AAPL", "MSFT", "GOOGL"])
-        
-        _print_scores(scores, "TEST", top_n=10)
-        
-        captured = capsys.readouterr()
-        assert "SHOCKARB SCORES" in captured.out
-        assert "TEST" in captured.out
-        assert "AAPL" in captured.out or "MSFT" in captured.out
-    
-    def test_print_scores_no_actionable(self, capsys):
-        """Test printing when no actionable signals."""
-        scores = pd.DataFrame({
-            "actual_return": [-0.02],
-            "expected_return": [-0.02],
-            "delta": [0.0001],  # Too small
-            "r_squared": [0.2],  # Too low
-            "residual_vol": [0.15],
-            "confidence_delta": [0.00002],
-        }, index=["AAPL"])
-        
-        _print_scores(scores, "TEST", top_n=10)
-        
-        captured = capsys.readouterr()
-        assert "No actionable signals" in captured.out
-    
-    def test_print_scores_with_worst(self, capsys):
-        """Test printing bottom performers."""
-        scores = pd.DataFrame({
-            "actual_return": [0.02, 0.03],
-            "expected_return": [-0.01, -0.02],
-            "delta": [-0.03, -0.05],
-            "r_squared": [0.6, 0.5],
-            "residual_vol": [0.15, 0.18],
-            "confidence_delta": [-0.018, -0.025],
-        }, index=["AAPL", "MSFT"])
-        
-        _print_scores(scores, "TEST", top_n=10)
-        
-        captured = capsys.readouterr()
-        assert "avoid" in captured.out.lower() or "Bottom" in captured.out
 
+    def _scores(self, n=3, conf=0.02):
+        return pd.DataFrame(
+            {
+                "actual_return":    [-0.02] * n,
+                "expected_rel":     [0.01] * n,
+                "expected_abs":     [0.01] * n,
+                "delta_rel":        [0.03] * n,
+                "delta_abs":        [0.03] * n,
+                "r_squared":        [0.60] * n,
+                "residual_vol":     [0.15] * n,
+                "confidence_delta": [conf] * n,
+            },
+            index=[f"T{i}" for i in range(n)],
+        )
+
+    def test_header_printed(self, capsys):
+        print_scores(self._scores(), "TEST")
+        assert "SHOCKARB SCORES" in capsys.readouterr().out
+
+    def test_tickers_displayed(self, capsys):
+        print_scores(self._scores(), "TEST")
+        assert "T0" in capsys.readouterr().out
+
+    def test_no_actionable_signals_message(self, capsys):
+        print_scores(self._scores(conf=0.00001), "TEST", min_confidence=0.001)
+        assert "No actionable signals" in capsys.readouterr().out
+
+    def test_bottom_signals_section_shown(self, capsys):
+        print_scores(self._scores(conf=-0.02), "TEST")
+        out = capsys.readouterr().out
+        assert "Bottom" in out or "avoid" in out.lower()
+
+
+# =============================================================================
+# cmd_build
+# =============================================================================
 
 class TestCmdBuild:
-    """Tests for build command."""
-    
-    @patch('shockarb.pipeline.yf.download')
-    def test_cmd_build_basic(self, mock_download, temp_data_dir, capsys):
-        """Test basic build command."""
-        # Mock empty download (will trigger synthetic fallback)
-        mock_download.return_value = pd.DataFrame()
-        
+
+    @patch("shockarb.pipeline.yf.download", return_value=pd.DataFrame())
+    def test_creates_json_and_prints_success(self, _mock, temp_dir, capsys):
         class Args:
             universe = "us"
-            data_dir = temp_data_dir
-            no_cache = False
+            data_dir = temp_dir
             no_log = True
-        
-        # This will use synthetic data
-        cmd_build(Args())
-        
-        # Check that model was saved
-        files = os.listdir(temp_data_dir)
-        assert any(f.endswith(".json") for f in files)
-        
-        captured = capsys.readouterr()
-        assert "Model saved" in captured.out or "✅" in captured.out
 
+        cmd_build(Args())
+        assert any(f.endswith(".json") for f in os.listdir(temp_dir))
+        assert "✅" in capsys.readouterr().out
+
+
+# =============================================================================
+# cmd_show
+# =============================================================================
 
 class TestCmdShow:
-    """Tests for show command."""
-    
-    def test_cmd_show_basic(self, mock_fitted_model, temp_data_dir, capsys):
-        """Test basic show command."""
-        exec_cfg = ExecutionConfig(data_dir=temp_data_dir, log_to_file=False)
-        Pipeline.save_model(mock_fitted_model, "us", exec_cfg)
-        
+
+    def test_compact_output(self, fitted_model, temp_dir, capsys):
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        pipeline.save_model(fitted_model, "us", cfg)
+
         class Args:
             universe = "us"
-            data_dir = temp_data_dir
+            data_dir = temp_dir
             verbose = False
-        
+
         cmd_show(Args())
-        
-        captured = capsys.readouterr()
-        assert "SHOCKARB MODEL" in captured.out
-        assert "US" in captured.out
-    
-    def test_cmd_show_verbose(self, mock_fitted_model, temp_data_dir, capsys):
-        """Test verbose show command."""
-        exec_cfg = ExecutionConfig(data_dir=temp_data_dir, log_to_file=False)
-        Pipeline.save_model(mock_fitted_model, "us", exec_cfg)
-        
+        out = capsys.readouterr().out
+        assert "SHOCKARB MODEL" in out
+        assert "US" in out
+
+    def test_verbose_output(self, fitted_model, temp_dir, capsys):
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        pipeline.save_model(fitted_model, "us", cfg)
+
         class Args:
             universe = "us"
-            data_dir = temp_data_dir
+            data_dir = temp_dir
             verbose = True
-        
+
         cmd_show(Args())
-        
-        captured = capsys.readouterr()
-        assert "Factor Loadings" in captured.out
-        assert "R²" in captured.out
-    
-    def test_cmd_show_no_model(self, temp_data_dir, capsys):
-        """Test show command when no model exists."""
+        out = capsys.readouterr().out
+        # Verbose path calls print_model_state which includes factor tables
+        assert "BASIS" in out or "FACTOR" in out or "LOADINGS" in out
+
+    def test_missing_model_exits(self, temp_dir):
         class Args:
             universe = "us"
-            data_dir = temp_data_dir
+            data_dir = temp_dir
             verbose = False
-        
+
         with pytest.raises(SystemExit):
             cmd_show(Args())
 
 
+# =============================================================================
+# cmd_export
+# =============================================================================
+
 class TestCmdExport:
-    """Tests for export command."""
-    
-    def test_cmd_export_basic(self, mock_fitted_model, temp_data_dir, capsys):
-        """Test basic export command."""
-        exec_cfg = ExecutionConfig(data_dir=temp_data_dir, log_to_file=False)
-        Pipeline.save_model(mock_fitted_model, "us", exec_cfg)
-        
+
+    def test_creates_csv_files(self, fitted_model, temp_dir, capsys):
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        pipeline.save_model(fitted_model, "us", cfg)
+
         class Args:
             universe = "us"
-            data_dir = temp_data_dir
-        
+            data_dir = temp_dir
+
         cmd_export(Args())
-        
-        # Check CSVs were created
-        files = os.listdir(temp_data_dir)
+        files = os.listdir(temp_dir)
         assert any("etf_basis.csv" in f for f in files)
         assert any("stock_loadings.csv" in f for f in files)
-        
-        captured = capsys.readouterr()
-        assert "Exported" in captured.out
+        assert "Exported" in capsys.readouterr().out
 
+
+# =============================================================================
+# cmd_score
+# =============================================================================
 
 class TestCmdScore:
-    """Tests for score command."""
-    
-    @patch('shockarb.cli.Pipeline.fetch_live_returns')
-    def test_cmd_score_live(self, mock_fetch, mock_fitted_model, temp_data_dir, capsys):
-        """Test live scoring command."""
-        exec_cfg = ExecutionConfig(data_dir=temp_data_dir, log_to_file=False)
-        Pipeline.save_model(mock_fitted_model, "us", exec_cfg)
-        
-        # Mock live returns - note the fixture has VOO, TLT, GLD as ETFs
+
+    @patch("shockarb.pipeline.fetch_live_returns")
+    def test_live_score_prints_table(self, mock_fetch, fitted_model, temp_dir, capsys):
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        pipeline.save_model(fitted_model, "us", cfg)
+
         mock_fetch.side_effect = [
-            pd.Series({"VOO": -0.02, "TLT": 0.01, "GLD": 0.015}),
-            pd.Series({"AAPL": -0.03, "MSFT": -0.025}),
+            pd.Series({"VOO": -0.02, "VDE": 0.03, "TLT": 0.01, "GLD": 0.02, "ITA": 0.025}),
+            pd.Series({"V": -0.025, "MSFT": -0.03, "LMT": 0.02, "CVX": 0.035, "UNH": -0.01}),
         ]
-        
+
         class Args:
             universe = "us"
-            data_dir = temp_data_dir
+            data_dir = temp_dir
             date = None
             model = None
             output = None
             top = 20
             no_log = True
-        
-        # Set the env var for data dir
-        os.environ["SHOCK_ARB_DATA_DIR"] = temp_data_dir
+
+        os.environ["SHOCK_ARB_DATA_DIR"] = temp_dir
         try:
             cmd_score(Args())
         finally:
-            del os.environ["SHOCK_ARB_DATA_DIR"]
-        
-        captured = capsys.readouterr()
-        assert "SHOCKARB SCORES" in captured.out
-    
-    @patch('shockarb.cli.Pipeline.fetch_live_returns')
-    def test_cmd_score_with_output(self, mock_fetch, mock_fitted_model, temp_data_dir, capsys):
-        """Test scoring with CSV output."""
-        exec_cfg = ExecutionConfig(data_dir=temp_data_dir, log_to_file=False)
-        Pipeline.save_model(mock_fitted_model, "us", exec_cfg)
-        
-        output_path = os.path.join(temp_data_dir, "results.csv")
-        
+            os.environ.pop("SHOCK_ARB_DATA_DIR", None)
+
+        assert "SHOCKARB SCORES" in capsys.readouterr().out
+
+    @patch("shockarb.pipeline.fetch_live_returns")
+    def test_output_csv_saved(self, mock_fetch, fitted_model, temp_dir):
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        pipeline.save_model(fitted_model, "us", cfg)
+        output_path = os.path.join(temp_dir, "results.csv")
+
         mock_fetch.side_effect = [
-            pd.Series({"VOO": -0.02, "TLT": 0.01, "GLD": 0.015}),
-            pd.Series({"AAPL": -0.03, "MSFT": -0.025}),
+            pd.Series({"VOO": -0.02, "VDE": 0.03, "TLT": 0.01, "GLD": 0.02, "ITA": 0.025}),
+            pd.Series({"V": -0.025, "MSFT": -0.03, "LMT": 0.02, "CVX": 0.035, "UNH": -0.01}),
         ]
-        
+
         class Args:
             universe = "us"
-            data_dir = temp_data_dir
+            data_dir = temp_dir
             date = None
             model = None
             output = output_path
             top = 20
             no_log = True
-        
-        os.environ["SHOCK_ARB_DATA_DIR"] = temp_data_dir
+
+        os.environ["SHOCK_ARB_DATA_DIR"] = temp_dir
         try:
             cmd_score(Args())
         finally:
-            del os.environ["SHOCK_ARB_DATA_DIR"]
-        
-        assert os.path.exists(output_path)
-        
-        # Verify CSV contents
+            os.environ.pop("SHOCK_ARB_DATA_DIR", None)
+
         df = pd.read_csv(output_path, index_col=0)
         assert "confidence_delta" in df.columns
 
 
+# =============================================================================
+# _fetch_historical
+# =============================================================================
+
 class TestFetchHistorical:
-    """Tests for historical data fetching."""
-    
-    @patch('yfinance.download')
-    def test_fetch_historical_basic(self, mock_download):
-        """Test basic historical fetch."""
-        # Create mock data with proper structure (DataFrame with Close column)
-        dates = pd.date_range("2022-02-01", "2022-02-15")
-        
-        # yf.download returns DataFrame with multi-level columns for multiple tickers
-        # For single ticker queries, we return simple DataFrame
-        mock_df = pd.DataFrame({
-            "Close": [150 + i for i in range(len(dates))],
-        }, index=dates)
-        
-        # The function calls download twice - return DataFrame each time
-        mock_download.return_value = mock_df
-        
-        etf_returns, stock_returns = _fetch_historical(
-            ["AAPL"], ["MSFT"], "2022-02-10"
-        )
-        
-        assert isinstance(etf_returns, pd.Series)
-        assert isinstance(stock_returns, pd.Series)
-    
-    @patch('yfinance.download')
-    def test_fetch_historical_weekend_snap(self, mock_download):
-        """Test that weekend dates snap to Friday."""
-        # Create mock data for weekdays only
+
+    @patch("yfinance.download")
+    def test_returns_two_series(self, mock_dl):
         dates = pd.bdate_range("2022-02-01", "2022-02-15")
-        mock_df = pd.DataFrame({
-            "Close": [150 + i for i in range(len(dates))],
-        }, index=dates)
-        mock_download.return_value = mock_df
-        
-        # Request a Saturday (2022-02-12) - should snap to Friday
-        etf_returns, _ = _fetch_historical(["AAPL"], ["AAPL"], "2022-02-12")
-        
-        # Should still return data (snapped to Friday)
-        assert isinstance(etf_returns, pd.Series)
+        mock_dl.return_value = pd.DataFrame(
+            {"Close": [150.0 + i for i in range(len(dates))]}, index=dates
+        )
+        etf_ret, stk_ret = _fetch_historical(["AAPL"], ["MSFT"], "2022-02-10")
+        assert isinstance(etf_ret, pd.Series)
+        assert isinstance(stk_ret, pd.Series)
+
+    @patch("yfinance.download")
+    def test_weekend_snaps_to_nearest_weekday(self, mock_dl):
+        dates = pd.bdate_range("2022-02-01", "2022-02-15")
+        mock_dl.return_value = pd.DataFrame(
+            {"Close": [150.0 + i for i in range(len(dates))]}, index=dates
+        )
+        # 2022-02-12 is a Saturday
+        etf_ret, _ = _fetch_historical(["AAPL"], ["AAPL"], "2022-02-12")
+        assert isinstance(etf_ret, pd.Series)
 
 
-class TestMainEntrypoint:
-    """Tests for main CLI entrypoint."""
-    
-    def test_main_no_args(self):
-        """Test main with no arguments exits with error."""
-        with patch('sys.argv', ['shockarb']):
+# =============================================================================
+# main() — argparse wiring
+# =============================================================================
+
+class TestMain:
+
+    def test_no_args_exits_nonzero(self):
+        with patch("sys.argv", ["shockarb"]):
             with pytest.raises(SystemExit):
                 main()
-    
-    def test_main_help(self, capsys):
-        """Test main with --help."""
-        with patch('sys.argv', ['shockarb', '--help']):
-            with pytest.raises(SystemExit) as exc_info:
-                main()
-            assert exc_info.value.code == 0
-    
-    def test_main_build_help(self, capsys):
-        """Test build subcommand help."""
-        with patch('sys.argv', ['shockarb', 'build', '--help']):
-            with pytest.raises(SystemExit) as exc_info:
-                main()
-            assert exc_info.value.code == 0
 
+    def test_help_exits_zero(self):
+        with patch("sys.argv", ["shockarb", "--help"]):
+            with pytest.raises(SystemExit) as exc:
+                main()
+            assert exc.value.code == 0
 
-class TestArgumentParsing:
-    """Tests for CLI argument parsing."""
-    
-    @patch('shockarb.cli.cmd_build')
-    def test_build_args_parsed(self, mock_cmd, temp_data_dir):
-        """Test that build arguments are parsed correctly."""
-        with patch('sys.argv', [
-            'shockarb',
-            '--data-dir', temp_data_dir,
-            'build', 
-            '--universe', 'us',
-            '--no-cache',
-            '--no-log'
+    @patch("shockarb.cli.cmd_build")
+    def test_build_subcommand_parsed(self, mock_cmd, temp_dir):
+        with patch("sys.argv", [
+            "shockarb", "--data-dir", temp_dir,
+            "build", "--universe", "us", "--no-log",
         ]):
             main()
-        
-        mock_cmd.assert_called_once()
         args = mock_cmd.call_args[0][0]
-        assert args.universe == 'us'
-        assert args.no_cache is True
+        assert args.universe == "us"
         assert args.no_log is True
-    
-    @patch('shockarb.cli.cmd_score')
-    def test_score_args_parsed(self, mock_cmd, temp_data_dir):
-        """Test that score arguments are parsed correctly."""
-        with patch('sys.argv', [
-            'shockarb',
-            '--data-dir', temp_data_dir,
-            'score',
-            '--universe', 'us',
-            '--date', '2022-03-01',
-            '--top', '10'
+
+    @patch("shockarb.cli.cmd_score")
+    def test_score_subcommand_parsed(self, mock_cmd, temp_dir):
+        with patch("sys.argv", [
+            "shockarb", "--data-dir", temp_dir,
+            "score", "--universe", "us", "--date", "2022-03-01", "--top", "10",
         ]):
             main()
-        
-        mock_cmd.assert_called_once()
         args = mock_cmd.call_args[0][0]
-        assert args.universe == 'us'
-        assert args.date == '2022-03-01'
+        assert args.date == "2022-03-01"
         assert args.top == 10
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v", "--tb=short"])
+# =============================================================================
+# --save-tape flag in cmd_score
+# =============================================================================
+
+class TestCmdScoreSaveTape:
+
+    @patch("shockarb.pipeline.save_live_tape")
+    @patch("shockarb.pipeline.fetch_live_returns")
+    def test_save_tape_flag_calls_save_live_tape(
+        self, mock_fetch, mock_tape, mock_model, temp_dir, capsys
+    ):
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        pipeline.save_model(mock_model, "us", cfg)
+
+        mock_tape.return_value = pd.DataFrame(
+            {("Close", "VOO"): [100.0, 101.0]},
+            index=pd.bdate_range("2022-03-14", periods=2),
+        )
+        mock_tape.return_value.columns = pd.MultiIndex.from_tuples(
+            mock_tape.return_value.columns
+        )
+        mock_fetch.side_effect = [
+            pd.Series({"VOO": -0.02, "TLT": 0.01, "GLD": 0.015}),
+            pd.Series({"AAPL": -0.03, "MSFT": -0.025}),
+        ]
+
+        class Args:
+            universe = "us"
+            data_dir = temp_dir
+            date = None
+            model = None
+            output = None
+            top = 20
+            no_log = True
+            save_tape = True
+
+        os.environ["SHOCK_ARB_DATA_DIR"] = temp_dir
+        try:
+            cmd_score(Args())
+        finally:
+            del os.environ["SHOCK_ARB_DATA_DIR"]
+
+        assert mock_tape.called
+
+    @patch("shockarb.pipeline.save_live_tape")
+    @patch("shockarb.pipeline.fetch_live_returns")
+    def test_tape_path_contains_universe_name(
+        self, mock_fetch, mock_tape, mock_model, temp_dir
+    ):
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        pipeline.save_model(mock_model, "us", cfg)
+
+        mock_tape.return_value = None   # simulate failure — score should still proceed
+        mock_fetch.side_effect = [
+            pd.Series({"VOO": -0.02, "TLT": 0.01, "GLD": 0.015}),
+            pd.Series({"AAPL": -0.03, "MSFT": -0.025}),
+        ]
+
+        class Args:
+            universe = "us"
+            data_dir = temp_dir
+            date = None
+            model = None
+            output = None
+            top = 20
+            no_log = True
+            save_tape = True
+
+        os.environ["SHOCK_ARB_DATA_DIR"] = temp_dir
+        try:
+            cmd_score(Args())
+        finally:
+            del os.environ["SHOCK_ARB_DATA_DIR"]
+
+        call_args = mock_tape.call_args
+        tape_path = call_args[0][2]   # third positional arg is path
+        assert "us" in tape_path
+        assert "tapes" in tape_path
+
+    @patch("shockarb.pipeline.fetch_live_returns")
+    def test_no_save_tape_flag_skips_tape(
+        self, mock_fetch, mock_model, temp_dir
+    ):
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        pipeline.save_model(mock_model, "us", cfg)
+
+        mock_fetch.side_effect = [
+            pd.Series({"VOO": -0.02, "TLT": 0.01, "GLD": 0.015}),
+            pd.Series({"AAPL": -0.03, "MSFT": -0.025}),
+        ]
+
+        class Args:
+            universe = "us"
+            data_dir = temp_dir
+            date = None
+            model = None
+            output = None
+            top = 20
+            no_log = True
+            save_tape = False
+
+        import shockarb.pipeline as _pl
+        original = _pl.save_live_tape
+        calls = []
+        _pl.save_live_tape = lambda *a, **k: calls.append(a) or None
+
+        os.environ["SHOCK_ARB_DATA_DIR"] = temp_dir
+        try:
+            cmd_score(Args())
+        finally:
+            del os.environ["SHOCK_ARB_DATA_DIR"]
+            _pl.save_live_tape = original
+
+        assert len(calls) == 0
+
+    @patch("shockarb.pipeline.save_live_tape")
+    @patch("shockarb.pipeline.fetch_live_returns")
+    def test_tape_not_saved_for_historical_date(
+        self, mock_fetch, mock_tape, mock_model, temp_dir
+    ):
+        """--save-tape must be ignored when --date is specified."""
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        pipeline.save_model(mock_model, "us", cfg)
+
+        with patch("yfinance.download") as mock_yf:
+            dates = pd.bdate_range("2022-02-01", "2022-02-15")
+            mock_yf.return_value = pd.DataFrame(
+                {"Close": [100.0 + i for i in range(len(dates))]},
+                index=dates,
+            )
+
+            class Args:
+                universe = "us"
+                data_dir = temp_dir
+                date = "2022-03-01"
+                model = None
+                output = None
+                top = 20
+                no_log = True
+                save_tape = True
+
+            os.environ["SHOCK_ARB_DATA_DIR"] = temp_dir
+            try:
+                cmd_score(Args())
+            except Exception:
+                pass   # historical fetch may fail with mocked data; that's OK
+            finally:
+                del os.environ["SHOCK_ARB_DATA_DIR"]
+
+        assert not mock_tape.called

@@ -2,62 +2,68 @@
 """
 ShockArb Command-Line Interface
 
-Unified entry point for all ShockArb operations:
-  - build:   Fit and save a factor model
-  - score:   Score live or historical returns
-  - export:  Generate CSV reports
-  - show:    Display model state
+Commands
+--------
+  build   Fit and save a factor model from historical data.
+  score   Score live or historical returns against a fitted model.
+  export  Generate CSV reports (ETF basis + stock loadings).
+  show    Display a saved model's diagnostics and factor structure.
 
 Examples
 --------
-    # Build US model
+    # Fit and save the US model
     python -m shockarb build --universe us
-    
-    # Score today's tape
-    python -m shockarb score --universe us
-    
-    # Score historical date
+
+    # Score today's live tape (and save raw OHLCV parquet)
+    python -m shockarb score --universe us --save-tape
+
+    # Score a specific historical date
     python -m shockarb score --universe us --date 2022-03-01
-    
-    # Export CSVs
+
+    # Export CSVs for manual inspection
     python -m shockarb export --universe us
-    
-    # Show model summary
-    python -m shockarb show --universe us
+
+    # Show model diagnostics (add -v for factor loadings)
+    python -m shockarb show --universe us -v
 """
+
+from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime
 from typing import Optional
 
 import pandas as pd
+import yfinance as yf
 from loguru import logger
 
+import shockarb.pipeline as pipeline
 from shockarb.config import (
-    US_UNIVERSE, 
-    GLOBAL_UNIVERSE, 
-    UniverseConfig, 
-    ExecutionConfig
+    GLOBAL_UNIVERSE,
+    US_UNIVERSE,
+    ExecutionConfig,
+    UniverseConfig,
 )
-from shockarb.pipeline import Pipeline
+from shockarb.report import print_model_state, print_scores
 
 
 # =============================================================================
-# Universe Registry
+# Universe registry
 # =============================================================================
 
-UNIVERSES = {
+UNIVERSES: dict[str, UniverseConfig] = {
     "us": US_UNIVERSE,
     "global": GLOBAL_UNIVERSE,
 }
 
 
 def get_universe(name: str) -> UniverseConfig:
-    """Get universe by name, case-insensitive."""
+    """Look up a universe by name (case-insensitive)."""
     key = name.lower()
     if key not in UNIVERSES:
-        raise ValueError(f"Unknown universe: {name}. Available: {list(UNIVERSES.keys())}")
+        raise ValueError(
+            f"Unknown universe: '{name}'. Available: {list(UNIVERSES.keys())}"
+        )
     return UNIVERSES[key]
 
 
@@ -65,123 +71,118 @@ def get_universe(name: str) -> UniverseConfig:
 # Commands
 # =============================================================================
 
-def cmd_build(args):
-    """Build and save a factor model."""
+def cmd_build(args) -> None:
+    """Fit and save a factor model."""
     universe = get_universe(args.universe)
     exec_cfg = ExecutionConfig(
         data_dir=args.data_dir,
-        use_cache=not args.no_cache,
         log_to_file=not args.no_log,
     )
-    
-    model = Pipeline.build(universe, exec_cfg)
-    path = Pipeline.save_model(model, universe.name, exec_cfg)
-    
-    # Also export CSVs by default
-    Pipeline.export_csvs(model, universe.name, exec_cfg)
-    
+
+    model = pipeline.build(universe, exec_cfg)
+    path = pipeline.save_model(model, universe.name, exec_cfg)
+    pipeline.export_csvs(model, universe.name, exec_cfg)
+
     print(f"\n✅ Model saved: {path}")
-    print(f"   Factors: {model.diagnostics.n_factors}")
+    print(f"   Factors:           {model.diagnostics.n_factors}")
     print(f"   Variance explained: {model.diagnostics.cumulative_variance:.1%}")
-    print(f"   Stocks: {model.diagnostics.n_stocks}")
+    print(f"   Stocks:            {model.diagnostics.n_stocks}")
 
 
-def cmd_score(args):
+def cmd_score(args) -> None:
     """Score returns against a fitted model."""
+    import os
+    from datetime import date as _date
+
     universe = get_universe(args.universe)
     exec_cfg = ExecutionConfig(
         data_dir=args.data_dir,
         log_to_file=not args.no_log,
     )
-    
-    # Load model
-    model_path = args.model or Pipeline.find_latest_model(universe.name, exec_cfg)
+
+    model_path = args.model or pipeline.find_latest_model(universe.name, exec_cfg)
     if not model_path:
         print(f"❌ No model found for '{universe.name}'. Run 'build' first.")
         sys.exit(1)
-    
-    model = Pipeline.load_model(model_path)
-    etf_tickers = list(model.etf_returns.columns)
-    stock_tickers = list(model.stock_returns.columns)
-    
-    # Fetch returns
+
+    model = pipeline.load_model(model_path)
+    etf_tickers   = list(model.etf_returns.columns) or list(universe.market_etfs)
+    stock_tickers = list(model.stock_returns.columns) or list(universe.individual_stocks)
+
     if args.date:
-        # Historical scoring
+        # Historical scoring — tape saving not applicable
         etf_returns, stock_returns = _fetch_historical(
             etf_tickers, stock_tickers, args.date
         )
         title = f"{universe.name.upper()} | {args.date}"
+
     else:
-        # Live scoring
-        etf_returns = Pipeline.fetch_live_returns(etf_tickers)
-        stock_returns = Pipeline.fetch_live_returns(stock_tickers)
+        # Live scoring — optionally save the raw OHLCV tape first
+        if getattr(args, "save_tape", False):
+            today_str = _date.today().strftime("%Y%m%d")
+            tape_dir  = os.path.join(exec_cfg.data_dir, "tapes")
+            tape_path = os.path.join(tape_dir, f"{universe.name}_{today_str}.parquet")
+
+            tape = pipeline.save_live_tape(etf_tickers, stock_tickers, tape_path)
+            if tape is not None:
+                print(f"\n💾 Tape saved: {tape_path}")
+                print(f"   Rows: {len(tape)}  |  Tickers: {tape.shape[1] // len(tape.columns.get_level_values(0).unique())}")
+            else:
+                print("⚠️  Tape save failed — continuing with live fetch for scoring")
+
+        etf_returns   = pipeline.fetch_live_returns(etf_tickers)
+        stock_returns = pipeline.fetch_live_returns(stock_tickers)
         title = f"{universe.name.upper()} | LIVE"
-    
-    # Score
+
     scores = model.score(etf_returns, stock_returns)
-    
-    # Display
-    _print_scores(scores, title, args.top)
-    
-    # Save if requested
+    print_scores(scores, title, top_n=args.top)
+
     if args.output:
         scores.to_csv(args.output)
         print(f"\n📁 Saved to: {args.output}")
 
 
-def cmd_export(args):
-    """Export model to CSVs."""
+def cmd_export(args) -> None:
+    """Export model factor tables to CSV."""
     universe = get_universe(args.universe)
     exec_cfg = ExecutionConfig(data_dir=args.data_dir)
-    
-    model_path = Pipeline.find_latest_model(universe.name, exec_cfg)
+
+    model_path = pipeline.find_latest_model(universe.name, exec_cfg)
     if not model_path:
         print(f"❌ No model found for '{universe.name}'")
         sys.exit(1)
-    
-    model = Pipeline.load_model(model_path)
-    basis_path, loadings_path = Pipeline.export_csvs(model, universe.name, exec_cfg)
-    
-    print(f"✅ Exported:")
+
+    model = pipeline.load_model(model_path)
+    basis_path, loadings_path = pipeline.export_csvs(model, universe.name, exec_cfg)
+
+    print("✅ Exported:")
     print(f"   ETF basis:      {basis_path}")
     print(f"   Stock loadings: {loadings_path}")
 
 
-def cmd_show(args):
-    """Display model summary."""
+def cmd_show(args) -> None:
+    """Display model diagnostics and factor structure."""
     universe = get_universe(args.universe)
     exec_cfg = ExecutionConfig(data_dir=args.data_dir)
-    
-    model_path = Pipeline.find_latest_model(universe.name, exec_cfg)
+
+    model_path = pipeline.find_latest_model(universe.name, exec_cfg)
     if not model_path:
         print(f"❌ No model found for '{universe.name}'")
         sys.exit(1)
-    
-    model = Pipeline.load_model(model_path)
-    
-    print(f"\n{'='*60}")
-    print(f"  SHOCKARB MODEL: {universe.name.upper()}")
-    print(f"{'='*60}")
-    print(f"  Source: {model_path}")
-    print()
-    print(model.diagnostics.summary())
-    
+
     if args.verbose:
-        print(f"\n{'─'*60}")
-        print("  ETF Factor Loadings (top by abs Factor_1)")
-        print("─"*60)
-        basis = model.etf_basis.copy()
-        basis["abs_f1"] = basis["Factor_1"].abs()
-        print(basis.nlargest(10, "abs_f1").drop(columns="abs_f1").to_string())
-        
-        print(f"\n{'─'*60}")
-        print("  Stock R² (top 10)")
-        print("─"*60)
-        r2 = model.diagnostics.stock_r_squared.nlargest(10)
-        for ticker, val in r2.items():
-            print(f"  {ticker:<8} {val:.3f}")
-    
-    print()
+        # Full structural report from the JSON file
+        print_model_state(model_path)
+    else:
+        # Compact diagnostics via loaded model
+        model = pipeline.load_model(model_path)
+        print(f"\n{'='*60}")
+        print(f"  SHOCKARB MODEL: {universe.name.upper()}")
+        print(f"{'='*60}")
+        print(f"  Source: {model_path}")
+        print()
+        print(model.diagnostics.summary())
+        print()
 
 
 # =============================================================================
@@ -189,158 +190,122 @@ def cmd_show(args):
 # =============================================================================
 
 def _fetch_historical(
-    etf_tickers: list, 
-    stock_tickers: list, 
-    date_str: str
-) -> tuple:
-    """Fetch returns for a historical date."""
-    import yfinance as yf
-    
+    etf_tickers: list,
+    stock_tickers: list,
+    date_str: str,
+) -> tuple[pd.Series, pd.Series]:
+    """
+    Fetch closing returns for a historical date, snapping to the nearest
+    valid trading day if the requested date falls on a weekend or holiday.
+    """
     target = pd.to_datetime(date_str)
-    start = target - pd.Timedelta(days=10)
-    end = target + pd.Timedelta(days=2)
-    
-    def get_returns(tickers):
-        data = yf.download(
-            tickers,
-            start=start.strftime("%Y-%m-%d"),
-            end=end.strftime("%Y-%m-%d"),
-            progress=False
-        )["Close"]
-        
-        # Handle single ticker (returns Series) vs multiple (returns DataFrame)
-        if isinstance(data, pd.Series):
-            data = data.to_frame(name=tickers[0] if len(tickers) == 1 else "Close")
-        
-        data = data.dropna(axis=1, how="all").ffill()
-        returns = data.pct_change().dropna(how="all")
-        
-        # Snap to closest valid date
+    start = (target - pd.Timedelta(days=10)).strftime("%Y-%m-%d")
+    end   = (target + pd.Timedelta(days=2)).strftime("%Y-%m-%d")
+
+    def get_returns(tickers: list) -> pd.Series:
+        raw = yf.download(tickers, start=start, end=end, progress=False)
+        # yf returns a Series for a single ticker; normalise to DataFrame
+        prices = raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw
+        if isinstance(prices, pd.Series):
+            prices = prices.to_frame(name=tickers[0])
+
+        returns = prices.dropna(axis=1, how="all").ffill().pct_change().dropna(how="all")
+
         valid = returns.index[returns.index <= target]
         if valid.empty:
             raise ValueError(f"No trading data on or before {date_str}")
-        
+
         matched = valid[-1]
         if matched != target:
-            logger.warning(f"Snapped {date_str} to {matched.strftime('%Y-%m-%d')}")
-        
+            logger.warning(
+                f"Date {date_str} is not a trading day; "
+                f"snapped to {matched.strftime('%Y-%m-%d')}"
+            )
         return returns.loc[matched]
-    
+
     return get_returns(etf_tickers), get_returns(stock_tickers)
 
 
-def _print_scores(scores: pd.DataFrame, title: str, top_n: int = 20):
-    """Pretty-print scoring results."""
-    print(f"\n{'='*90}")
-    print(f"  ⚡ SHOCKARB SCORES: {title}")
-    print(f"{'='*90}")
-    
-    # Filter actionable (positive delta with decent R²)
-    actionable = scores[
-        (scores["confidence_delta"] > 0.001) & 
-        (scores["r_squared"] > 0.3)
-    ].head(top_n)
-    
-    if actionable.empty:
-        print("\n  No actionable signals (confidence_delta > 0.1% & R² > 0.3)")
-    else:
-        print(f"\n  Top {len(actionable)} actionable signals:\n")
-        print(f"  {'Ticker':<8} {'Actual':>10} {'Expected':>10} {'Delta':>10} {'R²':>8} {'Conf.Δ':>10}")
-        print("  " + "─"*60)
-        
-        for ticker, row in actionable.iterrows():
-            print(
-                f"  {ticker:<8} "
-                f"{row['actual_return']:>+9.2%} "
-                f"{row['expected_return']:>+9.2%} "
-                f"{row['delta']:>+9.2%} "
-                f"{row['r_squared']:>7.2f} "
-                f"{row['confidence_delta']:>+9.2%}"
-            )
-    
-    # Show worst (potential shorts or avoid)
-    worst = scores.nsmallest(5, "confidence_delta")
-    if not worst.empty and worst["confidence_delta"].iloc[0] < -0.001:
-        print(f"\n  ⚠️  Bottom 5 (outperformed factors - avoid):\n")
-        for ticker, row in worst.iterrows():
-            print(
-                f"  {ticker:<8} "
-                f"{row['actual_return']:>+9.2%} "
-                f"{row['expected_return']:>+9.2%} "
-                f"{row['delta']:>+9.2%}"
-            )
-    
-    print(f"\n{'='*90}\n")
-
-
 # =============================================================================
-# Main
+# Argument parser
 # =============================================================================
 
-def main():
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="shockarb",
         description="ShockArb Factor Model CLI",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s build --universe us          Build and save US model
-  %(prog)s score --universe us          Score today's tape
-  %(prog)s score --universe us --date 2022-03-01   Historical backtest
-  %(prog)s show --universe us -v        Show model details
-        """
+  %(prog)s build --universe us
+  %(prog)s score --universe us
+  %(prog)s score --universe us --date 2022-03-01
+  %(prog)s show  --universe us -v
+        """,
     )
-    
     parser.add_argument(
-        "--data-dir", 
+        "--data-dir",
         default=None,
-        help="Override data directory (default: ./data or $SHOCK_ARB_DATA_DIR)"
+        help="Override data directory (default: ./data or $SHOCK_ARB_DATA_DIR)",
     )
-    
-    subparsers = parser.add_subparsers(dest="command", required=True)
-    
-    # Build command
-    build_p = subparsers.add_parser("build", help="Fit and save a factor model")
-    build_p.add_argument("--universe", "-u", required=True, help="Universe: us, global")
-    build_p.add_argument("--no-cache", action="store_true", help="Ignore cached data")
-    build_p.add_argument("--no-log", action="store_true", help="Disable file logging")
-    build_p.set_defaults(func=cmd_build)
-    
-    # Score command
-    score_p = subparsers.add_parser("score", help="Score returns against model")
-    score_p.add_argument("--universe", "-u", required=True, help="Universe: us, global")
-    score_p.add_argument("--date", "-d", help="Historical date (YYYY-MM-DD)")
-    score_p.add_argument("--model", "-m", help="Specific model file to load")
-    score_p.add_argument("--output", "-o", help="Save results to CSV")
-    score_p.add_argument("--top", "-n", type=int, default=20, help="Show top N results")
-    score_p.add_argument("--no-log", action="store_true", help="Disable file logging")
-    score_p.set_defaults(func=cmd_score)
-    
-    # Export command
-    export_p = subparsers.add_parser("export", help="Export model to CSVs")
-    export_p.add_argument("--universe", "-u", required=True, help="Universe: us, global")
-    export_p.set_defaults(func=cmd_export)
-    
-    # Show command
-    show_p = subparsers.add_parser("show", help="Display model summary")
-    show_p.add_argument("--universe", "-u", required=True, help="Universe: us, global")
-    show_p.add_argument("--verbose", "-v", action="store_true", help="Show details")
-    show_p.set_defaults(func=cmd_show)
-    
+
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    # build
+    p = sub.add_parser("build", help="Fit and save a factor model")
+    p.add_argument("--universe", "-u", required=True, help="us | global")
+    p.add_argument("--no-log", action="store_true", help="Disable file logging")
+    p.set_defaults(func=cmd_build)
+
+    # score
+    p = sub.add_parser("score", help="Score returns against a fitted model")
+    p.add_argument("--universe", "-u", required=True)
+    p.add_argument("--date",   "-d", help="Historical date YYYY-MM-DD")
+    p.add_argument("--model",  "-m", help="Specific model .json to load")
+    p.add_argument("--output", "-o", help="Save score results to CSV")
+    p.add_argument("--top",    "-n", type=int, default=20, help="Show top N results")
+    p.add_argument(
+        "--save-tape", action="store_true",
+        help=(
+            "Save raw daily OHLCV (ETFs + stocks combined) as parquet before scoring. "
+            "Written to data/tapes/{universe}_{YYYYMMDD}.parquet. "
+            "Ignored when --date is used (historical data only)."
+        ),
+    )
+    p.add_argument("--no-log", action="store_true")
+    p.set_defaults(func=cmd_score)
+
+    # export
+    p = sub.add_parser("export", help="Export model to CSVs")
+    p.add_argument("--universe", "-u", required=True)
+    p.set_defaults(func=cmd_export)
+
+    # show
+    p = sub.add_parser("show", help="Display model summary")
+    p.add_argument("--universe", "-u", required=True)
+    p.add_argument("--verbose", "-v", action="store_true", help="Full factor tables")
+    p.set_defaults(func=cmd_show)
+
+    return parser
+
+
+def main() -> None:
+    parser = _build_parser()
     args = parser.parse_args()
-    
-    # Handle data_dir
+
+    # Propagate --data-dir via environment so ExecutionConfig picks it up
+    # even in code paths that don't thread exec_config explicitly
     if args.data_dir:
         import os
         os.environ["SHOCK_ARB_DATA_DIR"] = args.data_dir
-    
+
     try:
         args.func(args)
     except KeyboardInterrupt:
         print("\n⏹️  Interrupted")
         sys.exit(130)
-    except Exception as e:
-        logger.exception(f"Error: {e}")
+    except Exception as exc:
+        logger.exception(f"Error: {exc}")
         sys.exit(1)
 
 

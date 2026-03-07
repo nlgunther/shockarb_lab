@@ -1,56 +1,60 @@
 """
-ShockArb Factor Model
-=====================
+ShockArb — Geopolitical crisis mispricing detector.
 
-A quantitative system for identifying stocks mispriced by geopolitical panic selling.
+The model decomposes stock returns into a macro-factor-explained component
+(broad market, sector, cross-asset moves) and a residual.  Stocks whose
+actual returns deviate significantly from factor-implied returns during a
+crisis are flagged as candidates for mean-reversion trades.
 
-The model decomposes daily stock returns into:
-  1. A macro-factor-explained portion (broad market, sector, cross-asset moves)
-  2. A residual (unexplained by factors)
-
-Stocks whose actual returns deviate significantly from factor-implied returns during 
-a crisis are flagged as mispricing candidates.
-
-Quick Start
+Quick start
 -----------
-    from shockarb import FactorModel, Pipeline, US_UNIVERSE
-    
-    # Build and fit a model
-    model = Pipeline.build(US_UNIVERSE)
-    
-    # Score live returns
+    import shockarb.pipeline as pipeline
+    from shockarb.config import US_UNIVERSE
+
+    model = pipeline.build(US_UNIVERSE)
     scores = model.score(today_etf_returns, today_stock_returns)
-    print(scores.head(10))  # Top 10 mispriced stocks
+    print(scores.head(10))
 
 Architecture
 ------------
-    config.py   - Universe definitions and execution settings
-    engine.py   - Pure math: SVD factor extraction, OLS projection, scoring
-    pipeline.py - Data I/O: fetching, caching, persistence
-    cli.py      - Command-line interface for all operations
+    config.py    Universe definitions and execution settings.
+    engine.py    Pure math: SVD factor extraction, OLS projection, scoring.
+    cache.py     Intelligent OHLCV parquet caching with incremental updates.
+    pipeline.py  Data I/O: fetching, caching, model persistence — no math.
+    report.py    Terminal formatting and display — no math, no I/O.
+    cli.py       Command-line interface for all operations.
 
-Design Principle: The engine module contains zero I/O. It takes DataFrames in and 
-returns DataFrames out. All file/API interaction lives in pipeline.py.
+Design rule
+-----------
+engine.py contains zero I/O.  It takes DataFrames in and returns DataFrames
+out.  All file and network interaction is in pipeline.py and cache.py.
 """
 
-__version__ = "2.1.0"
+__version__ = "3.0.0"
 
-# Public API - these are the only imports users need
-from shockarb.engine import FactorModel, FactorDiagnostics
-from shockarb.pipeline import Pipeline
+# Public API
+from shockarb.engine import FactorDiagnostics, FactorModel
 from shockarb.config import (
-    UniverseConfig,
     ExecutionConfig,
-    US_UNIVERSE,
     GLOBAL_UNIVERSE,
+    UniverseConfig,
+    US_UNIVERSE,
 )
+import shockarb.pipeline as pipeline  # preferred: `pipeline.build(...)` etc.
+
+from shockarb.names import TickerReferenceResolver
+from shockarb.backtest import Backtest, BacktestConfig, BacktestResults
 
 __all__ = [
     "FactorModel",
-    "FactorDiagnostics", 
-    "Pipeline",
+    "FactorDiagnostics",
     "UniverseConfig",
     "ExecutionConfig",
     "US_UNIVERSE",
     "GLOBAL_UNIVERSE",
+    "pipeline",
+    "TickerReferenceResolver",
+    "Backtest",
+    "BacktestConfig",
+    "BacktestResults",
 ]
