@@ -51,7 +51,6 @@ from shockarb.cache import CacheManager
 from shockarb.config import ExecutionConfig, UniverseConfig
 from shockarb.engine import FactorModel
 
-
 # =============================================================================
 # Internal helpers
 # =============================================================================
@@ -500,7 +499,6 @@ def build(
             exec_config=exec_cfg,
         )
     )
-
     common = etf_returns.index.intersection(stock_returns.index)
     logger.info(f"Aligned on {len(common)} common trading days")
 
