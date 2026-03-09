@@ -51,7 +51,6 @@ from shockarb.cache import CacheManager
 from shockarb.config import ExecutionConfig, UniverseConfig
 from shockarb.engine import FactorModel
 
-
 # =============================================================================
 # Internal helpers
 # =============================================================================
@@ -195,6 +194,13 @@ def fetch_live_returns(tickers: List[str], period: str = "5d") -> pd.Series:
     Uses a 5-day look-back window so the return computation is safe across
     weekends and holidays.
 
+<<<<<<< HEAD
+=======
+    Tickers that return no data (delisted, renamed, bad symbol) are silently
+    dropped and logged at WARNING level.  This prevents a single bad ticker
+    from crashing a full-universe scan.
+
+>>>>>>> 5a7c09611c58b6373bda4c06e9be86e6ba7a7c97
     Parameters
     ----------
     tickers : list of str
@@ -205,11 +211,12 @@ def fetch_live_returns(tickers: List[str], period: str = "5d") -> pd.Series:
     -------
     Series
         Most recent day's returns, indexed by ticker.
+        May contain fewer tickers than requested if some were unavailable.
 
     Raises
     ------
     ValueError
-        If yfinance returns no data or the return computation is empty.
+        If yfinance returns no data or the return computation is empty (network failure, not a bad ticker).
     """
     logger.info(f"Fetching live closing data for {len(tickers)} tickers…")
     raw = yf.download(tickers, period=period, progress=False, auto_adjust=False)
@@ -218,6 +225,20 @@ def fetch_live_returns(tickers: List[str], period: str = "5d") -> pd.Series:
         raise ValueError("yfinance returned no data for fetch_live_returns")
 
     prices = raw["Adj Close"] if isinstance(raw.columns, pd.MultiIndex) else raw
+
+    # Drop all-NaN columns — yfinance returns these for delisted/bad tickers
+    # in batch downloads rather than raising a 404.
+    bad = prices.columns[prices.isna().all()].tolist()
+    if bad:
+        logger.warning(
+            f"{len(bad)} ticker(s) returned no data and will be skipped: {bad}. "
+            "Check for delistings or ticker changes."
+        )
+        prices = prices.drop(columns=bad)
+
+    if prices.empty:
+        raise ValueError("fetch_live_returns: all tickers returned empty data.")
+
     returns = prices.ffill().pct_change().dropna(how="all")
 
     if returns.empty:
@@ -481,7 +502,6 @@ def build(
             exec_config=exec_cfg,
         )
     )
-
     common = etf_returns.index.intersection(stock_returns.index)
     logger.info(f"Aligned on {len(common)} common trading days")
 

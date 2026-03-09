@@ -176,7 +176,8 @@ US_UNIVERSE = UniverseConfig(
     ],
     individual_stocks=[
         # Financials / payments
-        "V", "MA", "AXP", "SPGI", "MCO", "CME", "ICE", "BLK", "FI", "FIS",
+        "V", "MA", "AXP", "SPGI", "MCO", "CME", "ICE", "BLK", "FIS",
+        # FI (Fiserv) removed — delisted/ticker changed; causes 404 at runtime
         # Software
         "MSFT", "NOW", "ADBE", "CRM", "INTU", "ORCL", "SNPS", "CDNS",
         # Cybersecurity

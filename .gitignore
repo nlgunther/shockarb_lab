@@ -7,7 +7,10 @@
 ~*
 .~*
 build*
+<<<<<<< HEAD
 *_old*
+=======
+>>>>>>> 5a7c09611c58b6373bda4c06e9be86e6ba7a7c97
 
 # old Knowledge_Transfer files
 knowledge_transfers/
@@ -93,7 +96,7 @@ coverage.xml
 *.xml
 *.txt
 *.png
-*.md
+# *.md
 *.npz
 *.html
 *.ics

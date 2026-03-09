@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "shockarb"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "yfinance>=0.2",
+    "pandas>=2.0",
+    "numpy>=1.26",
+    "pyarrow>=14.0",
+    "loguru>=0.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov",
+]
+
+[project.scripts]
+shockarb = "shockarb.__main__:main"
+
+[tool.setuptools.packages.find]
+# Discovers both shockarb/ and datamgr/ automatically
+where = ["."]
+include = ["shockarb*", "datamgr*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.coverage.run]
+source = ["shockarb", "datamgr"]
+omit = ["tests/*"]
