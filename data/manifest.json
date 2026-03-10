@@ -1,23 +1,448 @@
 {
-  "daily/AAPL": {
+  "daily/ABBV": {
     "date_range": [
-      "2022-01-01",
-      "2022-01-05"
+      "2022-02-10",
+      "2026-03-09"
     ],
     "fields": [
       "adj_close",
-      "adj_factor"
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
     ],
-    "last_updated": "2026-03-09T17:17:15.854077",
-    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\AAPL.parquet",
-    "rows": 5,
-    "ticker": "AAPL",
+    "last_updated": "2026-03-10T10:06:51.512577",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\ABBV.parquet",
+    "rows": 39,
+    "ticker": "ABBV",
+    "tier": "daily"
+  },
+  "daily/ADBE": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:51.529151",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\ADBE.parquet",
+    "rows": 39,
+    "ticker": "ADBE",
+    "tier": "daily"
+  },
+  "daily/ADI": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:51.558371",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\ADI.parquet",
+    "rows": 39,
+    "ticker": "ADI",
+    "tier": "daily"
+  },
+  "daily/AMAT": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:51.587791",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\AMAT.parquet",
+    "rows": 39,
+    "ticker": "AMAT",
+    "tier": "daily"
+  },
+  "daily/ASML": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:51.615483",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\ASML.parquet",
+    "rows": 39,
+    "ticker": "ASML",
+    "tier": "daily"
+  },
+  "daily/AXP": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:51.643160",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\AXP.parquet",
+    "rows": 39,
+    "ticker": "AXP",
+    "tier": "daily"
+  },
+  "daily/BLK": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:51.671473",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\BLK.parquet",
+    "rows": 39,
+    "ticker": "BLK",
+    "tier": "daily"
+  },
+  "daily/BSX": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:51.700909",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\BSX.parquet",
+    "rows": 39,
+    "ticker": "BSX",
+    "tier": "daily"
+  },
+  "daily/CDNS": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:51.729327",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\CDNS.parquet",
+    "rows": 39,
+    "ticker": "CDNS",
+    "tier": "daily"
+  },
+  "daily/CME": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:51.759332",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\CME.parquet",
+    "rows": 39,
+    "ticker": "CME",
+    "tier": "daily"
+  },
+  "daily/COST": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:51.784023",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\COST.parquet",
+    "rows": 39,
+    "ticker": "COST",
+    "tier": "daily"
+  },
+  "daily/CPRT": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:51.817437",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\CPRT.parquet",
+    "rows": 39,
+    "ticker": "CPRT",
+    "tier": "daily"
+  },
+  "daily/CRM": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:51.843714",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\CRM.parquet",
+    "rows": 39,
+    "ticker": "CRM",
+    "tier": "daily"
+  },
+  "daily/CRWD": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:51.870031",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\CRWD.parquet",
+    "rows": 39,
+    "ticker": "CRWD",
+    "tier": "daily"
+  },
+  "daily/CVX": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:51.896930",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\CVX.parquet",
+    "rows": 39,
+    "ticker": "CVX",
+    "tier": "daily"
+  },
+  "daily/DHR": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:51.920858",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\DHR.parquet",
+    "rows": 39,
+    "ticker": "DHR",
+    "tier": "daily"
+  },
+  "daily/ETN": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:51.949687",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\ETN.parquet",
+    "rows": 39,
+    "ticker": "ETN",
+    "tier": "daily"
+  },
+  "daily/EW": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:51.975396",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\EW.parquet",
+    "rows": 39,
+    "ticker": "EW",
+    "tier": "daily"
+  },
+  "daily/FAST": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:52.003939",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\FAST.parquet",
+    "rows": 39,
+    "ticker": "FAST",
+    "tier": "daily"
+  },
+  "daily/FIS": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:52.030687",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\FIS.parquet",
+    "rows": 39,
+    "ticker": "FIS",
+    "tier": "daily"
+  },
+  "daily/FTNT": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:52.057959",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\FTNT.parquet",
+    "rows": 39,
+    "ticker": "FTNT",
+    "tier": "daily"
+  },
+  "daily/GD": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:52.086784",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\GD.parquet",
+    "rows": 39,
+    "ticker": "GD",
     "tier": "daily"
   },
   "daily/GLD": {
     "date_range": [
-      "2026-03-02",
-      "2026-03-06"
+      "2022-02-10",
+      "2026-03-09"
     ],
     "fields": [
       "adj_close",
@@ -28,16 +453,176 @@
       "open",
       "volume"
     ],
-    "last_updated": "2026-03-09T16:27:34.194389",
+    "last_updated": "2026-03-10T10:06:52.113192",
     "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\GLD.parquet",
-    "rows": 5,
+    "rows": 46,
     "ticker": "GLD",
+    "tier": "daily"
+  },
+  "daily/GWW": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:52.138425",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\GWW.parquet",
+    "rows": 39,
+    "ticker": "GWW",
+    "tier": "daily"
+  },
+  "daily/HII": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:52.168267",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\HII.parquet",
+    "rows": 39,
+    "ticker": "HII",
+    "tier": "daily"
+  },
+  "daily/HON": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:52.205158",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\HON.parquet",
+    "rows": 39,
+    "ticker": "HON",
+    "tier": "daily"
+  },
+  "daily/HSY": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:52.233282",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\HSY.parquet",
+    "rows": 39,
+    "ticker": "HSY",
+    "tier": "daily"
+  },
+  "daily/ICE": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:52.259837",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\ICE.parquet",
+    "rows": 39,
+    "ticker": "ICE",
+    "tier": "daily"
+  },
+  "daily/IDXX": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:52.291465",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\IDXX.parquet",
+    "rows": 39,
+    "ticker": "IDXX",
+    "tier": "daily"
+  },
+  "daily/INTU": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:52.320918",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\INTU.parquet",
+    "rows": 39,
+    "ticker": "INTU",
+    "tier": "daily"
+  },
+  "daily/ISRG": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:52.349760",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\ISRG.parquet",
+    "rows": 39,
+    "ticker": "ISRG",
     "tier": "daily"
   },
   "daily/ITA": {
     "date_range": [
-      "2026-03-02",
-      "2026-03-06"
+      "2022-02-10",
+      "2026-03-09"
     ],
     "fields": [
       "adj_close",
@@ -48,31 +633,496 @@
       "open",
       "volume"
     ],
-    "last_updated": "2026-03-09T16:27:34.194389",
+    "last_updated": "2026-03-10T10:06:52.374634",
     "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\ITA.parquet",
-    "rows": 5,
+    "rows": 46,
     "ticker": "ITA",
+    "tier": "daily"
+  },
+  "daily/JNJ": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:52.403603",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\JNJ.parquet",
+    "rows": 39,
+    "ticker": "JNJ",
+    "tier": "daily"
+  },
+  "daily/KLAC": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:52.432077",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\KLAC.parquet",
+    "rows": 39,
+    "ticker": "KLAC",
+    "tier": "daily"
+  },
+  "daily/KO": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:52.465382",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\KO.parquet",
+    "rows": 39,
+    "ticker": "KO",
+    "tier": "daily"
+  },
+  "daily/LHX": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:52.494806",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\LHX.parquet",
+    "rows": 39,
+    "ticker": "LHX",
+    "tier": "daily"
+  },
+  "daily/LLY": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:52.519128",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\LLY.parquet",
+    "rows": 39,
+    "ticker": "LLY",
+    "tier": "daily"
+  },
+  "daily/LMT": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:52.548796",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\LMT.parquet",
+    "rows": 39,
+    "ticker": "LMT",
+    "tier": "daily"
+  },
+  "daily/LRCX": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:52.578328",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\LRCX.parquet",
+    "rows": 39,
+    "ticker": "LRCX",
+    "tier": "daily"
+  },
+  "daily/MA": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:52.603043",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\MA.parquet",
+    "rows": 39,
+    "ticker": "MA",
+    "tier": "daily"
+  },
+  "daily/MCO": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:52.632997",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\MCO.parquet",
+    "rows": 39,
+    "ticker": "MCO",
     "tier": "daily"
   },
   "daily/MSFT": {
     "date_range": [
-      "2022-01-01",
-      "2022-01-05"
+      "2021-12-22",
+      "2026-03-09"
     ],
     "fields": [
       "adj_close",
-      "adj_factor"
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
     ],
-    "last_updated": "2026-03-09T17:17:15.869041",
+    "last_updated": "2026-03-10T10:06:52.665767",
     "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\MSFT.parquet",
-    "rows": 5,
+    "rows": 1057,
     "ticker": "MSFT",
+    "tier": "daily"
+  },
+  "daily/NOC": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:52.694915",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\NOC.parquet",
+    "rows": 39,
+    "ticker": "NOC",
+    "tier": "daily"
+  },
+  "daily/NOW": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:52.723454",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\NOW.parquet",
+    "rows": 39,
+    "ticker": "NOW",
+    "tier": "daily"
+  },
+  "daily/ORCL": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:52.755989",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\ORCL.parquet",
+    "rows": 39,
+    "ticker": "ORCL",
+    "tier": "daily"
+  },
+  "daily/PANW": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:53.006526",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\PANW.parquet",
+    "rows": 39,
+    "ticker": "PANW",
+    "tier": "daily"
+  },
+  "daily/PEP": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:53.103352",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\PEP.parquet",
+    "rows": 39,
+    "ticker": "PEP",
+    "tier": "daily"
+  },
+  "daily/PG": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:53.159456",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\PG.parquet",
+    "rows": 39,
+    "ticker": "PG",
+    "tier": "daily"
+  },
+  "daily/PH": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:53.235732",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\PH.parquet",
+    "rows": 39,
+    "ticker": "PH",
+    "tier": "daily"
+  },
+  "daily/QCOM": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:53.270198",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\QCOM.parquet",
+    "rows": 39,
+    "ticker": "QCOM",
+    "tier": "daily"
+  },
+  "daily/ROK": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:53.324921",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\ROK.parquet",
+    "rows": 39,
+    "ticker": "ROK",
+    "tier": "daily"
+  },
+  "daily/ROP": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:53.371531",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\ROP.parquet",
+    "rows": 39,
+    "ticker": "ROP",
+    "tier": "daily"
+  },
+  "daily/RTX": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:53.403766",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\RTX.parquet",
+    "rows": 39,
+    "ticker": "RTX",
+    "tier": "daily"
+  },
+  "daily/SNPS": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:53.452468",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\SNPS.parquet",
+    "rows": 39,
+    "ticker": "SNPS",
+    "tier": "daily"
+  },
+  "daily/SPGI": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:53.497116",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\SPGI.parquet",
+    "rows": 39,
+    "ticker": "SPGI",
+    "tier": "daily"
+  },
+  "daily/SYK": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:53.537946",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\SYK.parquet",
+    "rows": 39,
+    "ticker": "SYK",
     "tier": "daily"
   },
   "daily/TLT": {
     "date_range": [
-      "2026-03-02",
-      "2026-03-06"
+      "2022-02-10",
+      "2026-03-09"
     ],
     "fields": [
       "adj_close",
@@ -83,16 +1133,76 @@
       "open",
       "volume"
     ],
-    "last_updated": "2026-03-09T16:27:34.210185",
+    "last_updated": "2026-03-10T10:06:53.570779",
     "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\TLT.parquet",
-    "rows": 5,
+    "rows": 46,
     "ticker": "TLT",
+    "tier": "daily"
+  },
+  "daily/TMO": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:53.603222",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\TMO.parquet",
+    "rows": 39,
+    "ticker": "TMO",
+    "tier": "daily"
+  },
+  "daily/TXN": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:53.632032",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\TXN.parquet",
+    "rows": 39,
+    "ticker": "TXN",
+    "tier": "daily"
+  },
+  "daily/UNH": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:53.661601",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\UNH.parquet",
+    "rows": 39,
+    "ticker": "UNH",
     "tier": "daily"
   },
   "daily/USO": {
     "date_range": [
-      "2026-03-02",
-      "2026-03-06"
+      "2022-02-10",
+      "2026-03-09"
     ],
     "fields": [
       "adj_close",
@@ -103,16 +1213,36 @@
       "open",
       "volume"
     ],
-    "last_updated": "2026-03-09T16:27:34.226165",
+    "last_updated": "2026-03-10T10:06:53.690327",
     "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\USO.parquet",
-    "rows": 5,
+    "rows": 46,
     "ticker": "USO",
+    "tier": "daily"
+  },
+  "daily/V": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:53.720492",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\V.parquet",
+    "rows": 39,
+    "ticker": "V",
     "tier": "daily"
   },
   "daily/VAW": {
     "date_range": [
-      "2026-03-02",
-      "2026-03-06"
+      "2022-02-10",
+      "2026-03-09"
     ],
     "fields": [
       "adj_close",
@@ -123,16 +1253,16 @@
       "open",
       "volume"
     ],
-    "last_updated": "2026-03-09T16:27:34.252449",
+    "last_updated": "2026-03-10T10:06:53.747723",
     "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\VAW.parquet",
-    "rows": 5,
+    "rows": 46,
     "ticker": "VAW",
     "tier": "daily"
   },
   "daily/VCR": {
     "date_range": [
-      "2026-03-02",
-      "2026-03-06"
+      "2022-02-10",
+      "2026-03-09"
     ],
     "fields": [
       "adj_close",
@@ -143,16 +1273,16 @@
       "open",
       "volume"
     ],
-    "last_updated": "2026-03-09T16:27:34.257987",
+    "last_updated": "2026-03-10T10:06:53.774279",
     "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\VCR.parquet",
-    "rows": 5,
+    "rows": 46,
     "ticker": "VCR",
     "tier": "daily"
   },
   "daily/VDC": {
     "date_range": [
-      "2026-03-02",
-      "2026-03-06"
+      "2022-02-10",
+      "2026-03-09"
     ],
     "fields": [
       "adj_close",
@@ -163,16 +1293,16 @@
       "open",
       "volume"
     ],
-    "last_updated": "2026-03-09T16:27:34.277869",
+    "last_updated": "2026-03-10T10:06:53.815732",
     "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\VDC.parquet",
-    "rows": 5,
+    "rows": 46,
     "ticker": "VDC",
     "tier": "daily"
   },
   "daily/VDE": {
     "date_range": [
-      "2026-03-02",
-      "2026-03-06"
+      "2022-02-10",
+      "2026-03-09"
     ],
     "fields": [
       "adj_close",
@@ -183,16 +1313,16 @@
       "open",
       "volume"
     ],
-    "last_updated": "2026-03-09T16:27:34.289819",
+    "last_updated": "2026-03-10T10:06:53.844761",
     "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\VDE.parquet",
-    "rows": 5,
+    "rows": 46,
     "ticker": "VDE",
     "tier": "daily"
   },
   "daily/VEU": {
     "date_range": [
-      "2026-03-02",
-      "2026-03-06"
+      "2022-02-10",
+      "2026-03-09"
     ],
     "fields": [
       "adj_close",
@@ -203,16 +1333,16 @@
       "open",
       "volume"
     ],
-    "last_updated": "2026-03-09T16:27:34.316163",
+    "last_updated": "2026-03-10T10:06:53.873946",
     "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\VEU.parquet",
-    "rows": 5,
+    "rows": 46,
     "ticker": "VEU",
     "tier": "daily"
   },
   "daily/VFH": {
     "date_range": [
-      "2026-03-02",
-      "2026-03-06"
+      "2022-02-10",
+      "2026-03-09"
     ],
     "fields": [
       "adj_close",
@@ -223,16 +1353,16 @@
       "open",
       "volume"
     ],
-    "last_updated": "2026-03-09T16:27:34.331235",
+    "last_updated": "2026-03-10T10:06:53.899406",
     "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\VFH.parquet",
-    "rows": 5,
+    "rows": 46,
     "ticker": "VFH",
     "tier": "daily"
   },
   "daily/VGT": {
     "date_range": [
-      "2026-03-02",
-      "2026-03-06"
+      "2022-02-10",
+      "2026-03-09"
     ],
     "fields": [
       "adj_close",
@@ -243,16 +1373,16 @@
       "open",
       "volume"
     ],
-    "last_updated": "2026-03-09T16:27:34.345944",
+    "last_updated": "2026-03-10T10:06:53.928831",
     "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\VGT.parquet",
-    "rows": 5,
+    "rows": 46,
     "ticker": "VGT",
     "tier": "daily"
   },
   "daily/VHT": {
     "date_range": [
-      "2026-03-02",
-      "2026-03-06"
+      "2022-02-10",
+      "2026-03-09"
     ],
     "fields": [
       "adj_close",
@@ -263,16 +1393,16 @@
       "open",
       "volume"
     ],
-    "last_updated": "2026-03-09T16:27:34.360847",
+    "last_updated": "2026-03-10T10:06:53.961287",
     "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\VHT.parquet",
-    "rows": 5,
+    "rows": 46,
     "ticker": "VHT",
     "tier": "daily"
   },
   "daily/VIS": {
     "date_range": [
-      "2026-03-02",
-      "2026-03-06"
+      "2022-02-10",
+      "2026-03-09"
     ],
     "fields": [
       "adj_close",
@@ -283,16 +1413,16 @@
       "open",
       "volume"
     ],
-    "last_updated": "2026-03-09T16:27:34.370718",
+    "last_updated": "2026-03-10T10:06:53.991064",
     "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\VIS.parquet",
-    "rows": 5,
+    "rows": 46,
     "ticker": "VIS",
     "tier": "daily"
   },
   "daily/VNQ": {
     "date_range": [
-      "2026-03-02",
-      "2026-03-06"
+      "2022-02-10",
+      "2026-03-09"
     ],
     "fields": [
       "adj_close",
@@ -303,16 +1433,16 @@
       "open",
       "volume"
     ],
-    "last_updated": "2026-03-09T16:27:34.384495",
+    "last_updated": "2026-03-10T10:06:54.020011",
     "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\VNQ.parquet",
-    "rows": 5,
+    "rows": 46,
     "ticker": "VNQ",
     "tier": "daily"
   },
   "daily/VOO": {
     "date_range": [
-      "2026-03-02",
-      "2026-03-06"
+      "2022-02-10",
+      "2026-03-09"
     ],
     "fields": [
       "adj_close",
@@ -323,16 +1453,16 @@
       "open",
       "volume"
     ],
-    "last_updated": "2026-03-09T16:27:34.405324",
+    "last_updated": "2026-03-10T10:06:54.052579",
     "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\VOO.parquet",
-    "rows": 5,
+    "rows": 46,
     "ticker": "VOO",
     "tier": "daily"
   },
   "daily/VOX": {
     "date_range": [
-      "2026-03-02",
-      "2026-03-06"
+      "2022-02-10",
+      "2026-03-09"
     ],
     "fields": [
       "adj_close",
@@ -343,16 +1473,16 @@
       "open",
       "volume"
     ],
-    "last_updated": "2026-03-09T16:27:34.421022",
+    "last_updated": "2026-03-10T10:06:54.081545",
     "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\VOX.parquet",
-    "rows": 5,
+    "rows": 46,
     "ticker": "VOX",
     "tier": "daily"
   },
   "daily/VPU": {
     "date_range": [
-      "2026-03-02",
-      "2026-03-06"
+      "2022-02-10",
+      "2026-03-09"
     ],
     "fields": [
       "adj_close",
@@ -363,16 +1493,16 @@
       "open",
       "volume"
     ],
-    "last_updated": "2026-03-09T16:27:34.432371",
+    "last_updated": "2026-03-10T10:06:54.112698",
     "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\VPU.parquet",
-    "rows": 5,
+    "rows": 46,
     "ticker": "VPU",
     "tier": "daily"
   },
   "daily/VYM": {
     "date_range": [
-      "2026-03-02",
-      "2026-03-06"
+      "2022-02-10",
+      "2026-03-09"
     ],
     "fields": [
       "adj_close",
@@ -383,16 +1513,36 @@
       "open",
       "volume"
     ],
-    "last_updated": "2026-03-09T16:27:34.450555",
+    "last_updated": "2026-03-10T10:06:54.140417",
     "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\VYM.parquet",
-    "rows": 5,
+    "rows": 46,
     "ticker": "VYM",
+    "tier": "daily"
+  },
+  "daily/WMT": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:54.169900",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\WMT.parquet",
+    "rows": 39,
+    "ticker": "WMT",
     "tier": "daily"
   },
   "daily/XAR": {
     "date_range": [
-      "2026-03-02",
-      "2026-03-06"
+      "2022-02-10",
+      "2026-03-09"
     ],
     "fields": [
       "adj_close",
@@ -403,16 +1553,16 @@
       "open",
       "volume"
     ],
-    "last_updated": "2026-03-09T16:27:34.463976",
+    "last_updated": "2026-03-10T10:06:54.203155",
     "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\XAR.parquet",
-    "rows": 5,
+    "rows": 46,
     "ticker": "XAR",
     "tier": "daily"
   },
   "daily/XSD": {
     "date_range": [
-      "2026-03-02",
-      "2026-03-06"
+      "2022-02-10",
+      "2026-03-09"
     ],
     "fields": [
       "adj_close",
@@ -423,10 +1573,30 @@
       "open",
       "volume"
     ],
-    "last_updated": "2026-03-09T16:27:34.479940",
+    "last_updated": "2026-03-10T10:06:54.236500",
     "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\XSD.parquet",
-    "rows": 5,
+    "rows": 46,
     "ticker": "XSD",
+    "tier": "daily"
+  },
+  "daily/ZTS": {
+    "date_range": [
+      "2022-02-10",
+      "2026-03-09"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-10T10:06:54.266518",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\ZTS.parquet",
+    "rows": 39,
+    "ticker": "ZTS",
     "tier": "daily"
   }
 }

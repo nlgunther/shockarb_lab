@@ -210,17 +210,92 @@ def prices_to_returns(
 # Live / intraday data (uncached)
 # =============================================================================
 
+# HOT_FIX: bypasses coordinator during market hours — replace with
+# Phase 1-3 intraday coordinator path before merging to main.
+
+def _market_is_open() -> bool:
+    """True if NYSE is currently in its regular session."""
+    import pytz
+    from datetime import datetime
+    now = datetime.now(pytz.timezone("America/New_York"))
+    if now.weekday() >= 5:
+        return False
+    market_open  = now.replace(hour=9,  minute=30, second=0, microsecond=0)
+    market_close = now.replace(hour=16, minute=0,  second=0, microsecond=0)
+    return market_open <= now <= market_close
+
+
+def _fetch_live_direct(tickers: List[str]) -> pd.Series:
+    """
+    Fetch the most recent return directly from yfinance, bypassing the
+    coordinator cache.  Used during market hours when no complete daily
+    bar exists yet.
+    HOT_FIX: this logic moves into YFinanceProvider.fetch() in the proper fix.
+    """
+    import yfinance as yf
+    import pytz
+    from datetime import datetime
+
+    now = datetime.now(pytz.timezone("America/New_York"))
+    logger.info(
+        f"Market is open — fetching intraday 5m bars for {len(tickers)} tickers "
+        f"(as of {now.strftime('%H:%M:%S')} ET)…"
+    )
+
+    raw = yf.download(tickers, period="5d", interval="5m",
+                      progress=False, auto_adjust=False)
+    if raw.empty:
+        raise ValueError("fetch_live_returns: yfinance returned no data.")
+
+    if isinstance(raw.columns, pd.MultiIndex):
+        prices = raw["Adj Close"] if "Adj Close" in raw.columns.get_level_values(0) else raw["Close"]
+    else:
+        prices = raw
+    if isinstance(prices, pd.Series):
+        prices = prices.to_frame(name=tickers[0])
+
+    prices = prices.dropna(axis=1, how="all").ffill()
+
+    dates = prices.index.normalize().unique()
+    if len(dates) < 2:
+        raise ValueError("fetch_live_returns: not enough history for return computation.")
+
+    prev_date  = dates[-2]
+    today_date = dates[-1]
+    prev_close = prices[prices.index.normalize() == prev_date].iloc[-1]
+    latest     = prices[prices.index.normalize() == today_date].iloc[-1]
+    latest_ts  = prices[prices.index.normalize() == today_date].index[-1]
+
+    returns = (latest / prev_close) - 1
+
+    logger.info(
+        f"Intraday returns computed: "
+        f"prev close {prev_date.strftime('%Y-%m-%d')}, "
+        f"latest bar {latest_ts.strftime('%H:%M')} ET — "
+        f"{len(returns)} tickers"
+    )
+    skipped = returns[returns.isna()].index.tolist()
+    if skipped:
+        logger.warning(f"{len(skipped)} ticker(s) had no intraday data: {skipped}")
+        returns = returns.dropna()
+
+    return returns
+
+
 def fetch_live_returns(
     tickers: List[str],
     period: str = "5d",
     exec_config: Optional[ExecutionConfig] = None,
+    force_live: bool = False,
 ) -> pd.Series:
     """
     Fetch the most recent day's closing returns via the datamgr coordinator.
-
     Uses a 5-day look-back window so the return computation is safe across
     weekends and holidays.  Results are cached by the coordinator — calling
     this multiple times on the same day does not trigger redundant downloads.
+
+    During market hours (or when force_live=True), bypasses the coordinator
+    and fetches directly from yfinance so intraday prices are reflected.
 
     Parameters
     ----------
@@ -228,29 +303,30 @@ def fetch_live_returns(
     period : str
         Look-back window as a yfinance period string.  Default "5d".
     exec_config : ExecutionConfig, optional
-
+    force_live : bool
+        Force direct yfinance fetch regardless of market hours.
     Returns
     -------
     Series
         Most recent day's returns, indexed by ticker.
-
     Raises
     ------
     ValueError
         If no data can be retrieved at all.
     """
     from datetime import date, timedelta
-
     exec_cfg = _exec(exec_config)
     logger.info(f"Fetching live closing data for {len(tickers)} tickers…")
 
-    # Translate period string to a concrete date range
-    # "5d" → last 7 calendar days (covers weekends + 1 holiday)
+    # HOT_FIX: bypass coordinator during market hours
+    if force_live or _market_is_open():
+        return _fetch_live_direct(tickers)
+
+    # After close — use coordinator cache
     period_days = {"1d": 4, "5d": 7, "1mo": 35, "3mo": 95}
     lookback    = period_days.get(period, 7)
     end   = date.today().strftime("%Y-%m-%d")
     start = (date.today() - timedelta(days=lookback)).strftime("%Y-%m-%d")
-
     coordinator = _coordinator(exec_cfg)
     coordinator.register(DataRequest(
         tickers   = tuple(tickers),
@@ -262,11 +338,8 @@ def fetch_live_returns(
     ))
     results = coordinator.fulfill()
     prices  = results.get("live_returns", pd.DataFrame())
-
     if prices is None or prices.empty:
         raise ValueError("fetch_live_returns: coordinator returned no data.")
-
-    # Drop tickers that came back all-NaN
     bad = prices.columns[prices.isna().all()].tolist()
     if bad:
         logger.warning(
@@ -274,15 +347,11 @@ def fetch_live_returns(
             "Check for delistings or ticker changes."
         )
         prices = prices.drop(columns=bad)
-
     if prices.empty:
         raise ValueError("fetch_live_returns: all tickers returned empty data.")
-
     returns = prices.ffill().pct_change().dropna(how="all")
-
     if returns.empty:
         raise ValueError("fetch_live_returns: return computation produced empty result")
-
     return returns.iloc[-1]
 
 

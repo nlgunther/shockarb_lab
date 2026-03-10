@@ -96,12 +96,14 @@ class DataCoordinator:
 
         # Steps 2-3
         merged = self._merge_requests()
+        print(f"DEBUG merged: {len(merged)} group(s)")
         # Steps 2-3
         for merged_req in merged:
             if merged_req.frequency == Frequency.INTRADAY_15M:
                 # Intraday: delegate directly to the store, no gap-analysis needed
                 continue
             gaps = self._gap_analyse(merged_req)
+            print(f"DEBUG gaps for {merged_req.frequency}: {len(gaps)} ticker(s)")
             if not gaps:
                 logger.debug(
                     f"[Coordinator] Full cache hit — "
