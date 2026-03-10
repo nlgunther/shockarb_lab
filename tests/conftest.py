@@ -28,6 +28,37 @@ from shockarb.engine import FactorModel
 # Market-data fixtures
 # ---------------------------------------------------------------------------
 
+# tests/conftest.py  — add this class
+
+class InMemoryStore:
+    """Shared test double for DataStore."""
+    def __init__(self):
+        self._data = {}
+
+    def write(self, key, df, meta):
+        ticker = key.split("/")[-1]
+        if "adj_close" in df.columns:
+            self._data[key] = df[["adj_close"]]
+        elif ticker in df.columns:
+            self._data[key] = df[[ticker]].rename(columns={ticker: "adj_close"})
+        else:
+            for col in df.columns:
+                self._data[f"daily/{col}"] = df[[col]].rename(columns={col: "adj_close"})
+
+    def read(self, key, start, end):
+        df = self._data.get(key)
+        if df is None: return None
+        try: return df.loc[start:end]
+        except Exception: return df
+
+    def coverage(self, key):
+        df = self._data.get(key)
+        if df is None or df.empty: return None
+        return (str(df.index.min().date()), str(df.index.max().date()))
+
+    def sweep(self, retention, before):
+        return []
+
 @pytest.fixture
 def sample_etf_returns() -> pd.DataFrame:
     """

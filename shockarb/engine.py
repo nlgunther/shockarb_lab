@@ -141,6 +141,11 @@ class FactorModel:
         self.etf_returns = etf_returns
         self.stock_returns = stock_returns
 
+        assert self.stock_returns.columns.is_unique, (
+            f"Duplicate tickers in stock_returns: "
+            f"{self.stock_returns.columns[self.stock_returns.columns.duplicated()].tolist()}"
+        )
+
         # Set by fit(); all None until then
         self._Vt: Optional[NDArray] = None          # (k × N_etf) factor directions
         self._F: Optional[pd.DataFrame] = None      # (T × k) factor return series
@@ -206,7 +211,8 @@ class FactorModel:
         )
 
         # Explained variance from singular values
-        var_ratio = (Sigma[:n_components] ** 2) / (Sigma ** 2).sum()
+        with np.errstate(invalid="ignore", divide="ignore"):
+            var_ratio = (Sigma[:n_components] ** 2) / (Sigma ** 2).sum()
 
         # ------ Stage 2: Stock projection via OLS ------
         R_S = self.stock_returns.values - self._stock_mean.values
@@ -219,13 +225,17 @@ class FactorModel:
             columns=[f"Factor_{i+1}" for i in range(n_components)],
         )
 
+        # Guard against duplicate tickers inherited from stock_returns columns
+        self.loadings = self.loadings[~self.loadings.index.duplicated(keep="first")]
+
         # ------ Stage 3: Diagnostics ------
         R_S_hat = F @ B_T
         resid = R_S - R_S_hat
         ss_res = (resid ** 2).sum(axis=0)
         ss_tot = (R_S ** 2).sum(axis=0)
 
-        r_squared = np.where(ss_tot > 1e-10, 1.0 - ss_res / ss_tot, 0.0)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            r_squared = np.where(ss_tot > 1e-10, 1.0 - ss_res / ss_tot, 0.0)
         resid_vol = resid.std(axis=0) * np.sqrt(252)
 
         self.diagnostics = FactorDiagnostics(

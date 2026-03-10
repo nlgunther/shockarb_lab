@@ -158,25 +158,69 @@ class TestFetchPrices:
 
 class TestFetchLiveReturns:
 
-    @patch("shockarb.pipeline.yf.download")
-    def test_returns_series_with_correct_tickers(self, mock_dl):
-        mock_data = pd.DataFrame(
-            {("Adj Close", "AAPL"): [150.0, 151.0, 152.0, 153.0, 154.0],
-             ("Adj Close", "MSFT"): [300.0, 303.0, 306.0, 309.0, 312.0]},
-            index=pd.date_range("2022-01-01", periods=5),
-        )
-        mock_data.columns = pd.MultiIndex.from_tuples(mock_data.columns)
-        mock_dl.return_value = mock_data
+    def test_returns_series_with_correct_tickers(self):
+        from datamgr.coordinator import DataCoordinator
 
-        returns = pipeline.fetch_live_returns(["AAPL", "MSFT"])
+        class _InMemoryStore:
+            def __init__(self):
+                self._data = {}
+            def read(self, key, start, end):
+                df = self._data.get(key)
+                if df is None: return None
+                try: return df.loc[start:end]
+                except Exception: return df
+            def write(self, key, df, meta): self._data[key] = df
+            def coverage(self, key):
+                df = self._data.get(key)
+                if df is None or df.empty: return None
+                return (str(df.index.min().date()), str(df.index.max().date()))
+            def sweep(self, retention, before): return []
+
+        from datetime import date, timedelta
+
+        # Seed a window that is guaranteed to cover any "1d" lookback from today
+        end   = date.today()
+        start = end - timedelta(days=10)
+        idx   = pd.bdate_range(start=start, end=end)
+
+        store = _InMemoryStore()
+        for ticker, base in {"AAPL": 150, "MSFT": 300}.items():
+            vals = [base + i for i in range(len(idx))]
+            store._data[f"daily/{ticker}"] = pd.DataFrame(
+                {"adj_close": vals}, index=idx
+            )
+
+        coord = DataCoordinator(store)  # no provider needed — full cache hit
+
+        with patch.object(pipeline, "_coordinator", return_value=coord):
+            returns = pipeline.fetch_live_returns(["AAPL", "MSFT"], period="1d")
+
         assert isinstance(returns, pd.Series)
         assert len(returns) == 2
+        assert set(returns.index) == {"AAPL", "MSFT"}
 
-    @patch("shockarb.pipeline.yf.download")
-    def test_raises_on_empty_response(self, mock_dl):
-        mock_dl.return_value = pd.DataFrame()
-        with pytest.raises(ValueError, match="no data"):
-            pipeline.fetch_live_returns(["AAPL"])
+    def test_raises_on_empty_response(self):
+        """
+        When the coordinator returns no data, fetch_live_returns must raise.
+        Use a MockProvider that returns empty so the store stays empty.
+        """
+        from datamgr.coordinator import DataCoordinator
+        from datamgr.providers.mock import MockProvider
+
+        class _EmptyStore:
+            def read(self, k, s, e): return None
+            def write(self, k, df, m): pass
+            def coverage(self, k): return None
+            def sweep(self, r, b): return []
+
+        class _EmptyProvider(MockProvider):
+            def fetch(self, tickers, start, end, frequency):
+                return pd.DataFrame()
+
+        coord = DataCoordinator(_EmptyStore(), provider=_EmptyProvider())
+        with patch.object(pipeline, "_coordinator", return_value=coord):
+            with pytest.raises(ValueError, match="no data"):
+                pipeline.fetch_live_returns(["AAPL"])
 
 
 # =============================================================================
@@ -279,28 +323,50 @@ class TestExportCsvs:
 
 class TestBuild:
 
-    @patch("shockarb.pipeline.yf.download")
-    def test_build_returns_fitted_model(self, mock_dl, temp_dir):
-        mock_dl.return_value = pd.DataFrame()  # triggers synthetic fallback
+    def _mock_coordinator(self, temp_dir):
+        """
+        Return a DataCoordinator wired with MockProvider + InMemoryStore so
+        build() gets synthetic OHLCV without any yfinance calls.
+        """
+        from datamgr.coordinator import DataCoordinator
+        from datamgr.providers.mock import MockProvider
+
+        class _InMemoryStore:
+            def __init__(self): self._data = {}
+            def read(self, key, start, end):
+                df = self._data.get(key)
+                if df is None: return None
+                try: return df.loc[start:end]
+                except Exception: return df
+            def write(self, key, df, meta): self._data[key] = df
+            def coverage(self, key):
+                df = self._data.get(key)
+                if df is None or df.empty: return None
+                return (str(df.index.min().date()), str(df.index.max().date()))
+            def sweep(self, r, b): return []
+
+        return DataCoordinator(_InMemoryStore(), provider=MockProvider())
+
+    def test_build_returns_fitted_model(self, temp_dir):
         universe = UniverseConfig(
             name="test", market_etfs=["VOO", "TLT", "GLD"],
             individual_stocks=["AAPL", "MSFT"],
             n_components=2, start_date="2022-02-10", end_date="2022-03-31",
         )
         cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
-        model = pipeline.build(universe, cfg)
+        with patch.object(pipeline, "_coordinator", return_value=self._mock_coordinator(temp_dir)):
+            model = pipeline.build(universe, cfg)
         assert model._fitted is True
 
-    @patch("shockarb.pipeline.yf.download")
-    def test_build_model_has_correct_n_components(self, mock_dl, temp_dir):
-        mock_dl.return_value = pd.DataFrame()
+    def test_build_model_has_correct_n_components(self, temp_dir):
         universe = UniverseConfig(
             name="test", market_etfs=["VOO", "TLT", "GLD"],
             individual_stocks=["AAPL", "MSFT"],
             n_components=2, start_date="2022-02-10", end_date="2022-03-31",
         )
         cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
-        model = pipeline.build(universe, cfg)
+        with patch.object(pipeline, "_coordinator", return_value=self._mock_coordinator(temp_dir)):
+            model = pipeline.build(universe, cfg)
         assert model.diagnostics.n_factors == 2
 
 
@@ -321,16 +387,33 @@ class TestIntegration:
         after = pipeline.load_model(path).score(etf_ret, stk_ret)
         pd.testing.assert_frame_equal(before, after)
 
-    @patch("shockarb.pipeline.yf.download")
-    def test_full_workflow(self, mock_dl, temp_dir):
-        mock_dl.return_value = pd.DataFrame()
+    def test_full_workflow(self, temp_dir):
+        from datamgr.coordinator import DataCoordinator
+        from datamgr.providers.mock import MockProvider
+
+        class _InMemoryStore:
+            def __init__(self): self._data = {}
+            def read(self, key, start, end):
+                df = self._data.get(key)
+                if df is None: return None
+                try: return df.loc[start:end]
+                except Exception: return df
+            def write(self, key, df, meta): self._data[key] = df
+            def coverage(self, key):
+                df = self._data.get(key)
+                if df is None or df.empty: return None
+                return (str(df.index.min().date()), str(df.index.max().date()))
+            def sweep(self, r, b): return []
+
+        coord = DataCoordinator(_InMemoryStore(), provider=MockProvider())
         universe = UniverseConfig(
             name="test", market_etfs=["VOO", "TLT", "GLD"],
             individual_stocks=["AAPL", "MSFT"],
             n_components=2, start_date="2022-02-10", end_date="2022-03-31",
         )
         cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
-        model = pipeline.build(universe, cfg)
+        with patch.object(pipeline, "_coordinator", return_value=coord):
+            model = pipeline.build(universe, cfg)
         path = pipeline.save_model(model, universe.name, cfg)
         loaded = pipeline.load_model(path)
         scores = loaded.score(

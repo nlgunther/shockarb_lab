@@ -7,6 +7,8 @@
 ~*
 .~*
 build*
+*us_*_*.json
+diagnose*.py
 
 # old Knowledge_Transfer files
 knowledge_transfers/
@@ -22,6 +24,7 @@ auxiliary/
 examples/
 older/
 legacy*/
+prices*/
 
 # Python extras
 *egg*/

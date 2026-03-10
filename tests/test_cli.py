@@ -18,6 +18,36 @@ Coverage areas
 
 from __future__ import annotations
 
+# from conftest import InMemoryStore
+class InMemoryStore:
+    """Shared test double for DataStore."""
+    def __init__(self):
+        self._data = {}
+
+    def write(self, key, df, meta):
+        ticker = key.split("/")[-1]
+        if "adj_close" in df.columns:
+            self._data[key] = df[["adj_close"]]
+        elif ticker in df.columns:
+            self._data[key] = df[[ticker]].rename(columns={ticker: "adj_close"})
+        else:
+            for col in df.columns:
+                self._data[f"daily/{col}"] = df[[col]].rename(columns={col: "adj_close"})
+
+    def read(self, key, start, end):
+        df = self._data.get(key)
+        if df is None: return None
+        try: return df.loc[start:end]
+        except Exception: return df
+
+    def coverage(self, key):
+        df = self._data.get(key)
+        if df is None or df.empty: return None
+        return (str(df.index.min().date()), str(df.index.max().date()))
+
+    def sweep(self, retention, before):
+        return []
+
 import os
 import sys
 from unittest.mock import patch
@@ -111,14 +141,21 @@ class TestPrintScores:
 
 class TestCmdBuild:
 
-    @patch("shockarb.pipeline.yf.download", return_value=pd.DataFrame())
-    def test_creates_json_and_prints_success(self, _mock, temp_dir, capsys):
+    def test_creates_json_and_prints_success(self, temp_dir, capsys):
+        from datamgr.coordinator import DataCoordinator
+        from datamgr.providers.mock import MockProvider
+
+        def _fresh_coord(_exec_cfg=None):
+            return DataCoordinator(InMemoryStore(), provider=MockProvider())
+
         class Args:
             universe = "us"
             data_dir = temp_dir
-            no_log = True
+            no_log   = True
 
-        cmd_build(Args())
+        with patch.object(pipeline, "_coordinator", side_effect=_fresh_coord):
+            cmd_build(Args())
+
         assert any(f.endswith(".json") for f in os.listdir(temp_dir))
         assert "✅" in capsys.readouterr().out
 

@@ -51,6 +51,11 @@ from shockarb.cache import CacheManager
 from shockarb.config import ExecutionConfig, UniverseConfig
 from shockarb.engine import FactorModel
 
+from datamgr.coordinator import DataCoordinator
+from datamgr.providers.yfinance import YFinanceProvider
+from datamgr.requests import DataRequest, Frequency
+from datamgr.stores.parquet import ParquetStore
+
 # =============================================================================
 # Internal helpers
 # =============================================================================
@@ -79,6 +84,24 @@ def _cache_manager(exec_cfg: ExecutionConfig) -> CacheManager:
         # shockarb.pipeline.yf.download are intercepted correctly.
         downloader=yf.download,
     )
+
+
+# =============================================================================
+# datamgr coordinator
+# =============================================================================
+
+def _coordinator(exec_cfg: ExecutionConfig) -> DataCoordinator:
+    """
+    Build a DataCoordinator wired to ParquetStore + YFinanceProvider.
+
+    This is the single point where shockarb hands off to datamgr.
+    Tests replace this via patch.object(pipeline, '_coordinator', ...).
+    """
+    from shockarb.store import DataStore as ShockArbStore
+    inner    = ShockArbStore(exec_cfg.data_dir)
+    store    = ParquetStore(inner)
+    provider = YFinanceProvider(downloader=yf.download)
+    return DataCoordinator(store, provider=provider)
 
 
 # =============================================================================
@@ -187,44 +210,63 @@ def prices_to_returns(
 # Live / intraday data (uncached)
 # =============================================================================
 
-def fetch_live_returns(tickers: List[str], period: str = "5d") -> pd.Series:
+def fetch_live_returns(
+    tickers: List[str],
+    period: str = "5d",
+    exec_config: Optional[ExecutionConfig] = None,
+) -> pd.Series:
     """
-    Fetch the most recent day's closing returns.
+    Fetch the most recent day's closing returns via the datamgr coordinator.
 
     Uses a 5-day look-back window so the return computation is safe across
-    weekends and holidays.
-
-    Tickers that return no data (delisted, renamed, bad symbol) are silently
-    dropped and logged at WARNING level.  This prevents a single bad ticker
-    from crashing a full-universe scan.
+    weekends and holidays.  Results are cached by the coordinator — calling
+    this multiple times on the same day does not trigger redundant downloads.
 
     Parameters
     ----------
     tickers : list of str
     period : str
-        yfinance period string.  Default "5d".
+        Look-back window as a yfinance period string.  Default "5d".
+    exec_config : ExecutionConfig, optional
 
     Returns
     -------
     Series
         Most recent day's returns, indexed by ticker.
-        May contain fewer tickers than requested if some were unavailable.
 
     Raises
     ------
     ValueError
-        If yfinance returns no data at all (network failure, not a bad ticker).
+        If no data can be retrieved at all.
     """
+    from datetime import date, timedelta
+
+    exec_cfg = _exec(exec_config)
     logger.info(f"Fetching live closing data for {len(tickers)} tickers…")
-    raw = yf.download(tickers, period=period, progress=False, auto_adjust=False)
 
-    if raw.empty:
-        raise ValueError("yfinance returned no data for fetch_live_returns")
+    # Translate period string to a concrete date range
+    # "5d" → last 7 calendar days (covers weekends + 1 holiday)
+    period_days = {"1d": 4, "5d": 7, "1mo": 35, "3mo": 95}
+    lookback    = period_days.get(period, 7)
+    end   = date.today().strftime("%Y-%m-%d")
+    start = (date.today() - timedelta(days=lookback)).strftime("%Y-%m-%d")
 
-    prices = raw["Adj Close"] if isinstance(raw.columns, pd.MultiIndex) else raw
+    coordinator = _coordinator(exec_cfg)
+    coordinator.register(DataRequest(
+        tickers   = tuple(tickers),
+        start     = start,
+        end       = end,
+        frequency = Frequency.DAILY,
+        retention = "permanent",
+        requester = "live_returns",
+    ))
+    results = coordinator.fulfill()
+    prices  = results.get("live_returns", pd.DataFrame())
 
-    # Drop all-NaN columns — yfinance returns these for delisted/bad tickers
-    # in batch downloads rather than raising a 404.
+    if prices is None or prices.empty:
+        raise ValueError("fetch_live_returns: coordinator returned no data.")
+
+    # Drop tickers that came back all-NaN
     bad = prices.columns[prices.isna().all()].tolist()
     if bad:
         logger.warning(
@@ -481,24 +523,26 @@ def build(
     exec_cfg = _exec(exec_config)
     logger.info(f"Building model: {universe.name}")
 
-    etf_returns = prices_to_returns(
-        fetch_prices(
-            universe.market_etfs,
-            universe.start_date,
-            universe.end_date,
-            cache_name=f"{universe.name}_etf",
-            exec_config=exec_cfg,
-        )
-    )
-    stock_returns = prices_to_returns(
-        fetch_prices(
-            universe.individual_stocks,
-            universe.start_date,
-            universe.end_date,
-            cache_name=f"{universe.name}_stock",
-            exec_config=exec_cfg,
-        )
-    )
+    coordinator = _coordinator(exec_cfg)
+    coordinator.register(DataRequest(
+        tickers   = tuple(universe.market_etfs),
+        start     = universe.start_date,
+        end       = universe.end_date,
+        frequency = Frequency.DAILY,
+        retention = "permanent",
+        requester = f"{universe.name}.etf",
+    ))
+    coordinator.register(DataRequest(
+        tickers   = tuple(universe.individual_stocks),
+        start     = universe.start_date,
+        end       = universe.end_date,
+        frequency = Frequency.DAILY,
+        retention = "permanent",
+        requester = f"{universe.name}.stock",
+    ))
+    results       = coordinator.fulfill()
+    etf_returns   = prices_to_returns(results.get(f"{universe.name}.etf",   pd.DataFrame()))
+    stock_returns = prices_to_returns(results.get(f"{universe.name}.stock", pd.DataFrame()))
     common = etf_returns.index.intersection(stock_returns.index)
     logger.info(f"Aligned on {len(common)} common trading days")
 

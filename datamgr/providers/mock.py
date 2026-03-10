@@ -69,34 +69,16 @@ class MockProvider(DataProvider):
 
         adj_close = close * adj_factor = 100.0 * adj_factor_override.
         """
-        self._call_log.append({
-            "tickers":   list(tickers),
-            "start":     start,
-            "end":       end,
-            "frequency": frequency,
-        })
 
         if frequency == Frequency.DAILY:
-            idx = pd.bdate_range(start=start, end=end)
+            idx = pd.bdate_range(start, end)
         else:
-            # Intraday: 26 bars of 15-minute data anchored to start date
             idx = pd.date_range(
-                f"{start} 09:30",
-                periods=26,
-                freq="15min",
-                tz="America/New_York",
+                f"{start} 09:30", periods=26, freq="15min", tz="America/New_York"
             )
-
         if idx.empty or not tickers:
             return pd.DataFrame()
 
-        fields = ["open", "high", "low", "close", "adj_close", "adj_factor", "volume"]
-        cols = pd.MultiIndex.from_product([fields, tickers])
-        df = pd.DataFrame(100.0, index=idx, columns=cols)
-
-        # Set adj_factor and re-derive adj_close correctly
-        for ticker in tickers:
-            df[("adj_factor", ticker)] = self._adj_factor
-            df[("adj_close", ticker)] = df[("close", ticker)] * self._adj_factor
-
-        return df
+        # Return a flat (dates × tickers) adj_close DataFrame —
+        # same shape the coordinator's _read_daily delivers to callers.
+        return pd.DataFrame(1.0, index=idx, columns=tickers)
