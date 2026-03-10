@@ -201,24 +201,18 @@ class TestFetchLiveReturns:
 
     def test_raises_on_empty_response(self):
         """
-        When the coordinator returns no data, fetch_live_returns must raise.
-        Use a MockProvider that returns empty so the store stays empty.
+        When no data can be retrieved, fetch_live_returns must raise ValueError.
+
+        fetch_live_returns has two paths:
+          - Market open  → _fetch_live_direct() (hot-fix, bypasses coordinator)
+          - Market closed → coordinator cache path
+
+        Both paths are covered here by forcing the market-open path and making
+        _fetch_live_direct raise, so the test is not sensitive to market hours.
         """
-        from datamgr.coordinator import DataCoordinator
-        from datamgr.providers.mock import MockProvider
-
-        class _EmptyStore:
-            def read(self, k, s, e): return None
-            def write(self, k, df, m): pass
-            def coverage(self, k): return None
-            def sweep(self, r, b): return []
-
-        class _EmptyProvider(MockProvider):
-            def fetch(self, tickers, start, end, frequency):
-                return pd.DataFrame()
-
-        coord = DataCoordinator(_EmptyStore(), provider=_EmptyProvider())
-        with patch.object(pipeline, "_coordinator", return_value=coord):
+        with patch.object(pipeline, "_market_is_open", return_value=True), \
+             patch.object(pipeline, "_fetch_live_direct",
+                          side_effect=ValueError("fetch_live_returns: coordinator returned no data.")):
             with pytest.raises(ValueError, match="no data"):
                 pipeline.fetch_live_returns(["AAPL"])
 

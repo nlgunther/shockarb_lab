@@ -330,7 +330,7 @@ class DataCoordinator:
             try:
                 df = self._store.read(key, req.start, req.end)
             except Exception as exc:
-                logger.warning("[Coordinator] read(%s) raised: %s", key, exc)
+                logger.warning(f"[Coordinator] read({key!r}) raised: {exc}")
                 continue
             if df is None or df.empty:
                 continue
