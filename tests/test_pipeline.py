@@ -28,6 +28,62 @@ from shockarb.config import ExecutionConfig, UniverseConfig
 
 
 # =============================================================================
+# Shared test helpers
+# =============================================================================
+
+class _InMemoryStore:
+    """
+    Minimal DataStore implementation for unit tests.
+
+    Stores DataFrames in a dict keyed by 'daily/{ticker}'.
+    No filesystem access — all operations are in-memory.
+    """
+    def __init__(self):
+        self._data = {}
+
+    def read(self, key, start, end):
+        df = self._data.get(key)
+        if df is None:
+            return None
+        try:
+            return df.loc[start:end]
+        except Exception:
+            return df
+
+    def write(self, key, df, meta):
+        self._data[key] = df
+
+    def coverage(self, key):
+        df = self._data.get(key)
+        if df is None or df.empty:
+            return None
+        return (str(df.index.min().date()), str(df.index.max().date()))
+
+    def sweep(self, retention, before):
+        return []
+
+
+def _seeded_store(tickers: dict[str, float], days: int = 10) -> _InMemoryStore:
+    """
+    Return an _InMemoryStore pre-seeded with adj_close data for *tickers*.
+
+    Parameters
+    ----------
+    tickers : dict  ticker -> base_price
+    days    : int   number of business days ending today
+    """
+    from datetime import date, timedelta
+    end   = date.today()
+    start = end - timedelta(days=days * 2)  # generous to guarantee enough bdays
+    idx   = pd.bdate_range(start=start, end=end)[-days:]
+    store = _InMemoryStore()
+    for ticker, base in tickers.items():
+        vals = [base + i * 0.5 for i in range(len(idx))]
+        store._data[f"daily/{ticker}"] = pd.DataFrame({"adj_close": vals}, index=idx)
+    return store
+
+
+# =============================================================================
 # prices_to_returns()
 # =============================================================================
 
@@ -161,21 +217,6 @@ class TestFetchLiveReturns:
     def test_returns_series_with_correct_tickers(self):
         from datamgr.coordinator import DataCoordinator
 
-        class _InMemoryStore:
-            def __init__(self):
-                self._data = {}
-            def read(self, key, start, end):
-                df = self._data.get(key)
-                if df is None: return None
-                try: return df.loc[start:end]
-                except Exception: return df
-            def write(self, key, df, meta): self._data[key] = df
-            def coverage(self, key):
-                df = self._data.get(key)
-                if df is None or df.empty: return None
-                return (str(df.index.min().date()), str(df.index.max().date()))
-            def sweep(self, retention, before): return []
-
         from datetime import date, timedelta
 
         # Seed a window that is guaranteed to cover any "1d" lookback from today
@@ -215,6 +256,168 @@ class TestFetchLiveReturns:
                           side_effect=ValueError("fetch_live_returns: coordinator returned no data.")):
             with pytest.raises(ValueError, match="no data"):
                 pipeline.fetch_live_returns(["AAPL"])
+
+
+# =============================================================================
+# score_universe()
+# =============================================================================
+
+class TestScoreUniverse:
+    """
+    Tests for pipeline.score_universe().
+
+    All tests use _InMemoryStore + MockProvider injected via patch.object so
+    no filesystem or network access occurs.
+    """
+
+    _UNIVERSE = UniverseConfig(
+        name="test",
+        market_etfs=["VOO", "TLT", "GLD"],
+        individual_stocks=["AAPL", "MSFT"],
+        n_components=2,
+        start_date="2022-02-10",
+        end_date="2022-03-31",
+    )
+
+    def _make_coordinator(self, store):
+        from datamgr.coordinator import DataCoordinator
+        from datamgr.providers.mock import MockProvider
+        return DataCoordinator(store, provider=MockProvider())
+
+    def test_returns_dataframe(self, fitted_model):
+        """score_universe() returns a non-empty DataFrame."""
+        store = _seeded_store({"VOO": 400, "TLT": 100, "GLD": 180,
+                               "AAPL": 150, "MSFT": 300})
+        coord = self._make_coordinator(store)
+        with patch.object(pipeline, "_coordinator", return_value=coord), \
+             patch.object(pipeline, "_market_is_open", return_value=False):
+            scores = pipeline.score_universe(self._UNIVERSE, fitted_model)
+        assert isinstance(scores, pd.DataFrame)
+        assert not scores.empty
+
+    def test_single_coordinator_single_fulfill(self, fitted_model):
+        """
+        score_universe() must create exactly one coordinator and call
+        fulfill() exactly once — both ETF and stock legs go through the
+        same instance.
+        """
+        from unittest.mock import MagicMock
+        store = _seeded_store({"VOO": 400, "TLT": 100, "GLD": 180,
+                               "AAPL": 150, "MSFT": 300})
+        real_coord = self._make_coordinator(store)
+
+        fulfill_calls = []
+        original_fulfill = real_coord.fulfill
+
+        def counting_fulfill(**kwargs):
+            fulfill_calls.append(1)
+            return original_fulfill(**kwargs)
+
+        real_coord.fulfill = counting_fulfill
+
+        coordinator_calls = []
+
+        def factory(*args, **kwargs):
+            coordinator_calls.append(1)
+            return real_coord
+
+        with patch.object(pipeline, "_coordinator", side_effect=factory), \
+             patch.object(pipeline, "_market_is_open", return_value=False):
+            pipeline.score_universe(self._UNIVERSE, fitted_model)
+
+        assert len(coordinator_calls) == 1, (
+            f"Expected 1 coordinator instantiation, got {len(coordinator_calls)}"
+        )
+        assert len(fulfill_calls) == 1, (
+            f"Expected 1 fulfill() call, got {len(fulfill_calls)}"
+        )
+
+    def test_etf_and_stock_end_dates_aligned(self, fitted_model):
+        """
+        Both ETF and stock data must end on the same date — no temporal
+        misalignment between legs.
+        """
+        from datamgr.coordinator import DataCoordinator
+        from datamgr.providers.mock import MockProvider
+
+        store = _seeded_store({"VOO": 400, "TLT": 100, "GLD": 180,
+                               "AAPL": 150, "MSFT": 300})
+        coord = DataCoordinator(store, provider=MockProvider())
+
+        captured = {}
+
+        original_fulfill = coord.fulfill
+
+        def capturing_fulfill(**kwargs):
+            result = original_fulfill(**kwargs)
+            captured["results"] = result
+            return result
+
+        coord.fulfill = capturing_fulfill
+
+        with patch.object(pipeline, "_coordinator", return_value=coord), \
+             patch.object(pipeline, "_market_is_open", return_value=False):
+            pipeline.score_universe(self._UNIVERSE, fitted_model)
+
+        etf_key   = "test.live_etf"
+        stock_key = "test.live_stock"
+        assert etf_key   in captured["results"], "ETF result missing from fulfill() output"
+        assert stock_key in captured["results"], "Stock result missing from fulfill() output"
+
+        etf_end   = captured["results"][etf_key].index.max()
+        stock_end = captured["results"][stock_key].index.max()
+        assert etf_end == stock_end, (
+            f"Date misalignment: ETF ends {etf_end}, stocks end {stock_end}"
+        )
+
+    def test_raises_on_empty_etf_data(self, fitted_model):
+        """
+        ValueError when the coordinator returns no ETF data.
+
+        We patch fulfill() directly to return controlled output — a store-only
+        approach won't work because MockProvider fills cache misses for any
+        ticker, making it impossible to produce an empty ETF result that way.
+        """
+        from datamgr.coordinator import DataCoordinator
+        from datamgr.providers.mock import MockProvider
+        from unittest.mock import MagicMock
+
+        coord = DataCoordinator(_InMemoryStore(), provider=MockProvider())
+        # Return stocks but empty ETF frame, simulating a provider failure
+        # for the ETF leg only.
+        coord.fulfill = lambda **kw: {
+            "test.live_etf":   pd.DataFrame(),   # empty — triggers the guard
+            "test.live_stock": pd.DataFrame(     # non-empty — passes its guard
+                {"AAPL": [1.0, 1.01], "MSFT": [1.0, 1.02]},
+                index=pd.bdate_range("2026-03-10", periods=2),
+            ),
+        }
+        with patch.object(pipeline, "_coordinator", return_value=coord), \
+             patch.object(pipeline, "_market_is_open", return_value=False):
+            with pytest.raises(ValueError, match="ETF"):
+                pipeline.score_universe(self._UNIVERSE, fitted_model)
+
+    def test_ticker_source_falls_back_to_universe_config(self, fitted_model):
+        """
+        After load_model(), model.etf_returns is empty (not persisted to JSON).
+        score_universe() must fall back to universe.market_etfs / individual_stocks.
+
+        Simulate a post-load model by nulling out the returns attributes.
+        """
+        import copy
+        model_copy = copy.copy(fitted_model)
+        # Simulate post-load state: returns matrices are not in memory
+        object.__setattr__(model_copy, "etf_returns",   pd.DataFrame())
+        object.__setattr__(model_copy, "stock_returns", pd.DataFrame())
+
+        store = _seeded_store({"VOO": 400, "TLT": 100, "GLD": 180,
+                               "AAPL": 150, "MSFT": 300})
+        coord = self._make_coordinator(store)
+        with patch.object(pipeline, "_coordinator", return_value=coord), \
+             patch.object(pipeline, "_market_is_open", return_value=False):
+            # Should not raise — tickers sourced from universe config
+            scores = pipeline.score_universe(self._UNIVERSE, model_copy)
+        assert isinstance(scores, pd.DataFrame)
 
 
 # =============================================================================
@@ -319,26 +522,11 @@ class TestBuild:
 
     def _mock_coordinator(self, temp_dir):
         """
-        Return a DataCoordinator wired with MockProvider + InMemoryStore so
+        Return a DataCoordinator wired with MockProvider + _InMemoryStore so
         build() gets synthetic OHLCV without any yfinance calls.
         """
         from datamgr.coordinator import DataCoordinator
         from datamgr.providers.mock import MockProvider
-
-        class _InMemoryStore:
-            def __init__(self): self._data = {}
-            def read(self, key, start, end):
-                df = self._data.get(key)
-                if df is None: return None
-                try: return df.loc[start:end]
-                except Exception: return df
-            def write(self, key, df, meta): self._data[key] = df
-            def coverage(self, key):
-                df = self._data.get(key)
-                if df is None or df.empty: return None
-                return (str(df.index.min().date()), str(df.index.max().date()))
-            def sweep(self, r, b): return []
-
         return DataCoordinator(_InMemoryStore(), provider=MockProvider())
 
     def test_build_returns_fitted_model(self, temp_dir):
@@ -384,20 +572,6 @@ class TestIntegration:
     def test_full_workflow(self, temp_dir):
         from datamgr.coordinator import DataCoordinator
         from datamgr.providers.mock import MockProvider
-
-        class _InMemoryStore:
-            def __init__(self): self._data = {}
-            def read(self, key, start, end):
-                df = self._data.get(key)
-                if df is None: return None
-                try: return df.loc[start:end]
-                except Exception: return df
-            def write(self, key, df, meta): self._data[key] = df
-            def coverage(self, key):
-                df = self._data.get(key)
-                if df is None or df.empty: return None
-                return (str(df.index.min().date()), str(df.index.max().date()))
-            def sweep(self, r, b): return []
 
         coord = DataCoordinator(_InMemoryStore(), provider=MockProvider())
         universe = UniverseConfig(

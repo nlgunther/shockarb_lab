@@ -659,6 +659,26 @@
     "ticker": "HSY",
     "tier": "daily"
   },
+  "daily/HYG": {
+    "date_range": [
+      "2022-02-10",
+      "2022-03-30"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-12T09:12:51.138212",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\HYG.parquet",
+    "rows": 34,
+    "ticker": "HYG",
+    "tier": "daily"
+  },
   "daily/ICE": {
     "date_range": [
       "2022-02-10",
@@ -697,6 +717,26 @@
     "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\IDXX.parquet",
     "rows": 46,
     "ticker": "IDXX",
+    "tier": "daily"
+  },
+  "daily/IEF": {
+    "date_range": [
+      "2022-02-10",
+      "2022-03-30"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-12T09:12:51.201137",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\IEF.parquet",
+    "rows": 34,
+    "ticker": "IEF",
     "tier": "daily"
   },
   "daily/INTU": {
@@ -1539,6 +1579,26 @@
     "ticker": "TTE",
     "tier": "daily"
   },
+  "daily/TTLT": {
+    "date_range": [
+      "2022-02-10",
+      "2022-03-30"
+    ],
+    "fields": [
+      "adj_close",
+      "adj_factor",
+      "close",
+      "high",
+      "low",
+      "open",
+      "volume"
+    ],
+    "last_updated": "2026-03-12T09:04:20.790215",
+    "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\TTLT.parquet",
+    "rows": 34,
+    "ticker": "TTLT",
+    "tier": "daily"
+  },
   "daily/TXN": {
     "date_range": [
       "2022-02-10",
@@ -1633,7 +1693,7 @@
       "open",
       "volume"
     ],
-    "last_updated": "2026-03-10T18:03:41.197061",
+    "last_updated": "2026-03-12T09:12:51.234466",
     "path": "C:\\Users\\nlgun\\personal\\nlgcode\\shockarb_lab\\data\\prices\\daily\\UUP.parquet",
     "rows": 34,
     "ticker": "UUP",

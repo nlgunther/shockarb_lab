@@ -96,14 +96,11 @@ class DataCoordinator:
 
         # Steps 2-3
         merged = self._merge_requests()
-        print(f"DEBUG merged: {len(merged)} group(s)")
-        # Steps 2-3
         for merged_req in merged:
             if merged_req.frequency == Frequency.INTRADAY_15M:
                 # Intraday: delegate directly to the store, no gap-analysis needed
                 continue
             gaps = self._gap_analyse(merged_req)
-            print(f"DEBUG gaps for {merged_req.frequency}: {len(gaps)} ticker(s)")
             if not gaps:
                 logger.debug(
                     f"[Coordinator] Full cache hit — "
@@ -199,14 +196,7 @@ class DataCoordinator:
             cached_end_ts = pd.Timestamp(cached_end)
             req_end_ts    = pd.Timestamp(req.end)
 
-            if cached_end_ts >= req_end_ts:# - pd.tseries.offsets.BDay(1):
-                                  # BDay(1) tolerance removed — was masking one-day lag.
-                                  # Original intent was to avoid re-fetching on days when
-                                  # the market hasn't closed yet, but the effect was that
-                                  # a cache ending on T-1 was always treated as current,
-                                  # causing score to report yesterday's returns as today's.
-                                  # See FUTURE_REFACTOR.md: proper fix is a market-hours-
-                                  # aware check that only skips the fetch after 4pm ET.
+            if cached_end_ts >= req_end_ts:
                 logger.debug(f"[GapAnalyse] HIT   {ticker}: covered through {cached_end}")
                 continue
 
@@ -337,7 +327,7 @@ class DataCoordinator:
             try:
                 df = self._store.read(key, req.start, req.end)
             except Exception as exc:
-                logger.warning(f"[Coordinator] read({key!r}) raised: {exc}")
+                logger.warning("[Coordinator] read(%s) raised: %s", key, exc)
                 continue
             if df is None or df.empty:
                 continue

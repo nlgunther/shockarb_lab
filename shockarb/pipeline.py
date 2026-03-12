@@ -3,51 +3,25 @@ Data pipeline — all I/O so the engine stays pure.
 
 Functions
 ---------
-  fetch_prices            Download + cache adjusted close prices via CacheManager.
-  prices_to_returns       Convert prices to returns with robust NaN handling.
-  fetch_live_returns      Latest closing-day returns via coordinator (cached),
-                          or direct yfinance during market hours (hot fix).
+  fetch_prices        Download + cache adjusted close prices via CacheManager.
+  prices_to_returns   Convert prices to returns with robust NaN handling.
+  fetch_live_returns  Latest closing-day returns (uncached, for scoring).
+  score_universe      Score a universe via a single shared coordinator instance.
+                      Primary entry point for the score CLI and daily scanner.
   fetch_intraday_returns  Intraday returns since prior close (uncached, with retry).
-  save_live_tape          15-minute OHLCV tape for ETFs + stocks, 3 rows, parquet.
-  save_intraday_tape      1-minute tape, 3 vital rows (or full), parquet.
-  build                   Full pipeline: register DataRequests → fulfill → fit FactorModel.
-  save_model              Persist a fitted model as JSON.
-  load_model              Load a saved model from JSON.
-  find_latest_model       Find the most-recently saved model by name prefix.
-  export_csvs             Write ETF basis and stock loadings to CSV.
+  save_live_tape      Daily OHLCV for ETFs + stocks combined, sliced to 2 rows, saved as parquet.
+  save_intraday_tape  1-minute tape sliced to 3 vital rows, saved as parquet.
+  build               Full pipeline: fetch → returns → fit FactorModel.
+  save_model          Persist a fitted model as JSON.
+  load_model          Load a saved model from JSON.
+  find_latest_model   Find the most-recently saved model by name.
+  export_csvs         Write ETF basis and stock loadings to CSV.
 
 Design principle
 ----------------
 All filesystem interaction, API calls, and caching live here.
-The engine (FactorModel) is pure: no I/O, no filesystem, no yfinance.
 Swap out the data source (e.g., Bloomberg instead of yfinance) by
 modifying this module only — the engine is untouched.
-
-datamgr integration
--------------------
-build() and fetch_live_returns() use the datamgr coordinator rather than
-CacheManager directly.  The coordinator entry point is _coordinator(), which
-is the single point where shockarb hands off to datamgr::
-
-    pipeline._coordinator()
-      → ParquetStore(ShockArbStore(exec_cfg.data_dir))
-      → DataCoordinator(store, provider=YFinanceProvider(...))
-
-Tests patch _coordinator() via patch.object(pipeline, '_coordinator', ...)
-to inject an InMemoryStore + MockProvider without touching the filesystem.
-Use side_effect= (not return_value=) when patching so that each build()
-call receives a fresh coordinator instance with an empty request registry.
-
-Intraday hot fix
-----------------
-fetch_live_returns() bypasses the coordinator during NYSE market hours.
-When _market_is_open() returns True (or force_live=True is passed),
-_fetch_live_direct() is called instead, fetching 5-minute bars from
-yfinance directly and computing returns against the prior day's close.
-
-This is a temporary fix tracked on branch intraday_hotfix.  The proper
-fix (Phases 1-3) moves this logic into YFinanceProvider.fetch() with full
-coordinator gap-analysis and intraday store caching.
 
 Example
 -------
@@ -96,13 +70,7 @@ def _default_exec() -> ExecutionConfig:
 
 
 def _exec(exec_config: Optional[ExecutionConfig]) -> ExecutionConfig:
-    """
-    Return *exec_config* if provided (and configure its logger), else a default.
-
-    All public functions accept an optional ExecutionConfig so callers can
-    control data_dir and log_level without a global.  This helper collapses
-    the None check to one line per function.
-    """
+    """Return *exec_config* if provided (and configure its logger), else a default."""
     if exec_config is not None:
         exec_config.configure_logger()
         return exec_config
@@ -110,18 +78,12 @@ def _exec(exec_config: Optional[ExecutionConfig]) -> ExecutionConfig:
 
 
 def _cache_manager(exec_cfg: ExecutionConfig) -> CacheManager:
-    """
-    Build a CacheManager rooted in exec_cfg's data directory.
-
-    Used only by fetch_prices() (the legacy CacheManager path).  New callers
-    should use the coordinator path via build() instead.
-
-    The downloader= parameter is passed as the module-level yf.download symbol
-    so that test patches on shockarb.pipeline.yf.download are intercepted.
-    """
+    """Build a CacheManager rooted in exec_cfg's data directory."""
     return CacheManager(
         cache_dir=os.path.join(exec_cfg.data_dir, "cache"),
         backup_dir=os.path.join(exec_cfg.data_dir, "backups"),
+        # Pass the module-level symbol so test patches on
+        # shockarb.pipeline.yf.download are intercepted correctly.
         downloader=yf.download,
     )
 
@@ -132,29 +94,10 @@ def _cache_manager(exec_cfg: ExecutionConfig) -> CacheManager:
 
 def _coordinator(exec_cfg: ExecutionConfig) -> DataCoordinator:
     """
-    Build a fresh DataCoordinator wired to ParquetStore + YFinanceProvider.
+    Build a DataCoordinator wired to ParquetStore + YFinanceProvider.
 
-    This is the single point where shockarb hands off to datamgr.  All
-    coordinator construction is centralised here so tests can patch a single
-    symbol to inject test doubles::
-
-        with patch.object(pipeline, '_coordinator', side_effect=_fresh_coord):
-            result = pipeline.build(US_UNIVERSE)
-
-    Use side_effect= (not return_value=) so that each call to build() or
-    fetch_live_returns() gets a fresh coordinator instance with an empty
-    request registry.  Reusing a single instance across calls causes
-    previously registered requests to be re-fulfilled on every call.
-
-    Parameters
-    ----------
-    exec_cfg : ExecutionConfig
-        Provides data_dir for ParquetStore path resolution.
-
-    Returns
-    -------
-    DataCoordinator
-        Wired to disk (ParquetStore) and yfinance (YFinanceProvider).
+    This is the single point where shockarb hands off to datamgr.
+    Tests replace this via patch.object(pipeline, '_coordinator', ...).
     """
     from shockarb.store import DataStore as ShockArbStore
     inner    = ShockArbStore(exec_cfg.data_dir)
@@ -177,9 +120,6 @@ def fetch_prices(
     """
     Download adjusted close prices, using a local parquet cache.
 
-    Legacy CacheManager path — retained for backward compatibility.  New
-    callers should use build() which uses the coordinator + ParquetStore.
-
     Only hits the network for tickers or date ranges not already cached.
     A second call with identical arguments costs zero API calls.
 
@@ -193,18 +133,16 @@ def fetch_prices(
         End date YYYY-MM-DD, exclusive (yfinance convention).
     cache_name : str
         Logical cache key (e.g. "us_etf").  Each unique name gets its own
-        parquet file in data/cache/.  Keep ETF and stock universes separate
-        to avoid key collisions.
+        parquet file, so keep ETF and stock universes separate.
     exec_config : ExecutionConfig, optional
-        Controls data directory and logging.
+        Controls data directory and logging.  Uses a process-wide default if omitted.
 
     Returns
     -------
-    pd.DataFrame
+    DataFrame
         (dates × tickers) adjusted close prices.
         Falls back to synthetic crisis prices if yfinance fails entirely —
-        logged at ERROR level.  Synthetic prices all start at 100 and are
-        detectable programmatically.
+        this is logged at ERROR level and is only intended for testing.
     """
     exec_cfg = _exec(exec_config)
     mgr = _cache_manager(exec_cfg)
@@ -242,16 +180,15 @@ def prices_to_returns(
 
     Parameters
     ----------
-    prices : pd.DataFrame
+    prices : DataFrame
         (T × N) adjusted close prices.
     min_coverage : float
-        Minimum fraction of non-NaN prices to retain a ticker.  Default 0.8.
-        Tickers below this threshold are dropped and logged at WARNING level.
+        Minimum fraction of non-NaN prices to retain a ticker. Default 0.8.
 
     Returns
     -------
-    pd.DataFrame
-        (T−1 × N') daily returns.  N' ≤ N if low-coverage tickers were dropped.
+    DataFrame
+        (T−1 × N') daily returns. N' ≤ N if low-coverage tickers were dropped.
     """
     coverage = prices.notna().mean()
     good = coverage[coverage >= min_coverage].index
@@ -279,15 +216,7 @@ def prices_to_returns(
 # Phase 1-3 intraday coordinator path before merging to main.
 
 def _market_is_open() -> bool:
-    """
-    Return True if NYSE is currently in its regular trading session.
-
-    Uses America/New_York timezone.  Returns False on weekends regardless
-    of time.  Regular session: 09:30 – 16:00 ET inclusive.
-
-    Used by fetch_live_returns() to decide whether to call _fetch_live_direct()
-    (intraday hot fix path) or the coordinator cache path (after close).
-    """
+    """True if NYSE is currently in its regular session."""
     import pytz
     from datetime import datetime
     now = datetime.now(pytz.timezone("America/New_York"))
@@ -300,34 +229,10 @@ def _market_is_open() -> bool:
 
 def _fetch_live_direct(tickers: List[str]) -> pd.Series:
     """
-    Fetch the most recent intraday return directly from yfinance.
-
-    Bypasses the coordinator and ParquetStore entirely.  Downloads a 5-day
-    window of 5-minute bars, then computes the return from the prior day's
-    last bar to the latest available bar today.
-
-    HOT_FIX — this logic moves into YFinanceProvider.fetch() in the proper
-    intraday fix (Phases 1-3 on branch intraday_hotfix):
-      Phase 1 — YFinanceProvider handles INTRADAY_15M with interval="5m"
-      Phase 2 — ParquetStore intraday read/write with append-dedup
-      Phase 3 — fetch_live_returns registers INTRADAY_15M + DAILY requests
-
-    Parameters
-    ----------
-    tickers : list of str
-        Tickers to fetch.
-
-    Returns
-    -------
-    pd.Series
-        Return from prior day's close to latest 5-minute bar, indexed by ticker.
-
-    Raises
-    ------
-    ValueError
-        If yfinance returns no data, or if there is insufficient history
-        to compute a return (fewer than two distinct trading dates in the
-        5-day window).
+    Fetch the most recent return directly from yfinance, bypassing the
+    coordinator cache.  Used during market hours when no complete daily
+    bar exists yet.
+    HOT_FIX: this logic moves into YFinanceProvider.fetch() in the proper fix.
     """
     import yfinance as yf
     import pytz
@@ -386,55 +291,30 @@ def fetch_live_returns(
     force_live: bool = False,
 ) -> pd.Series:
     """
-    Fetch the most recent day's closing returns.
+    Fetch the most recent day's closing returns via the datamgr coordinator.
+    Uses a 5-day look-back window so the return computation is safe across
+    weekends and holidays.  Results are cached by the coordinator — calling
+    this multiple times on the same day does not trigger redundant downloads.
 
-    Two paths depending on market hours:
-
-    During market hours (or force_live=True)
-        Calls _fetch_live_direct() — bypasses the coordinator and fetches
-        5-minute bars from yfinance to reflect intraday prices.  No caching.
-        HOT_FIX: this path is temporary; see _fetch_live_direct() docstring.
-
-    After market close
-        Uses the datamgr coordinator with a 5-day daily lookback.  Results
-        are cached by the coordinator — calling this multiple times on the
-        same day does not trigger redundant downloads.
-
-    Test patching
-    -------------
-    To test the empty-response error path without a live yfinance call::
-
-        with patch.object(pipeline, "_market_is_open", return_value=True), \\
-             patch.object(pipeline, "_fetch_live_direct",
-                          side_effect=ValueError("fetch_live_returns: coordinator returned no data.")):
-            with pytest.raises(ValueError, match="no data"):
-                pipeline.fetch_live_returns(["AAPL"])
+    During market hours (or when force_live=True), bypasses the coordinator
+    and fetches directly from yfinance so intraday prices are reflected.
 
     Parameters
     ----------
     tickers : list of str
-        Tickers to fetch returns for.
     period : str
-        Look-back window as a yfinance period string.  Default "5d" — enough
-        to bridge weekends and single-day holidays.  Supported values: "1d",
-        "5d", "1mo", "3mo".
+        Look-back window as a yfinance period string.  Default "5d".
     exec_config : ExecutionConfig, optional
-        Controls data directory and logging.  Uses a process-wide default
-        if omitted.
     force_live : bool
-        Force the intraday hot-fix path regardless of market hours.
-        Useful for manual testing of the intraday return computation.
-
+        Force direct yfinance fetch regardless of market hours.
     Returns
     -------
-    pd.Series
+    Series
         Most recent day's returns, indexed by ticker.
-
     Raises
     ------
     ValueError
-        If no data can be retrieved at all, if all tickers return empty
-        data, or if the return computation produces an empty result.
+        If no data can be retrieved at all.
     """
     from datetime import date, timedelta
     exec_cfg = _exec(exec_config)
@@ -449,7 +329,6 @@ def fetch_live_returns(
     lookback    = period_days.get(period, 7)
     end   = date.today().strftime("%Y-%m-%d")
     start = (date.today() - timedelta(days=lookback)).strftime("%Y-%m-%d")
-
     coordinator = _coordinator(exec_cfg)
     coordinator.register(DataRequest(
         tickers   = tuple(tickers),
@@ -461,10 +340,8 @@ def fetch_live_returns(
     ))
     results = coordinator.fulfill()
     prices  = results.get("live_returns", pd.DataFrame())
-
     if prices is None or prices.empty:
         raise ValueError("fetch_live_returns: coordinator returned no data.")
-
     bad = prices.columns[prices.isna().all()].tolist()
     if bad:
         logger.warning(
@@ -472,15 +349,116 @@ def fetch_live_returns(
             "Check for delistings or ticker changes."
         )
         prices = prices.drop(columns=bad)
-
     if prices.empty:
         raise ValueError("fetch_live_returns: all tickers returned empty data.")
-
     returns = prices.ffill().pct_change().dropna(how="all")
     if returns.empty:
         raise ValueError("fetch_live_returns: return computation produced empty result")
-
     return returns.iloc[-1]
+
+
+def score_universe(
+    universe: UniverseConfig,
+    model: "FactorModel",
+    exec_config: Optional[ExecutionConfig] = None,
+) -> "pd.DataFrame":
+    """
+    Score a universe using a single shared coordinator instance.
+
+    All ETF and stock tickers are registered together and satisfied in one
+    coordinator.fulfill() call, guaranteeing temporal alignment — both asset
+    classes see data through the same date before scoring.
+
+    During market hours, delegates to fetch_live_returns() for each leg
+    (which uses the HOT_FIX intraday path). The shared-coordinator intraday
+    path replaces this delegation in Step 2b.
+
+    Parameters
+    ----------
+    universe : UniverseConfig
+        Defines the ETF and stock tickers. Used as the ticker source so this
+        function works correctly even when model.etf_returns / stock_returns
+        are empty after load_model() (those matrices are not persisted to JSON).
+    model : FactorModel
+        Already-loaded model. Must be fitted.
+    exec_config : ExecutionConfig, optional
+
+    Returns
+    -------
+    DataFrame
+        Score output from model.score() — one row per stock, columns include
+        shock_score, confidence_delta, and factor loadings.
+
+    Raises
+    ------
+    ValueError
+        If the coordinator returns empty data for either leg.
+    """
+    from datetime import date, timedelta
+
+    exec_cfg = _exec(exec_config)
+
+    # Ticker source: prefer live columns from the model (available right after
+    # build()); fall back to universe config (correct after load_model()).
+    etf_tickers   = (list(model.etf_returns.columns)
+                     if model.etf_returns is not None and not model.etf_returns.empty
+                     else list(universe.market_etfs))
+    stock_tickers = (list(model.stock_returns.columns)
+                     if model.stock_returns is not None and not model.stock_returns.empty
+                     else list(universe.individual_stocks))
+
+    logger.info(
+        f"score_universe({universe.name!r}): "
+        f"{len(etf_tickers)} ETFs, {len(stock_tickers)} stocks"
+    )
+
+    # HOT_FIX: during market hours the coordinator daily path has no complete
+    # bar yet. Delegate to fetch_live_returns() which handles intraday via
+    # _fetch_live_direct(). Replace in Step 2b with a shared intraday request.
+    if _market_is_open():
+        logger.info("Market is open — delegating to fetch_live_returns() for intraday data.")
+        etf_returns   = fetch_live_returns(etf_tickers,   exec_config=exec_cfg)
+        stock_returns = fetch_live_returns(stock_tickers, exec_config=exec_cfg)
+        return model.score(etf_returns, stock_returns)
+
+    # After close: single coordinator, single fulfill() — both legs aligned.
+    end   = date.today().strftime("%Y-%m-%d")
+    start = (date.today() - timedelta(days=7)).strftime("%Y-%m-%d")
+
+    coordinator = _coordinator(exec_cfg)
+    coordinator.register(DataRequest(
+        tickers   = tuple(etf_tickers),
+        start     = start,
+        end       = end,
+        frequency = Frequency.DAILY,
+        retention = "permanent",
+        requester = f"{universe.name}.live_etf",
+    ))
+    coordinator.register(DataRequest(
+        tickers   = tuple(stock_tickers),
+        start     = start,
+        end       = end,
+        frequency = Frequency.DAILY,
+        retention = "permanent",
+        requester = f"{universe.name}.live_stock",
+    ))
+    results = coordinator.fulfill()
+
+    etf_prices   = results.get(f"{universe.name}.live_etf",   pd.DataFrame())
+    stock_prices = results.get(f"{universe.name}.live_stock", pd.DataFrame())
+
+    if etf_prices is None or etf_prices.empty:
+        raise ValueError(
+            f"score_universe({universe.name!r}): coordinator returned no ETF data."
+        )
+    if stock_prices is None or stock_prices.empty:
+        raise ValueError(
+            f"score_universe({universe.name!r}): coordinator returned no stock data."
+        )
+
+    etf_returns   = prices_to_returns(etf_prices).iloc[-1]
+    stock_returns = prices_to_returns(stock_prices).iloc[-1]
+    return model.score(etf_returns, stock_returns)
 
 
 def save_live_tape(
@@ -501,7 +479,7 @@ def save_live_tape(
                closing bar if called after the bell)
 
     The full MultiIndex column structure from yfinance (``auto_adjust=False``)
-    is preserved: ``(Adj Close, ticker)``, ``(Close, ticker)``,
+    is preserved:  ``(Adj Close, ticker)``, ``(Close, ticker)``,
     ``(High, ticker)``, ``(Low, ticker)``, ``(Open, ticker)``,
     ``(Volume, ticker)``.
 
@@ -514,7 +492,7 @@ def save_live_tape(
 
     Returns
     -------
-    pd.DataFrame or None
+    DataFrame or None
         The saved 3-row tape, or None on failure.
 
     Notes
@@ -582,16 +560,14 @@ def fetch_intraday_returns(
     tickers : list of str
     max_retries : int
         Retry attempts on transient yfinance failures.  Default 3.
-        Each retry waits 5 * attempt_number seconds before retrying.
     playback_path : str, optional
         Path to a previously saved parquet tape (from save_intraday_tape()).
-        When provided, returns are computed from the file rather than live
-        data.  Intended for offline replay and debugging.  If the file does
-        not exist, falls through to the live fetch path.
+        When provided, returns are computed from the file rather than live data.
+        Intended for offline replay and debugging.
 
     Returns
     -------
-    pd.Series or None
+    Series or None
         Intraday return from prior close, or None after all retries fail.
     """
     import time
@@ -636,22 +612,21 @@ def save_intraday_tape(
     """
     Download a 1-minute tape and persist it for later playback.
 
-    By default stores only the three structurally vital rows (yesterday's
-    last close, today's open, today's current print) to keep files small.
+    By default stores only the three structurally vital rows (yesterday's last
+    close, today's open, today's current print) to keep files small.
     Pass full_tape=True to store all ~600 rows.
 
     Parameters
     ----------
     tickers : list of str
     path : str
-        Destination parquet path.  Directory is created if needed.
+        Destination parquet path.
     full_tape : bool
-        If True, store the complete 2-day 1-minute tape rather than the
-        3-row minimal slice.
+        If True, store the complete 2-day 1-minute tape.
 
     Returns
     -------
-    pd.DataFrame or None
+    DataFrame or None
         The saved tape, or None on failure.
     """
     try:
@@ -673,19 +648,7 @@ def save_intraday_tape(
 
 
 def _intraday_return_from_tape(data: pd.DataFrame) -> pd.Series:
-    """
-    Compute (current − prior_close) / prior_close from a 1-minute tape.
-
-    Parameters
-    ----------
-    data : pd.DataFrame
-        Raw yfinance 1-minute tape.  MultiIndex columns if multi-ticker.
-
-    Returns
-    -------
-    pd.Series
-        Return from yesterday's close to current bar, indexed by ticker.
-    """
+    """Compute (current − prior_close) / prior_close from a 1-minute tape."""
     prices = data["Close"] if isinstance(data.columns, pd.MultiIndex) else data
     prices = prices.dropna(axis=1, how="all").ffill()
 
@@ -695,28 +658,7 @@ def _intraday_return_from_tape(data: pd.DataFrame) -> pd.Series:
 
 
 def _minimal_tape(data: pd.DataFrame) -> pd.DataFrame:
-    """
-    Reduce a full intraday tape to the three structurally vital rows.
-
-    Rows selected:
-      - Yesterday's last bar  (prior close reference)
-      - Today's first bar     (opening print)
-      - Today's current bar   (latest print)
-
-    These three rows are sufficient to compute the prior-close return and
-    the intraday move for any ticker.  Duplicate indices (e.g. if current ==
-    first bar at open) are de-duplicated.
-
-    Parameters
-    ----------
-    data : pd.DataFrame
-        Full intraday tape from yfinance (1-minute or 15-minute bars).
-
-    Returns
-    -------
-    pd.DataFrame
-        2–3 row DataFrame.
-    """
+    """Reduce a full 1-minute tape to the three structurally vital rows."""
     tape = data.ffill()
     dates = tape.index.normalize().unique()
     if len(dates) < 2:
@@ -724,7 +666,7 @@ def _minimal_tape(data: pd.DataFrame) -> pd.DataFrame:
 
     yesterday, today = dates[-2], dates[-1]
     y_close = tape[tape.index.normalize() == yesterday].index[-1]
-    t_open  = tape[tape.index.normalize() == today].index[0]
+    t_open = tape[tape.index.normalize() == today].index[0]
     current = tape.index[-1]
 
     return tape.loc[pd.Index([y_close, t_open, current]).unique()]
@@ -739,31 +681,19 @@ def build(
     exec_config: Optional[ExecutionConfig] = None,
 ) -> FactorModel:
     """
-    Full pipeline: register DataRequests → coordinator.fulfill() → fit model.
-
-    Registers two DataRequests (ETFs and stocks) with the coordinator, fulfills
-    them (gap-analysed downloads + cache), converts prices to returns, aligns
-    the two return matrices on common trading days, and fits the FactorModel.
-
-    Stale manifest warning
-    ----------------------
-    If build() logs "Aligned on 0 common trading days" despite a successful
-    data fetch, the manifest.json is likely stale — its date_range entries
-    cover the wrong window so coverage() reports false cache hits.
-    Fix: delete data/manifest.json and run build again.
+    Full pipeline: fetch → compute returns → fit model.
 
     Parameters
     ----------
     universe : UniverseConfig
         Defines what to analyze: tickers, date window, n_components.
     exec_config : ExecutionConfig, optional
-        Controls caching, paths, and logging.  Uses a process-wide default
-        if omitted.
+        Controls caching, paths, and logging.
 
     Returns
     -------
     FactorModel
-        Fitted and ready for score().
+        Fitted and ready for scoring.
     """
     exec_cfg = _exec(exec_config)
     logger.info(f"Building model: {universe.name}")
@@ -804,22 +734,20 @@ def save_model(
     """
     Persist a fitted model to JSON.
 
-    Timestamps the filename so multiple saves do not overwrite each other.
-    Use find_latest_model() to retrieve the most recent file by name prefix.
+    The filename embeds a timestamp so multiple saves don't overwrite each
+    other.  Use find_latest_model() to retrieve the most recent one.
 
     Parameters
     ----------
     model : FactorModel
-        A fitted model (model.fit() must have been called).
     name : str
-        Short identifier, e.g. "us" or "global".  Used as the filename prefix
-        and stored in the JSON metadata.
+        Short identifier, e.g. "us" or "global".
     exec_config : ExecutionConfig, optional
 
     Returns
     -------
     str
-        Absolute path to the saved JSON file.
+        Absolute path to the saved file.
     """
     exec_cfg = _exec(exec_config)
     path = exec_cfg.resolve_path(
@@ -866,10 +794,6 @@ def find_latest_model(
     """
     Find the most recently saved model file for *name*.
 
-    Globs data_dir for {name}_*.json and returns the lexicographically last
-    match.  Because filenames embed a timestamp (YYYYMMDD_HHMMSS), the last
-    file alphabetically is always the most recent.
-
     Parameters
     ----------
     name : str
@@ -900,23 +824,13 @@ def export_csvs(
     Write ETF factor basis and stock loadings to human-readable CSV files.
 
     If diagnostics are available (always the case after build()), stock
-    loadings are augmented with R² and residual volatility columns and sorted
-    by R² descending so the most trustworthy factor signals are at the top.
-
-    Parameters
-    ----------
-    model : FactorModel
-        Fitted model with diagnostics populated.
-    name : str
-        Prefix for output filenames, e.g. "us" → "us_etf_basis.csv",
-        "us_stock_loadings.csv".
-    exec_config : ExecutionConfig, optional
+    loadings are augmented with R² and residual volatility columns and
+    sorted by R² descending so the most trustworthy signals are at the top.
 
     Returns
     -------
-    tuple of (str, str)
-        (etf_basis_path, stock_loadings_path) — absolute paths to the
-        two CSV files written.
+    tuple of str
+        (etf_basis_path, stock_loadings_path)
     """
     exec_cfg = _exec(exec_config)
 
@@ -927,7 +841,7 @@ def export_csvs(
     output = model.loadings.copy()
 
     if model.diagnostics:
-        output["R_squared"]   = model.diagnostics.stock_r_squared
+        output["R_squared"] = model.diagnostics.stock_r_squared
         output["Residual_Vol"] = model.diagnostics.residual_vol
         output = output.sort_values("R_squared", ascending=False)
 
@@ -959,26 +873,14 @@ def _synthetic_prices(tickers: List[str], start: str, end: str) -> pd.DataFrame:
     """
     Generate reproducible synthetic prices that approximate crisis dynamics.
 
-    FOR TESTING AND NETWORK-OUTAGE FALLBACK ONLY.
-
+    *** FOR TESTING AND NETWORK-OUTAGE FALLBACK ONLY. ***
     All series start at 100 — a deliberate flag so callers can detect
-    synthetic data programmatically (real prices very rarely all start at 100).
+    synthetic data programmatically (real prices very rarely start at 100).
 
     Stylised facts embedded (Russia-Ukraine, Feb–Mar 2022):
-      - Broad equity:   −5%
-      - Energy / defence: +10–15%
+      - Broad equity:  −5%
+      - Energy / defence:  +10–15%
       - Gold / bonds:   +5%
-
-    Parameters
-    ----------
-    tickers : list of str
-    start, end : str
-        YYYY-MM-DD range for the synthetic index.
-
-    Returns
-    -------
-    pd.DataFrame
-        (dates × tickers) prices anchored at 100.
     """
     logger.error(
         f"SYNTHETIC DATA: {start} → {end}, {len(tickers)} tickers. "
@@ -1009,7 +911,7 @@ def fetch_live_prices(
 
     Returns the raw multi-level OHLCV DataFrame from yfinance — one row per
     trading day, columns are a MultiIndex of (field, ticker).  This is the
-    data before pct_change, suitable for auditing, replaying, or feeding
+    data *before* pct_change, suitable for auditing, replaying, or feeding
     back into prices_to_returns().
 
     Parameters
@@ -1020,13 +922,12 @@ def fetch_live_prices(
     save_path : str, optional
         If provided, the OHLCV DataFrame is written to this path as parquet
         before being returned.  The directory is created if it does not exist.
-        File naming convention used by the CLI::
-
-            {data_dir}/prices_{name}_{YYYYMMDD_HHMMSS}.parquet
+        File naming convention used by the CLI:
+          {data_dir}/prices_{name}_{YYYYMMDD_HHMMSS}.parquet
 
     Returns
     -------
-    pd.DataFrame
+    DataFrame
         Raw OHLCV MultiIndex DataFrame (dates × (field, ticker)).
 
     Raises
@@ -1036,8 +937,8 @@ def fetch_live_prices(
 
     Example
     -------
-        ohlcv   = fetch_live_prices(["VOO", "TLT"], save_path="data/prices_etf.parquet")
-        prices  = CacheManager.extract_adj_close(ohlcv)
+        ohlcv = fetch_live_prices(["VOO", "TLT"], save_path="data/prices_etf.parquet")
+        prices = CacheManager.extract_adj_close(ohlcv)   # or mgr.extract_adj_close()
         returns = prices_to_returns(prices)
     """
     logger.info(f"Fetching live OHLCV for {len(tickers)} tickers (period={period})…")
@@ -1049,7 +950,8 @@ def fetch_live_prices(
     # Normalise to MultiIndex even for a single ticker
     if not isinstance(raw.columns, pd.MultiIndex):
         raw.columns = pd.MultiIndex.from_tuples(
-            [(col, tickers[0]) for col in raw.columns]
+            [("Close", raw.columns[0])] if len(tickers) == 1
+            else [("Close", t) for t in raw.columns]
         )
 
     if save_path:

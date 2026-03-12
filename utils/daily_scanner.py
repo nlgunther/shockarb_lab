@@ -44,6 +44,11 @@ def fetch_todays_returns(tickers: list[str]) -> pd.Series:
     """
     Fetch today's closing return for each ticker.
 
+    .. deprecated::
+        No longer called by run_scanner(). Scheduled for deletion in Step 2a
+        (Part A1) once the score_universe() path is confirmed stable.
+        Use pipeline.score_universe() instead.
+
     Downloads the last 5 trading days so the prior close is available even
     after long weekends or single-day holidays.
 
@@ -55,6 +60,13 @@ def fetch_todays_returns(tickers: list[str]) -> pd.Series:
     -------
     pd.Series — index = ticker, value = daily return (decimal fraction)
     """
+    import warnings
+    warnings.warn(
+        "fetch_todays_returns() is deprecated and will be removed in Step 2a. "
+        "Use pipeline.score_universe() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     logger.info(f"Fetching live returns for {len(tickers)} tickers…")
     raw = yf.download(tickers, period="5d", progress=False, auto_adjust=False)
 
@@ -80,6 +92,14 @@ def fetch_todays_returns(tickers: list[str]) -> pd.Series:
 
 def run_scanner(universe_names: list[str], exec_cfg: ExecutionConfig) -> None:
     """Score and export one or more universes."""
+    # Universe registry — maps CLI name to UniverseConfig.
+    # Add new universes here as they are built and saved.
+    from shockarb.config import US_UNIVERSE, GLOBAL_UNIVERSE
+    UNIVERSES = {
+        "us":     US_UNIVERSE,
+        "global": GLOBAL_UNIVERSE,
+    }
+
     any_ran = False
 
     for name in universe_names:
@@ -87,23 +107,23 @@ def run_scanner(universe_names: list[str], exec_cfg: ExecutionConfig) -> None:
         print(f"  SCANNING: {name.upper()} MODEL")
         print(f"{'='*80}")
 
+        universe = UNIVERSES.get(name)
+        if universe is None:
+            logger.error(f"Unknown universe {name!r}. Known: {sorted(UNIVERSES)}")
+            continue
+
         model_path = pipeline.find_latest_model(name, exec_cfg)
         if not model_path:
             logger.error(f"No saved model for '{name}'. Run: python -m shockarb build --universe {name}")
             continue
 
         model = pipeline.load_model(model_path)
-        etf_tickers   = list(model.etf_returns.columns)
-        stock_tickers = list(model.stock_returns.columns)
 
         try:
-            etf_returns   = fetch_todays_returns(etf_tickers)
-            stock_returns = fetch_todays_returns(stock_tickers)
+            scores = pipeline.score_universe(universe, model, exec_cfg)
         except ValueError as exc:
-            logger.error(f"Failed to fetch returns for '{name}': {exc}")
+            logger.error(f"Failed to score '{name}': {exc}")
             continue
-
-        scores = model.score(etf_returns, stock_returns)
 
         output_path = os.path.join(exec_cfg.data_dir, f"live_alpha_{name}.csv")
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)

@@ -216,19 +216,19 @@ US_UNIVERSE = UniverseConfig(
     name="us",
     market_etfs=[
         # Broad equity
-        "VOO", "VYM", "VEU",
+        "VOO", "VYM",
         # Sectors
         "VDE", "VFH", "VHT", "VIS", "VGT", "VAW", "VNQ",
         "VOX", "VPU", "VCR", "VDC",
         # Cross-asset
-        "TLT", "GLD", "USO",
+        "TLT", "IEF", "GLD", "USO", "HYG", "UUP",
         # Defense / semis
         "ITA", "XAR", "XSD",
     ],
     individual_stocks=[
         # Financials / payments
         "V", "MA", "AXP", "SPGI", "MCO", "CME", "ICE", "BLK", "FIS",
-        # FI (Fiserv) removed — delisted/ticker changed; causes 404 at runtime
+        # FI removed — delisted/ticker changed; causes 404 at runtime
         # Software
         "MSFT", "NOW", "ADBE", "CRM", "INTU", "ORCL", "SNPS", "CDNS", "PLTR",
         # Cybersecurity
@@ -271,8 +271,9 @@ GLOBAL_UNIVERSE = UniverseConfig(
         # Cross-Asset & Shock Anchors
         "TLT",   # US Treasuries (Global Safe Haven)
         "GLD",   # Gold
-        "USO",   # Oil
+        "BNO",   # Oil
         "BNDX",  # International Bonds
+        "UUP",   # US Dollar Index (DXY)
     ],
     individual_stocks=[
         # European Equities 
