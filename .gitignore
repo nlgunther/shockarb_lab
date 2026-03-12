@@ -83,7 +83,7 @@ coverage.xml
 *.xlsx
 *.pptx
 *.csv
-# *.json
+*.json
 
 # Other files
 *.log
@@ -95,7 +95,7 @@ coverage.xml
 *.xml
 *.txt
 *.png
-# *.md
+*.md
 *.npz
 *.html
 *.ics

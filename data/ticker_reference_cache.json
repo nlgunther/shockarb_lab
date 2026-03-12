@@ -234,5 +234,125 @@
     "CRM": {
         "Name": "CRM",
         "Industry": "ETF / Unknown"
+    },
+    "LHX": {
+        "Name": "LHX",
+        "Industry": "ETF / Unknown"
+    },
+    "MCO": {
+        "Name": "MCO",
+        "Industry": "ETF / Unknown"
+    },
+    "EW": {
+        "Name": "EW",
+        "Industry": "ETF / Unknown"
+    },
+    "RTX": {
+        "Name": "RTX",
+        "Industry": "ETF / Unknown"
+    },
+    "GD": {
+        "Name": "GD",
+        "Industry": "ETF / Unknown"
+    },
+    "ADI": {
+        "Name": "ADI",
+        "Industry": "ETF / Unknown"
+    },
+    "ORCL": {
+        "Name": "ORCL",
+        "Industry": "ETF / Unknown"
+    },
+    "KO": {
+        "Name": "KO",
+        "Industry": "ETF / Unknown"
+    },
+    "PH": {
+        "Name": "PH",
+        "Industry": "ETF / Unknown"
+    },
+    "FIS": {
+        "Name": "FIS",
+        "Industry": "ETF / Unknown"
+    },
+    "HII": {
+        "Name": "HII",
+        "Industry": "ETF / Unknown"
+    },
+    "AXP": {
+        "Name": "AXP",
+        "Industry": "ETF / Unknown"
+    },
+    "LLY": {
+        "Name": "LLY",
+        "Industry": "ETF / Unknown"
+    },
+    "SPGI": {
+        "Name": "SPGI",
+        "Industry": "ETF / Unknown"
+    },
+    "BSX": {
+        "Name": "BSX",
+        "Industry": "ETF / Unknown"
+    },
+    "BLK": {
+        "Name": "BLK",
+        "Industry": "ETF / Unknown"
+    },
+    "GWW": {
+        "Name": "GWW",
+        "Industry": "ETF / Unknown"
+    },
+    "QCOM": {
+        "Name": "QCOM",
+        "Industry": "ETF / Unknown"
+    },
+    "DHR": {
+        "Name": "DHR",
+        "Industry": "ETF / Unknown"
+    },
+    "PG": {
+        "Name": "PG",
+        "Industry": "ETF / Unknown"
+    },
+    "ZTS": {
+        "Name": "ZTS",
+        "Industry": "ETF / Unknown"
+    },
+    "ETN": {
+        "Name": "ETN",
+        "Industry": "ETF / Unknown"
+    },
+    "ICE": {
+        "Name": "ICE",
+        "Industry": "ETF / Unknown"
+    },
+    "HSY": {
+        "Name": "HSY",
+        "Industry": "ETF / Unknown"
+    },
+    "DAL": {
+        "Name": "Delta Air Lines Inc. Common Stock",
+        "Industry": "Air Freight/Delivery Services"
+    },
+    "OXY": {
+        "Name": "Occidental Petroleum Corporation Common Stock",
+        "Industry": "Oil & Gas Production"
+    },
+    "PLTR": {
+        "Name": "Palantir Technologies Inc. Class A Common Stock",
+        "Industry": "Retail: Computer Software & Peripheral Equipment"
+    },
+    "XOM": {
+        "Name": "Exxon Mobil Corporation Common Stock",
+        "Industry": "Oil & Gas Production"
+    },
+    "LNG": {
+        "Name": "Cheniere Energy Inc. Common Stock",
+        "Industry": "Oil/Gas Transmission"
+    },
+    "UAL": {
+        "Name": "United Airlines Holdings Inc. Common Stock",
+        "Industry": "Air Freight/Delivery Services"
     }
 }

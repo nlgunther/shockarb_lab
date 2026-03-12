@@ -199,7 +199,14 @@ class DataCoordinator:
             cached_end_ts = pd.Timestamp(cached_end)
             req_end_ts    = pd.Timestamp(req.end)
 
-            if cached_end_ts >= req_end_ts - pd.tseries.offsets.BDay(1):
+            if cached_end_ts >= req_end_ts:# - pd.tseries.offsets.BDay(1):
+                                  # BDay(1) tolerance removed — was masking one-day lag.
+                                  # Original intent was to avoid re-fetching on days when
+                                  # the market hasn't closed yet, but the effect was that
+                                  # a cache ending on T-1 was always treated as current,
+                                  # causing score to report yesterday's returns as today's.
+                                  # See FUTURE_REFACTOR.md: proper fix is a market-hours-
+                                  # aware check that only skips the fetch after 4pm ET.
                 logger.debug(f"[GapAnalyse] HIT   {ticker}: covered through {cached_end}")
                 continue
 

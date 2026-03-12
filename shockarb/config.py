@@ -230,7 +230,7 @@ US_UNIVERSE = UniverseConfig(
         "V", "MA", "AXP", "SPGI", "MCO", "CME", "ICE", "BLK", "FIS",
         # FI (Fiserv) removed — delisted/ticker changed; causes 404 at runtime
         # Software
-        "MSFT", "NOW", "ADBE", "CRM", "INTU", "ORCL", "SNPS", "CDNS",
+        "MSFT", "NOW", "ADBE", "CRM", "INTU", "ORCL", "SNPS", "CDNS", "PLTR",
         # Cybersecurity
         "PANW", "CRWD", "FTNT",
         # Healthcare
@@ -240,12 +240,14 @@ US_UNIVERSE = UniverseConfig(
         "LMT", "RTX", "NOC", "GD", "LHX", "HII",
         # Industrials
         "HON", "ETN", "PH", "GWW", "ROK", "CPRT", "FAST",
+        # Airlines (Negative Beta Shock Anchors)
+        "DAL", "UAL",
         # Semiconductors
         "ASML", "KLAC", "TXN", "LRCX", "AMAT", "ADI", "QCOM",
         # Consumer staples
         "COST", "WMT", "PG", "PEP", "KO", "HSY",
-        # Energy
-        "CVX",
+        # Energy (Positive Beta Shock Anchors)
+        "CVX", "XOM", "OXY", "LNG",
     ],
     n_components=3,
     start_date="2022-02-10",
@@ -255,23 +257,42 @@ US_UNIVERSE = UniverseConfig(
 GLOBAL_UNIVERSE = UniverseConfig(
     name="global",
     market_etfs=[
-        # US equity + sectors
-        "VOO", "VYM", "VEU", "VDE", "VFH", "VHT", "VIS", "VGT", "VAW",
-        "VNQ", "VOX", "VPU", "VCR", "VDC", "TLT", "GLD", "ITA",
-        # International / FX / commodities
-        "VGK",   # European equities
-        "BNO",   # Brent crude
-        "UUP",   # USD index
+        # Global & Regional Baselines
+        "VOO",   # US Baseline
+        "VEU",   # All-World ex-US
+        "VGK",   # Europe
+        "VPL",   # Pacific
+        "VWO",   # Emerging Markets
+        # Single Country Anchors
+        "EWJ",   # Japan
+        "EWG",   # Germany
+        "EWU",   # United Kingdom
+        "FXI",   # China Large-Cap
+        # Cross-Asset & Shock Anchors
+        "TLT",   # US Treasuries (Global Safe Haven)
+        "GLD",   # Gold
+        "USO",   # Oil
+        "BNDX",  # International Bonds
     ],
     individual_stocks=[
-        # US blue chips
-        "V", "MA", "MSFT", "NOW", "SYK", "UNH", "ROP", "LMT", "CVX",
-        # European / international ADRs
-        "BP", "TTE", "SLB", "SAP", "NVO", "SHEL", "AZN", "HSBC",
-        # Canadian banks
-        "RY", "TD",
-        # Miners / autos / tech ADRs
-        "BHP", "RIO", "TM", "SONY",
+        # European Equities 
+        "TTE",   # TotalEnergies (France - Energy)
+        "SAN",   # Banco Santander (Spain - Financials)
+        "ASML",  # ASML Holding (Netherlands - Semis)
+        "SAP",   # SAP SE (Germany - Software)
+        "NVO",   # Novo Nordisk (Denmark - Healthcare)
+        "SHEL",  # Shell (UK - Energy)
+        "HSBC",  # HSBC Holdings (UK - Financials)
+        # Asia-Pacific Equities
+        "TSM",   # Taiwan Semiconductor (Taiwan)
+        "SONY",  # Sony Group (Japan - Consumer/Tech)
+        "TM",    # Toyota Motor (Japan - Industrials)
+        "BHP",   # BHP Group (Australia - Miners/Commodities)
+        "RIO",   # Rio Tinto (Australia - Miners/Commodities)
+        "HDB",   # HDFC Bank (India - Financials)
+        # Americas (ex-US)
+        "RY",    # Royal Bank of Canada (Canada - Financials)
+        "VALE",  # Vale S.A. (Brazil - Miners)
     ],
     n_components=3,
     start_date="2022-02-10",
