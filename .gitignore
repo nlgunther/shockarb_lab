@@ -25,6 +25,7 @@ examples/
 older/
 legacy*/
 prices*/
+msc/
 
 # Python extras
 *egg*/

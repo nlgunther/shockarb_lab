@@ -5,119 +5,179 @@ Reads a ShockArb score CSV and produces a human-readable Markdown table,
 optionally enriched with company names and industries from local exchange
 reference files.
 
-Usage examples
---------------
-    # Basic conversion — includes company names by default
+Name resolution is delegated to shockarb.names.TickerReferenceResolver,
+which searches a JSON cache first, then the exchange CSVs in order.
+See names.py for full lookup semantics.
+
+Key file paths  (ALL filenames are constants — edit here, nowhere else)
+-----------------------------------------------------------------------
+  TICKER_CACHE   ticker_reference_cache.json   — JSON disk cache
+  EXCHANGE_CSVS  nyse_1668526574444.csv        — NYSE reference (checked first)
+                 nasdaq_1668526380140.csv       — NASDAQ reference
+
+Each exchange CSV must contain at minimum: Symbol, Name, Industry.
+
+Usage
+-----
+    # Basic — resolves names, writes report next to the CSV
     python utils/csv_to_md.py data/live_alpha_us.csv
 
-    # Save to a specific path
+    # Explicit output path
     python utils/csv_to_md.py data/live_alpha_us.csv --out reports/today.md
 
-    # Skip name resolution (faster, no reference CSVs needed)
+    # Skip name resolution (faster, no reference files needed)
     python utils/csv_to_md.py data/live_alpha_us.csv --no-names
 
-Reference CSV format
---------------------
-Each file must contain at minimum three columns: Symbol, Name, Industry.
-Files are searched in the order they appear in --ref-dir (NYSE then NASDAQ
-by convention).  Results are cached in data/ticker_reference_cache.json so
-subsequent runs are faster.
+    # Override data directory (cache and CSVs are looked up relative to it)
+    python utils/csv_to_md.py data/live_alpha_us.csv --data-dir /mnt/shockarb/data
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import pathlib
+import sys
 
 import pandas as pd
 from loguru import logger
 
-import sys
-import pathlib
-
-# Ensure the project root (parent of utils/) is on sys.path so
-# 'shockarb' is importable without needing pip install -e .
-_project_root = pathlib.Path(__file__).resolve().parent.parent
-if str(_project_root) not in sys.path:
-    sys.path.insert(0, str(_project_root))
+# ---------------------------------------------------------------------------
+# Project root — ensures 'shockarb' is importable without pip install -e .
+# ---------------------------------------------------------------------------
+_PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 try:
     from shockarb.names import TickerReferenceResolver
 except ImportError:
     TickerReferenceResolver = None
-    logger.warning("Could not load TickerReferenceResolver — name resolution unavailable.")
-
+    logger.warning("shockarb.names not importable — name resolution unavailable.")
 
 # =============================================================================
-# Helpers
+# File paths — ALL filenames live here.  Change them in one place only.
+# =============================================================================
+
+_DEFAULT_DATA_DIR = "./data"
+
+# JSON disk cache: ticker → {"Name": ..., "Industry": ...}
+TICKER_CACHE = "ticker_reference_cache.json"
+
+# Exchange reference CSVs searched in this order (NYSE before NASDAQ).
+# Supports .csv and .parquet — see names.py for format requirements.
+EXCHANGE_CSVS = [
+    "nyse_1668526574444.csv",
+    "nasdaq_1668526380140.csv",
+]
+
+# =============================================================================
+# Column definitions — formatting rules and display names in one place.
+# To add a new column: add it to _COLUMN_FORMAT and _DISPLAY_NAMES below.
+# =============================================================================
+
+# "pct"   → ±XX.XX%  |  "r2" → 0.NNN  |  None → omit from output
+_COLUMN_FORMAT: dict[str, str] = {
+    "actual_return":    "pct",
+    "expected_return":  "pct",
+    "expected_rel":     "pct",
+    "expected_abs":     "pct",
+    "delta":            "pct",
+    "delta_rel":        "pct",
+    "delta_abs":        "pct",
+    "residual_vol":     "pct",
+    "confidence_delta": "pct",
+    "r_squared":        "r2",
+}
+
+_DISPLAY_NAMES: dict[str, str] = {
+    "actual_return":    "Actual Return",
+    "expected_return":  "Expected Return",
+    "expected_rel":     "Expected (Relative)",
+    "expected_abs":     "Expected (Absolute)",
+    "delta":            "Delta",
+    "delta_rel":        "Delta (Relative)",
+    "delta_abs":        "Delta (Absolute)",
+    "residual_vol":     "Residual Vol",
+    "confidence_delta": "Confidence Δ",
+    "r_squared":        "R²",
+}
+
+# Universe label derived from the CSV filename suffix.
+_UNIVERSE_LABELS = {"_us": "US", "_global": "GLOBAL"}
+
+# Markdown legend block — edit the text here if signal definitions change.
+_REPORT_LEGEND = """\
+> **How to read this report:**
+> * **Delta (Relative):** Pure arbitrage signal — positive means the stock \
+fell more than macro factors justified.
+> * **R²:** Model's historical fit for this stock. Higher = more reliable baseline.
+> * **Confidence Δ:** Conviction-weighted signal (Delta × R²)."""
+
+# =============================================================================
+# Formatting helpers
 # =============================================================================
 
 def _fmt_pct(val: float) -> str:
-    """Format a decimal fraction as ±XX.XX%."""
-    if pd.isna(val):
-        return "N/A"
-    return f"{val * 100:+.2f}%"
+    """Decimal fraction → ±XX.XX%, or 'N/A' for missing values."""
+    return "N/A" if pd.isna(val) else f"{val * 100:+.2f}%"
 
 
-def _find_reference_csvs(ref_dir: str) -> list[str]:
+def _fmt_r2(val: float) -> str:
+    """R-squared → 0.NNN, or 'N/A' for missing values."""
+    return "N/A" if pd.isna(val) else f"{val:.3f}"
+
+
+_FORMATTERS = {"pct": _fmt_pct, "r2": _fmt_r2}
+
+
+def _format_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Return NYSE and NASDAQ reference CSVs from ref_dir, NYSE first.
-    Only files whose names contain 'nyse' or 'nasdaq' are included —
-    other CSVs in the directory (e.g. live_alpha_us.csv) are ignored.
-    """
-    if not os.path.isdir(ref_dir):
-        return []
-    files = [f for f in os.listdir(ref_dir) if f.lower().endswith(".csv")]
-    nyse   = sorted(f for f in files if "nyse"   in f.lower())
-    nasdaq = sorted(f for f in files if "nasdaq" in f.lower())
-    return [os.path.join(ref_dir, f) for f in nyse + nasdaq]
+    Return a display-ready DataFrame with formatted values and renamed headers.
 
+    Only columns present in _COLUMN_FORMAT are included; all others (e.g.
+    internal pipeline columns) are silently dropped.  Headers are renamed
+    via _DISPLAY_NAMES.  Index is labelled 'Ticker'.
+    """
+    out = pd.DataFrame(index=df.index)
+    for col, fmt_key in _COLUMN_FORMAT.items():
+        if col in df.columns:
+            out[col] = df[col].apply(_FORMATTERS[fmt_key])
+    out = out.rename(columns=_DISPLAY_NAMES)
+    out.index.name = "Ticker"
+    return out
+
+
+def _universe_label(filename: str) -> str:
+    """Derive 'US' / 'GLOBAL' / 'UNKNOWN' from the score CSV filename."""
+    fn = filename.lower()
+    return next((label for suffix, label in _UNIVERSE_LABELS.items() if suffix in fn), "UNKNOWN")
 
 # =============================================================================
 # Report generator
 # =============================================================================
 
-PCT_COLS = [
-    "actual_return", "expected_return", "expected_rel", "expected_abs",
-    "delta", "delta_rel", "delta_abs", "residual_vol", "confidence_delta",
-]
-
-RENAME_MAP = {
-    "actual_return":   "Actual Return",
-    "expected_return": "Expected Return",
-    "expected_rel":    "Expected (Relative)",
-    "expected_abs":    "Expected (Absolute)",
-    "delta":           "Delta",
-    "delta_rel":       "Delta (Relative)",
-    "delta_abs":       "Delta (Absolute)",
-    "r_squared":       "R²",
-    "residual_vol":    "Residual Vol",
-    "confidence_delta":"Confidence Δ",
-}
-
-
 def generate_markdown_report(
     csv_path: str,
     output_path: str | None = None,
-    resolve_names: bool = True,
-    ref_dir: str = "./data",
-    cache_path: str = "./data/ticker_reference_cache.json",
+    enrich_names: bool = True,
+    data_dir: str = _DEFAULT_DATA_DIR,
 ) -> None:
     """
     Convert a ShockArb score CSV to a Markdown report.
 
     Parameters
     ----------
-    csv_path : str
-        Path to the score CSV produced by ``shockarb score --output``.
-    output_path : str, optional
-        Destination .md file.  Defaults to csv_path with .md extension.
-    resolve_names : bool
-        If True, look up company names and industries from ref_dir CSVs.
-    ref_dir : str
-        Directory containing exchange reference CSVs (Symbol, Name, Industry).
-    cache_path : str
-        Path to the JSON cache for resolved tickers.
+    csv_path     : score CSV produced by ``shockarb score --output``
+    output_path  : destination .md file; defaults to csv_path with .md extension
+    enrich_names : if True, prepend Company and Industry columns
+    data_dir     : directory containing TICKER_CACHE and EXCHANGE_CSVS
+
+    Files used (relative to data_dir)
+    ----------------------------------
+        {data_dir}/{TICKER_CACHE}       — JSON cache (read + updated)
+        {data_dir}/{EXCHANGE_CSVS[0]}   — NYSE reference
+        {data_dir}/{EXCHANGE_CSVS[1]}   — NASDAQ reference
     """
     logger.info(f"Loading alpha sheet: {csv_path}")
     try:
@@ -129,72 +189,30 @@ def generate_markdown_report(
     if "confidence_delta" in df.columns:
         df = df.sort_values("confidence_delta", ascending=False)
 
-    md_df = pd.DataFrame(index=df.index)
+    display_df = _format_columns(df)
 
-    # ------------------------------------------------------------------
-    # Optional name/industry injection
-    # ------------------------------------------------------------------
-    if resolve_names:
+    # Prepend Company / Industry columns when name resolution is available.
+    if enrich_names:
         if TickerReferenceResolver is None:
-            logger.error("Name resolution skipped: shockarb package not importable.")
+            logger.warning("Name resolution skipped — shockarb.names not importable.")
         else:
-            ref_files = _find_reference_csvs(ref_dir)
-            if not ref_files:
-                logger.warning(
-                    f"No NYSE/NASDAQ reference CSVs found in '{ref_dir}' — "
-                    "names will fall back to ticker_reference_cache.json only."
-                )
-            else:
-                logger.info(f"Resolving names from {len(ref_files)} file(s) in {ref_dir}")
             resolver = TickerReferenceResolver(
-                file_paths=ref_files,
-                cache_path=cache_path,
+                file_paths = [os.path.join(data_dir, f) for f in EXCHANGE_CSVS],
+                cache_path = os.path.join(data_dir, TICKER_CACHE),
             )
-            ref_map = resolver.get_reference(df.index.tolist())
-            md_df["Company"] = df.index.map(lambda t: ref_map.get(t, {}).get("Name", t))
-            md_df["Industry"] = df.index.map(lambda t: ref_map.get(t, {}).get("Industry", "—"))
+            ref = resolver.get_reference(df.index.tolist())
+            # Insert leftmost so Company/Industry appear before numeric columns.
+            display_df.insert(0, "Industry", [ref[t]["Industry"] for t in df.index])
+            display_df.insert(0, "Company",  [ref[t]["Name"]     for t in df.index])
 
-    # ------------------------------------------------------------------
-    # Format columns
-    # ------------------------------------------------------------------
-    for col in PCT_COLS:
-        if col in df.columns:
-            md_df[col] = df[col].apply(_fmt_pct)
-
-    if "r_squared" in df.columns:
-        md_df["r_squared"] = df["r_squared"].apply(lambda x: f"{x:.3f}")
-
-    md_df = md_df.rename(columns=RENAME_MAP)
-    md_df.index.name = "Ticker"
-
-    # ------------------------------------------------------------------
-    # Universe label from filename
-    # ------------------------------------------------------------------
     filename = os.path.basename(csv_path)
-    fn_lower = filename.lower()
-    if "_global" in fn_lower:
-        universe = "GLOBAL"
-    elif "_us" in fn_lower:
-        universe = "US"
-    else:
-        universe = "UNKNOWN"
-
-    # ------------------------------------------------------------------
-    # Assemble Markdown
-    # ------------------------------------------------------------------
-    lines = [
-        f"# ⚡ ShockArb Alpha Report ({universe})",
+    md_content = "\n".join([
+        f"# ⚡ ShockArb Alpha Report ({_universe_label(filename)})",
         f"**Source:** `{filename}`\n",
-        "> **How to read this report:**",
-        "> * **Delta (Relative):** Pure arbitrage signal — positive means the stock fell "
-        "more than macro factors justified.",
-        "> * **R²:** Model's historical fit for this stock. Higher = more reliable baseline.",
-        "> * **Confidence Δ:** Conviction-weighted signal (Delta × R²).\n",
+        _REPORT_LEGEND + "\n",
         "### Actionable Targets\n",
-        md_df.to_markdown(),
-    ]
-
-    md_content = "\n".join(lines)
+        display_df.to_markdown(),
+    ])
 
     if not output_path:
         output_path = os.path.splitext(csv_path)[0] + ".md"
@@ -207,7 +225,6 @@ def generate_markdown_report(
     except Exception as exc:
         logger.error(f"Failed to write {output_path}: {exc}")
 
-
 # =============================================================================
 # CLI entry point
 # =============================================================================
@@ -218,20 +235,19 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("csv_file", help="Path to the ShockArb score CSV")
-    parser.add_argument("--out", default=None, help="Output .md path (default: same dir as CSV)")
-    parser.add_argument(
-        "--no-names", action="store_true",
-        help="Skip company name and industry resolution (faster, no reference CSVs needed)",
-    )
-    parser.add_argument(
-        "--ref-dir", default="./data",
-        help="Directory containing NYSE/NASDAQ reference CSVs (default: ./data)",
-    )
-    parser.add_argument(
-        "--cache", default="./data/ticker_reference_cache.json",
-        help="Path to the ticker name cache JSON (default: ./data/ticker_reference_cache.json)",
-    )
+    parser.add_argument("csv_file",
+        help="Path to the ShockArb score CSV")
+    parser.add_argument("--out", default=None,
+        help="Output .md path (default: same name/dir as CSV with .md extension)")
+    parser.add_argument("--no-names", action="store_true",
+        help="Skip company name and industry resolution")
+    parser.add_argument("--data-dir", default=_DEFAULT_DATA_DIR,
+        help=f"Directory containing reference CSVs and cache (default: {_DEFAULT_DATA_DIR})")
     args = parser.parse_args()
 
-    generate_markdown_report(args.csv_file, args.out, not args.no_names, args.ref_dir, args.cache)
+    generate_markdown_report(
+        csv_path     = args.csv_file,
+        output_path  = args.out,
+        enrich_names = not args.no_names,
+        data_dir     = args.data_dir,
+    )

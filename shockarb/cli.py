@@ -93,18 +93,15 @@ def cmd_score(args) -> None:
     """Score returns against a fitted model."""
     import os
     from datetime import date as _date
-
     universe = get_universe(args.universe)
     exec_cfg = ExecutionConfig(
         data_dir=args.data_dir,
         log_to_file=not args.no_log,
     )
-
     model_path = args.model or pipeline.find_latest_model(universe.name, exec_cfg)
     if not model_path:
         print(f"❌ No model found for '{universe.name}'. Run 'build' first.")
         sys.exit(1)
-
     model = pipeline.load_model(model_path)
     etf_tickers   = list(model.etf_returns.columns) or list(universe.market_etfs)
     stock_tickers = list(model.stock_returns.columns) or list(universe.individual_stocks)
@@ -115,14 +112,13 @@ def cmd_score(args) -> None:
             etf_tickers, stock_tickers, args.date
         )
         title = f"{universe.name.upper()} | {args.date}"
-
+        scores = model.score(etf_returns, stock_returns)
     else:
         # Live scoring — optionally save the raw OHLCV tape first
         if getattr(args, "save_tape", False):
             today_str = _date.today().strftime("%Y%m%d")
             tape_dir  = os.path.join(exec_cfg.data_dir, "tapes")
             tape_path = os.path.join(tape_dir, f"{universe.name}_{today_str}.parquet")
-
             tape = pipeline.save_live_tape(etf_tickers, stock_tickers, tape_path)
             if tape is not None:
                 print(f"\n💾 Tape saved: {tape_path}")
@@ -130,13 +126,14 @@ def cmd_score(args) -> None:
             else:
                 print("⚠️  Tape save failed — continuing with live fetch for scoring")
 
-        etf_returns   = pipeline.fetch_live_returns(etf_tickers)
-        stock_returns = pipeline.fetch_live_returns(stock_tickers)
+        scores, prov = pipeline.score_universe(universe, model, exec_cfg,
+                                        force_daily=args.use_prior_close,
+                                        from_open=args.from_open)
+        prov.model_file = model_path
         title = f"{universe.name.upper()} | LIVE"
+        print(f"\n{prov.summary()}\n")
 
-    scores = model.score(etf_returns, stock_returns)
     print_scores(scores, title, top_n=args.top)
-
     if args.output:
         scores.to_csv(args.output)
         print(f"\n📁 Saved to: {args.output}")
@@ -259,6 +256,10 @@ Examples:
 
     # score
     p = sub.add_parser("score", help="Score returns against a fitted model")
+    p.add_argument("--from-open", "-O", action="store_true",
+                help="Use today's session open as denominator (pure intraday)")
+    p.add_argument("--use-prior-close", "-p", action="store_true",
+                help="Force daily close-to-close returns")    
     p.add_argument("--universe", "-u", required=True)
     p.add_argument("--date",   "-d", help="Historical date YYYY-MM-DD")
     p.add_argument("--model",  "-m", help="Specific model .json to load")

@@ -78,14 +78,32 @@ class YFinanceProvider(DataProvider):
         interval = self._frequency_to_interval(frequency)
 
         try:
-            raw = self._dl(
-                tickers,
-                start       = start,
-                end         = end,
-                interval    = interval,
-                auto_adjust = False,
-                progress    = False,
-            )
+            if frequency == Frequency.DAILY:
+                # yfinance's end parameter is EXCLUSIVE — end="2026-03-12"
+                # returns data through 2026-03-11.  Bump by 1 day so the
+                # caller's intended end date is included in the result.
+                from datetime import date as _date, timedelta
+                yf_end = (
+                    _date.fromisoformat(end) + timedelta(days=1)
+                ).isoformat()
+                raw = self._dl(
+                    tickers,
+                    start       = start,
+                    end         = yf_end,
+                    interval    = interval,
+                    auto_adjust = False,
+                    progress    = False,
+                )
+            else:
+                # Intraday: yfinance rejects start/end for sub-daily intervals.
+                # period="1d" always covers the full current session.
+                raw = self._dl(
+                    tickers,
+                    period      = "1d",
+                    interval    = interval,
+                    auto_adjust = False,
+                    progress    = False,
+                )
         except Exception as exc:
             raise ProviderError(f"yfinance download failed: {exc}") from exc
 

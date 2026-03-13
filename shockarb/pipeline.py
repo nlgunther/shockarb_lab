@@ -41,8 +41,9 @@ from __future__ import annotations
 import glob
 import json
 import os
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -57,6 +58,151 @@ from datamgr.coordinator import DataCoordinator
 from datamgr.providers.yfinance import YFinanceProvider
 from datamgr.requests import DataRequest, Frequency
 from datamgr.stores.parquet import ParquetStore
+
+
+# =============================================================================
+# ScoreProvenance — attached to every scored output
+# =============================================================================
+
+@dataclass
+class ScoreProvenance:
+    """
+    Full provenance record for a score_universe() run.
+
+    Every scored output (CSV, CLI table, markdown report) should include
+    this metadata so the operator can reconstruct the computation from
+    first principles.
+
+    Attributes
+    ----------
+    timestamp_utc : str
+        ISO timestamp (UTC) when scoring completed.
+    timestamp_et : str
+        ISO timestamp (America/New_York) when scoring completed.
+    universe : str
+        Universe name, e.g. "us" or "global".
+    model_file : str
+        Not set by score_universe (caller sets this). Path to model JSON.
+    path : str
+        "daily" or "intraday" — which code path was taken.
+    provider : str
+        Data provider used, e.g. "yfinance".
+    n_etfs : int
+        Number of ETF tickers scored.
+    n_stocks : int
+        Number of stock tickers scored.
+    return_formula : str
+        Human-readable formula, e.g.
+        "adj_close @ 2026-03-12 15:45 ET / adj_close @ 2026-03-11 (daily cache) - 1"
+    numerator_field : str
+        Field used as numerator, e.g. "adj_close".
+    numerator_timestamp : str
+        Timestamp of the numerator observation (latest bar or daily close).
+    denominator_field : str
+        Field used as denominator, e.g. "adj_close".
+    denominator_timestamp : str
+        Timestamp of the denominator observation (prev close date).
+    interval : str
+        Fetch interval, e.g. "15m" or "1d".
+    fetch_period : str
+        yfinance period string used, e.g. "1d" or "5d".
+    n_intraday_bars : int
+        Number of intraday bars returned (0 for daily path).
+    sample_tickers : Dict[str, Dict[str, Any]]
+        A few example tickers with their raw numerator, denominator, and
+        computed return — so the operator can hand-verify.
+    """
+    timestamp_utc:          str  = ""
+    timestamp_et:           str  = ""
+    universe:               str  = ""
+    model_file:             str  = ""
+    path:                   str  = ""
+    provider:               str  = "yfinance"
+    n_etfs:                 int  = 0
+    n_stocks:               int  = 0
+    return_formula:         str  = ""
+    numerator_field:        str  = ""
+    numerator_timestamp:    str  = ""
+    denominator_field:      str  = ""
+    denominator_timestamp:  str  = ""
+    interval:               str  = ""
+    fetch_period:           str  = ""
+    n_intraday_bars:        int  = 0
+    sample_tickers:         Dict[str, Dict[str, Any]] = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        """Serialise to a plain dict for JSON / CSV header embedding."""
+        return {
+            "timestamp_utc":         self.timestamp_utc,
+            "timestamp_et":          self.timestamp_et,
+            "universe":              self.universe,
+            "model_file":            self.model_file,
+            "path":                  self.path,
+            "provider":              self.provider,
+            "n_etfs":                self.n_etfs,
+            "n_stocks":              self.n_stocks,
+            "return_formula":        self.return_formula,
+            "numerator_field":       self.numerator_field,
+            "numerator_timestamp":   self.numerator_timestamp,
+            "denominator_field":     self.denominator_field,
+            "denominator_timestamp": self.denominator_timestamp,
+            "interval":              self.interval,
+            "fetch_period":          self.fetch_period,
+            "n_intraday_bars":       self.n_intraday_bars,
+            "sample_tickers":        self.sample_tickers,
+        }
+
+    def summary(self) -> str:
+        """Human-readable summary for CLI / log output."""
+        lines = [
+            f"  Provenance",
+            f"  ──────────────────────────────────────────────",
+            f"  Scored at:    {self.timestamp_et}",
+            f"  Universe:     {self.universe}",
+            f"  Path:         {self.path}",
+            f"  Provider:     {self.provider}",
+            f"  Tickers:      {self.n_etfs} ETFs, {self.n_stocks} stocks",
+            f"  Interval:     {self.interval}",
+            f"  Formula:      {self.return_formula}",
+            f"  Numerator:    {self.numerator_field} @ {self.numerator_timestamp}",
+            f"  Denominator:  {self.denominator_field} @ {self.denominator_timestamp}",
+        ]
+        if self.n_intraday_bars:
+            lines.append(f"  Intraday bars: {self.n_intraday_bars}")
+        if self.model_file:
+            lines.append(f"  Model:        {self.model_file}")
+        if self.sample_tickers:
+            lines.append(f"  Sample verification:")
+            for ticker, vals in self.sample_tickers.items():
+                lines.append(
+                    f"    {ticker}: {vals['numerator']:.6f} / {vals['denominator']:.6f} "
+                    f"- 1 = {vals['return']:.6f} ({vals['return']*100:+.4f}%)"
+                )
+        return "\n".join(lines)
+
+
+def _now_et():
+    """Current datetime in America/New_York."""
+    import pytz
+    return datetime.now(pytz.timezone("America/New_York"))
+
+
+def _sample_tickers(
+    numerators: pd.Series,
+    denominators: pd.Series,
+    returns: pd.Series,
+    n: int = 3,
+) -> Dict[str, Dict[str, Any]]:
+    """Pick up to n tickers with the largest absolute return for verification."""
+    top = returns.abs().nlargest(min(n, len(returns)))
+    samples = {}
+    for ticker in top.index:
+        samples[ticker] = {
+            "numerator":   float(numerators.get(ticker, float("nan"))),
+            "denominator": float(denominators.get(ticker, float("nan"))),
+            "return":      float(returns.get(ticker, float("nan"))),
+        }
+    return samples
 
 # =============================================================================
 # Internal helpers
@@ -212,76 +358,129 @@ def prices_to_returns(
 # Live / intraday data (uncached)
 # =============================================================================
 
-# HOT_FIX: bypasses coordinator during market hours — replace with
-# Phase 1-3 intraday coordinator path before merging to main.
-
 def _market_is_open() -> bool:
-    """True if NYSE is currently in its regular session."""
+    """
+    True if NYSE is in its regular session or the post-close grace window.
+
+    The grace period (market close 4:00 PM → 5:00 PM ET) exists because
+    yfinance does not publish today's final daily bar until ~30-60 minutes
+    after the bell.  During this window the intraday 15m path is used
+    instead, which has data available immediately.
+    """
     import pytz
     from datetime import datetime
     now = datetime.now(pytz.timezone("America/New_York"))
     if now.weekday() >= 5:
         return False
     market_open  = now.replace(hour=9,  minute=30, second=0, microsecond=0)
-    market_close = now.replace(hour=16, minute=0,  second=0, microsecond=0)
+    # Grace period: intraday path stays active until 5:00 PM ET so we
+    # don't fall back to stale daily data while yfinance finalises today's bar.
+    market_close = now.replace(hour=17, minute=0,  second=0, microsecond=0)
     return market_open <= now <= market_close
 
 
-def _fetch_live_direct(tickers: List[str]) -> pd.Series:
+def _intraday_returns_from_frame(
+    raw: pd.DataFrame, prev_adj_close: pd.Series,
+) -> Tuple[pd.Series, str, str, pd.Series, int]:
     """
-    Fetch the most recent return directly from yfinance, bypassing the
-    coordinator cache.  Used during market hours when no complete daily
-    bar exists yet.
-    HOT_FIX: this logic moves into YFinanceProvider.fetch() in the proper fix.
+    Compute intraday returns from a 15m bar DataFrame and yesterday's adj_close.
+
+    Parameters
+    ----------
+    raw : DataFrame
+        MultiIndex (field, ticker) intraday bars from the provider.
+    prev_adj_close : Series
+        Yesterday's adjusted close, indexed by ticker.
+
+    Returns
+    -------
+    returns : Series
+        (latest_15m_close / prev_adj_close) - 1, indexed by ticker.
+    field_used : str
+        Which field was used as the numerator (e.g. "adj_close").
+    latest_bar_ts : str
+        ISO timestamp of the latest bar used.
+    latest_values : Series
+        Raw numerator values (latest close per ticker).
+    n_bars : int
+        Number of intraday bars in the raw data.
     """
-    import yfinance as yf
-    import pytz
-    from datetime import datetime
-
-    now = datetime.now(pytz.timezone("America/New_York"))
-    logger.info(
-        f"Market is open — fetching intraday 5m bars for {len(tickers)} tickers "
-        f"(as of {now.strftime('%H:%M:%S')} ET)…"
-    )
-
-    raw = yf.download(tickers, period="5d", interval="5m",
-                      progress=False, auto_adjust=False)
-    if raw.empty:
-        raise ValueError("fetch_live_returns: yfinance returned no data.")
-
+    # Extract the close prices from the MultiIndex result
+    field_used = "unknown"
     if isinstance(raw.columns, pd.MultiIndex):
-        prices = raw["Adj Close"] if "Adj Close" in raw.columns.get_level_values(0) else raw["Close"]
+        level0 = raw.columns.get_level_values(0)
+        if "adj_close" in level0:
+            prices = raw["adj_close"]
+            field_used = "adj_close"
+        elif "Adj Close" in level0:
+            prices = raw["Adj Close"]
+            field_used = "Adj Close"
+        elif "close" in level0:
+            prices = raw["close"]
+            field_used = "close"
+        else:
+            prices = raw["Close"]
+            field_used = "Close"
     else:
         prices = raw
+        field_used = "Close"
+
     if isinstance(prices, pd.Series):
-        prices = prices.to_frame(name=tickers[0])
+        prices = prices.to_frame()
 
-    prices = prices.dropna(axis=1, how="all").ffill()
+    n_bars = len(prices)
+    latest = prices.ffill().iloc[-1]
+    latest_bar_ts = str(prices.index[-1]) if len(prices) > 0 else "unknown"
 
-    dates = prices.index.normalize().unique()
-    if len(dates) < 2:
-        raise ValueError("fetch_live_returns: not enough history for return computation.")
+    # Align tickers — only compute returns where we have both sides
+    common = latest.index.intersection(prev_adj_close.index)
+    if common.empty:
+        return pd.Series(dtype=float), field_used, latest_bar_ts, latest, n_bars
 
-    prev_date  = dates[-2]
-    today_date = dates[-1]
-    prev_close = prices[prices.index.normalize() == prev_date].iloc[-1]
-    latest     = prices[prices.index.normalize() == today_date].iloc[-1]
-    latest_ts  = prices[prices.index.normalize() == today_date].index[-1]
+    returns = (latest[common] / prev_adj_close[common]) - 1
+    return returns, field_used, latest_bar_ts, latest[common], n_bars
 
-    returns = (latest / prev_close) - 1
 
-    logger.info(
-        f"Intraday returns computed: "
-        f"prev close {prev_date.strftime('%Y-%m-%d')}, "
-        f"latest bar {latest_ts.strftime('%H:%M')} ET — "
-        f"{len(returns)} tickers"
-    )
-    skipped = returns[returns.isna()].index.tolist()
-    if skipped:
-        logger.warning(f"{len(skipped)} ticker(s) had no intraday data: {skipped}")
-        returns = returns.dropna()
+def _open_prices_from_frame(raw: pd.DataFrame) -> Tuple[pd.Series, str]:
+    """
+    Extract today's opening price per ticker from the first 15m bar.
 
-    return returns
+    Parameters
+    ----------
+    raw : DataFrame
+        MultiIndex (field, ticker) intraday bars from the provider.
+
+    Returns
+    -------
+    opens : Series
+        Open price from the first bar, indexed by ticker.
+    open_bar_ts : str
+        ISO timestamp of the first bar.
+    """
+    if isinstance(raw.columns, pd.MultiIndex):
+        level0 = raw.columns.get_level_values(0)
+        if "open" in level0:
+            opens = raw["open"]
+        elif "Open" in level0:
+            opens = raw["Open"]
+        else:
+            # Fallback to close of first bar
+            if "adj_close" in level0:
+                opens = raw["adj_close"]
+            elif "Close" in level0:
+                opens = raw["Close"]
+            else:
+                opens = raw.iloc[:, :raw.columns.get_level_values(1).nunique()]
+    else:
+        opens = raw
+
+    if isinstance(opens, pd.Series):
+        opens = opens.to_frame()
+
+    open_bar_ts = str(opens.index[0]) if len(opens) > 0 else "unknown"
+    first_bar_opens = opens.iloc[0]
+
+    return first_bar_opens, open_bar_ts
 
 
 def fetch_live_returns(
@@ -320,10 +519,6 @@ def fetch_live_returns(
     exec_cfg = _exec(exec_config)
     logger.info(f"Fetching live closing data for {len(tickers)} tickers…")
 
-    # HOT_FIX: bypass coordinator during market hours
-    if force_live or _market_is_open():
-        return _fetch_live_direct(tickers)
-
     # After close — use coordinator cache
     period_days = {"1d": 4, "5d": 7, "1mo": 35, "3mo": 95}
     lookback    = period_days.get(period, 7)
@@ -361,33 +556,41 @@ def score_universe(
     universe: UniverseConfig,
     model: "FactorModel",
     exec_config: Optional[ExecutionConfig] = None,
-) -> "pd.DataFrame":
+    force_daily: bool = False,
+    from_open: bool = False,
+) -> Tuple["pd.DataFrame", ScoreProvenance]:
     """
     Score a universe using a single shared coordinator instance.
 
-    All ETF and stock tickers are registered together and satisfied in one
-    coordinator.fulfill() call, guaranteeing temporal alignment — both asset
-    classes see data through the same date before scoring.
+    Three modes, selected by flags and market state:
 
-    During market hours, delegates to fetch_live_returns() for each leg
-    (which uses the HOT_FIX intraday path). The shared-coordinator intraday
-    path replaces this delegation in Step 2b.
+      Path A — Market closed (daily), or forced via force_daily:
+        Two daily DataRequests (ETF + stock), one coordinator, one fulfill().
+        Returns are computed from adj_close price series via pct_change().
+
+      Path B — Market open (intraday), default:
+        Returns = latest_15m_close / yesterday's_daily_close - 1.
+        Captures the overnight gap plus today's move.
+
+      Path B with from_open:
+        Returns = latest_15m_close / today's_first_15m_open - 1.
+        Pure intraday move since the bell, stripping the overnight gap.
 
     Parameters
     ----------
     universe : UniverseConfig
-        Defines the ETF and stock tickers. Used as the ticker source so this
-        function works correctly even when model.etf_returns / stock_returns
-        are empty after load_model() (those matrices are not persisted to JSON).
     model : FactorModel
         Already-loaded model. Must be fitted.
     exec_config : ExecutionConfig, optional
+    force_daily : bool
+        Force Path A regardless of market state.  CLI: --use-prior-close / -p.
+    from_open : bool
+        Use today's session open as denominator instead of yesterday's close.
+        CLI: --from-open / -o.  Ignored when market is closed.
 
     Returns
     -------
-    DataFrame
-        Score output from model.score() — one row per stock, columns include
-        shock_score, confidence_delta, and factor loadings.
+    (DataFrame, ScoreProvenance)
 
     Raises
     ------
@@ -412,20 +615,161 @@ def score_universe(
         f"{len(etf_tickers)} ETFs, {len(stock_tickers)} stocks"
     )
 
-    # HOT_FIX: during market hours the coordinator daily path has no complete
-    # bar yet. Delegate to fetch_live_returns() which handles intraday via
-    # _fetch_live_direct(). Replace in Step 2b with a shared intraday request.
-    if _market_is_open():
-        logger.info("Market is open — delegating to fetch_live_returns() for intraday data.")
-        etf_returns   = fetch_live_returns(etf_tickers,   exec_config=exec_cfg)
-        stock_returns = fetch_live_returns(stock_tickers, exec_config=exec_cfg)
-        return model.score(etf_returns, stock_returns)
+    coordinator = _coordinator(exec_cfg)
+    prov = ScoreProvenance(
+        universe = universe.name,
+        provider = "yfinance",
+        n_etfs   = len(etf_tickers),
+        n_stocks = len(stock_tickers),
+    )
 
-    # After close: single coordinator, single fulfill() — both legs aligned.
+    # Early-session warning: within 30 minutes of the open, intraday bars
+    # are thin (1-2 bars).  Suggest --use-prior-close if not already set.
+    if not force_daily and _market_is_open():
+        now_et = _now_et()
+        minutes_since_open = (
+            (now_et.hour - 9) * 60 + (now_et.minute - 30)
+        )
+        if 0 <= minutes_since_open < 30:
+            logger.warning(
+                f"⚠️  Only {minutes_since_open} minutes since market open — "
+                f"intraday data is thin ({minutes_since_open // 15 + 1} bar(s)). "
+                f"Consider using --use-prior-close / -p for yesterday's "
+                f"full-day returns."
+            )
+
+    use_intraday = _market_is_open() and not force_daily
+
+    if force_daily and _market_is_open():
+        logger.info(
+            "Market is open but --use-prior-close is set — "
+            "using daily close-to-close returns."
+        )
+
+    if use_intraday:
+        # -----------------------------------------------------------------
+        # Path B — intraday: single request, all tickers combined, no cache
+        # -----------------------------------------------------------------
+        today = date.today().strftime("%Y-%m-%d")
+        all_tickers = etf_tickers + stock_tickers
+
+        if from_open:
+            logger.info("Market is open — using intraday path (--from-open: today's open as denominator).")
+            prov.path = "intraday (from open)"
+        else:
+            logger.info("Market is open — using intraday coordinator path.")
+            prov.path = "intraday"
+        prov.interval     = "15m"
+        prov.fetch_period = "1d"
+
+        # Daily cache is needed for the default mode (prev close denominator).
+        # Skip it when --from-open since the denominator comes from the 15m bars.
+        if not from_open:
+            # Request through YESTERDAY — not today.
+            # TODO Step 2c: run-log check + backfill if nightly run was missed.
+            yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+            start_daily = (date.today() - timedelta(days=7)).strftime("%Y-%m-%d")
+            coordinator.register(DataRequest(
+                tickers   = tuple(all_tickers),
+                start     = start_daily,
+                end       = yesterday,
+                frequency = Frequency.DAILY,
+                retention = "permanent",
+                requester = f"{universe.name}.prev_close",
+            ))
+
+        # Intraday fetch — all tickers in one DataRequest, cache=False.
+        coordinator.register(DataRequest(
+            tickers    = tuple(all_tickers),
+            start      = today,
+            end        = today,
+            frequency  = Frequency.INTRADAY_15M,
+            retention  = "ephemeral",
+            requester  = f"{universe.name}.intraday",
+            trade_date = today,
+            cache      = False,
+        ))
+
+        results = coordinator.fulfill()
+
+        # Intraday bars (needed for both modes)
+        intraday_raw = results.get(f"{universe.name}.intraday", pd.DataFrame())
+        if intraday_raw is None or intraday_raw.empty:
+            raise ValueError(
+                f"score_universe({universe.name!r}): coordinator returned no intraday data."
+            )
+
+        if from_open:
+            # --from-open: denominator = today's session open (first 15m bar)
+            denominator, open_bar_ts = _open_prices_from_frame(intraday_raw)
+            denom_label = "open"
+            denom_timestamp = open_bar_ts + " (first 15m bar open)"
+        else:
+            # Default: denominator = yesterday's daily close
+            prev_prices = results.get(f"{universe.name}.prev_close", pd.DataFrame())
+            if prev_prices is None or prev_prices.empty:
+                raise ValueError(
+                    f"score_universe({universe.name!r}): no daily data for prev close."
+                )
+            yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+            yesterday_ts = pd.Timestamp(yesterday)
+            prev_prices = prev_prices[prev_prices.index <= yesterday_ts]
+            if prev_prices.empty:
+                raise ValueError(
+                    f"score_universe({universe.name!r}): no daily data on or before "
+                    f"{yesterday} for prev close."
+                )
+            denominator = prev_prices.ffill().iloc[-1]
+            prev_close_date = str(prev_prices.index[-1].date())
+            denom_label = "adj_close"
+            denom_timestamp = prev_close_date + " (daily cache, last row)"
+
+        # Compute returns: latest_15m_close / denominator - 1
+        all_returns, field_used, latest_bar_ts, latest_values, n_bars = \
+            _intraday_returns_from_frame(intraday_raw, denominator)
+
+        # Populate provenance
+        now_et = _now_et()
+        prov.timestamp_utc        = datetime.utcnow().isoformat() + "Z"
+        prov.timestamp_et         = now_et.isoformat()
+        prov.numerator_field      = field_used
+        prov.numerator_timestamp  = latest_bar_ts
+        prov.denominator_field    = denom_label
+        prov.denominator_timestamp = denom_timestamp
+        prov.n_intraday_bars      = n_bars
+        prov.return_formula       = (
+            f"{field_used} @ {latest_bar_ts} / "
+            f"{denom_label} @ {denom_timestamp} - 1"
+        )
+        prov.sample_tickers = _sample_tickers(
+            latest_values, denominator, all_returns,
+        )
+
+        etf_returns   = all_returns.reindex(etf_tickers).dropna()
+        stock_returns = all_returns.reindex(stock_tickers).dropna()
+
+        if etf_returns.empty:
+            raise ValueError(
+                f"score_universe({universe.name!r}): no intraday returns for ETFs."
+            )
+        if stock_returns.empty:
+            raise ValueError(
+                f"score_universe({universe.name!r}): no intraday returns for stocks."
+            )
+
+        scores = model.score(etf_returns, stock_returns)
+        return scores, prov
+
+    # -----------------------------------------------------------------
+    # Path A — daily (after close): single coordinator, single fulfill()
+    # -----------------------------------------------------------------
+    prov.path         = "daily (forced via --use-prior-close)" if force_daily else "daily"
+    prov.interval     = "1d"
+    prov.fetch_period = "5d"
+
     end   = date.today().strftime("%Y-%m-%d")
     start = (date.today() - timedelta(days=7)).strftime("%Y-%m-%d")
 
-    coordinator = _coordinator(exec_cfg)
     coordinator.register(DataRequest(
         tickers   = tuple(etf_tickers),
         start     = start,
@@ -458,7 +802,36 @@ def score_universe(
 
     etf_returns   = prices_to_returns(etf_prices).iloc[-1]
     stock_returns = prices_to_returns(stock_prices).iloc[-1]
-    return model.score(etf_returns, stock_returns)
+
+    # Daily provenance: numerator is today's adj_close, denominator is yesterday's
+    all_prices = pd.concat([etf_prices, stock_prices], axis=1)
+    if len(all_prices) >= 2:
+        today_close     = all_prices.ffill().iloc[-1]
+        yesterday_close = all_prices.ffill().iloc[-2]
+        today_date      = str(all_prices.index[-1].date())
+        yesterday_date  = str(all_prices.index[-2].date())
+        all_returns_combined = pd.concat([etf_returns, stock_returns])
+        prov.sample_tickers = _sample_tickers(
+            today_close, yesterday_close, all_returns_combined,
+        )
+    else:
+        today_date     = "unknown"
+        yesterday_date = "unknown"
+
+    now_et = _now_et()
+    prov.timestamp_utc         = datetime.utcnow().isoformat() + "Z"
+    prov.timestamp_et          = now_et.isoformat()
+    prov.numerator_field       = "adj_close"
+    prov.numerator_timestamp   = today_date + " (daily close)"
+    prov.denominator_field     = "adj_close"
+    prov.denominator_timestamp = yesterday_date + " (daily close)"
+    prov.return_formula        = (
+        f"adj_close @ {today_date} / adj_close @ {yesterday_date} - 1 "
+        f"(via pct_change on ffilled daily series)"
+    )
+
+    scores = model.score(etf_returns, stock_returns)
+    return scores, prov
 
 
 def save_live_tape(

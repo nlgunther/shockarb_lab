@@ -25,6 +25,7 @@ Usage examples
 from __future__ import annotations
 
 import argparse
+from email import parser
 import os
 import sys
 
@@ -40,57 +41,14 @@ import shockarb.pipeline as pipeline
 # Live return fetcher
 # =============================================================================
 
-def fetch_todays_returns(tickers: list[str]) -> pd.Series:
-    """
-    Fetch today's closing return for each ticker.
 
-    .. deprecated::
-        No longer called by run_scanner(). Scheduled for deletion in Step 2a
-        (Part A1) once the score_universe() path is confirmed stable.
-        Use pipeline.score_universe() instead.
-
-    Downloads the last 5 trading days so the prior close is available even
-    after long weekends or single-day holidays.
-
-    Parameters
-    ----------
-    tickers : list of str
-
-    Returns
-    -------
-    pd.Series — index = ticker, value = daily return (decimal fraction)
-    """
-    import warnings
-    warnings.warn(
-        "fetch_todays_returns() is deprecated and will be removed in Step 2a. "
-        "Use pipeline.score_universe() instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    logger.info(f"Fetching live returns for {len(tickers)} tickers…")
-    raw = yf.download(tickers, period="5d", progress=False, auto_adjust=False)
-
-    if raw.empty:
-        raise ValueError("yfinance returned no data.")
-
-    if isinstance(raw.columns, pd.MultiIndex):
-        price_col = "Adj Close" if "Adj Close" in raw.columns.get_level_values(0) else "Close"
-        prices = raw[price_col]
-    else:
-        prices = raw
-
-    returns = prices.ffill().pct_change().dropna(how="all")
-    if returns.empty:
-        raise ValueError("Return matrix is empty after cleaning.")
-
-    return returns.iloc[-1]
 
 
 # =============================================================================
 # Scanner
 # =============================================================================
 
-def run_scanner(universe_names: list[str], exec_cfg: ExecutionConfig) -> None:
+def run_scanner(universes, exec_cfg, force_daily=False, from_open=False) -> None:
     """Score and export one or more universes."""
     # Universe registry — maps CLI name to UniverseConfig.
     # Add new universes here as they are built and saved.
@@ -102,7 +60,7 @@ def run_scanner(universe_names: list[str], exec_cfg: ExecutionConfig) -> None:
 
     any_ran = False
 
-    for name in universe_names:
+    for name in universes:
         print(f"\n{'='*80}")
         print(f"  SCANNING: {name.upper()} MODEL")
         print(f"{'='*80}")
@@ -120,15 +78,30 @@ def run_scanner(universe_names: list[str], exec_cfg: ExecutionConfig) -> None:
         model = pipeline.load_model(model_path)
 
         try:
-            scores = pipeline.score_universe(universe, model, exec_cfg)
+            scores, prov = pipeline.score_universe(universe, model, exec_cfg,
+                                        force_daily=force_daily,
+                                        from_open=from_open)
+            prov.model_file = model_path
         except ValueError as exc:
             logger.error(f"Failed to score '{name}': {exc}")
             continue
 
+        # Print provenance to console
+        print(f"\n{prov.summary()}\n")
+
+        # Save scores CSV
         output_path = os.path.join(exec_cfg.data_dir, f"live_alpha_{name}.csv")
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
         scores.to_csv(output_path)
         logger.success(f"Alpha sheet saved: {output_path}")
+
+        # Save provenance sidecar
+        import json
+        prov_path = os.path.join(exec_cfg.data_dir, f"live_alpha_{name}_provenance.json")
+        with open(prov_path, "w") as f:
+            json.dump(prov.to_dict(), f, indent=2)
+        logger.success(f"Provenance saved: {prov_path}")
+
         any_ran = True
 
     if any_ran:
@@ -159,10 +132,19 @@ def main() -> None:
         "--data-dir", default=None,
         help="Override data directory (default: ./data or $SHOCK_ARB_DATA_DIR)",
     )
+
+    parser.add_argument("--from-open", "-O", action="store_true",
+                    help="Use today's session open as denominator (pure intraday)")
+    
+    parser.add_argument("--use-prior-close", "-p", action="store_true",
+                    help="Force daily close-to-close returns")
+    
     args = parser.parse_args()
 
     exec_cfg = ExecutionConfig(data_dir=args.data_dir, log_to_file=False)
-    run_scanner(args.universe, exec_cfg)
+    run_scanner(args.universe, exec_cfg,
+            force_daily=args.use_prior_close,
+            from_open=args.from_open)
 
 
 if __name__ == "__main__":

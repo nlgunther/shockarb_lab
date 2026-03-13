@@ -287,22 +287,25 @@ class TestCoordinatorPhase1:
         assert "pipeline.etf" in results
         assert "pipeline.stock" in results
 
-    def test_intraday_request_dispatched(self, coordinator, fake_store):
-        coordinator.register(_intraday_req(["VOO", "TLT"], "scanner.intraday"))
-        results = coordinator.fulfill()
+    def test_intraday_request_dispatched(self, fake_store):
+        """Intraday request returns data via provider (not store delegation)."""
+        from datamgr.providers.mock import MockProvider
+        c = DataCoordinator(fake_store, provider=MockProvider())
+        c.register(_intraday_req(["VOO", "TLT"], "scanner.intraday"))
+        results = c.fulfill()
 
         assert "scanner.intraday" in results
         assert not results["scanner.intraday"].empty
-        assert len(fake_store.intraday_calls) == 1
 
-    def test_mixed_daily_and_intraday(self, coordinator, fake_store):
+    def test_mixed_daily_and_intraday(self, fake_store):
         fake_store.seed_tickers(["VOO"])
-        coordinator.register(_daily_req(["VOO"], "pipeline.etf"))
-        coordinator.register(_intraday_req(["VOO"], "scanner.intraday"))
-        results = coordinator.fulfill()
+        from datamgr.providers.mock import MockProvider
+        c = DataCoordinator(fake_store, provider=MockProvider())
+        c.register(_daily_req(["VOO"], "pipeline.etf"))
+        c.register(_intraday_req(["VOO"], "scanner.intraday"))
+        results = c.fulfill()
 
         assert len(results) == 2
-        assert len(fake_store.intraday_calls) == 1
 
     def test_clear_empties_registry(self, coordinator, fake_store):
         fake_store.seed_tickers(["VOO"])
@@ -359,3 +362,166 @@ class TestCoordinatorPhase1:
                 frequency="bad_freq",
                 retention="permanent", requester="test",
             )
+
+    def test_daily_tail_fetch_when_cache_behind(self, fake_store):
+        """
+        When the cache ends before req.end, the coordinator must call the
+        provider to fetch the missing tail.  No staleness grace — the
+        _market_is_open() grace period handles the post-close window by
+        routing to the intraday path instead.
+        """
+        from datamgr.providers.mock import MockProvider
+
+        # Seed store with data through 2022-03-30 (Wednesday)
+        fake_store.seed_tickers(["VOO"], start="2022-02-10", end="2022-03-30")
+        provider = MockProvider()
+
+        c = DataCoordinator(fake_store, provider=provider)
+        # Request through 2022-03-31 (Thursday) — 1 BDay ahead of cached end
+        c.register(_daily_req(["VOO"], start="2022-02-10", end="2022-03-31"))
+        results = c.fulfill()
+
+        # Provider SHOULD have been called — cache is behind
+        assert len(fake_store.write_calls) > 0
+        assert "pipeline.etf" not in results or not results.get("test", pd.DataFrame()).empty
+
+
+# =============================================================================
+# Step 2b: Intraday coordinator path (provider-backed, cache flag)
+# =============================================================================
+
+class TestCoordinatorIntraday:
+    """
+    Tests for the Step 2b intraday fetch path:
+      - Provider is called (not store delegation)
+      - cache=False skips store writes
+      - cache=True commits to store
+      - Provider failure returns empty DataFrame gracefully
+    """
+
+    def test_intraday_fetch_without_commit(self):
+        """
+        When cache=False, the coordinator fetches via provider but does NOT
+        write to the store.  This is the Step 2b default for intraday.
+        """
+        from datamgr.providers.mock import MockProvider
+
+        store = FakeStore()
+        c = DataCoordinator(store, provider=MockProvider())
+        req = DataRequest(
+            tickers    = ("VOO", "TLT"),
+            start      = "2026-03-12",
+            end        = "2026-03-12",
+            frequency  = Frequency.INTRADAY_15M,
+            retention  = "ephemeral",
+            requester  = "test.intraday_nocache",
+            trade_date = "2026-03-12",
+            cache      = False,
+        )
+        c.register(req)
+        results = c.fulfill()
+
+        # Data is returned to the caller
+        assert "test.intraday_nocache" in results
+        assert not results["test.intraday_nocache"].empty
+
+        # Store was NOT written to
+        assert len(store.write_calls) == 0
+
+    def test_intraday_fetch_with_commit(self):
+        """
+        When cache=True, the coordinator fetches AND commits to the store.
+        (Not the Step 2b default, but validates the flag works both ways.)
+        """
+        from datamgr.providers.mock import MockProvider
+
+        store = FakeStore()
+        c = DataCoordinator(store, provider=MockProvider())
+        req = DataRequest(
+            tickers    = ("VOO", "TLT"),
+            start      = "2026-03-12",
+            end        = "2026-03-12",
+            frequency  = Frequency.INTRADAY_15M,
+            retention  = "ephemeral",
+            requester  = "test.intraday_cache",
+            trade_date = "2026-03-12",
+            cache      = True,
+        )
+        c.register(req)
+        results = c.fulfill()
+
+        assert "test.intraday_cache" in results
+        assert not results["test.intraday_cache"].empty
+        # Store WAS written to — one write per ticker
+        assert len(store.write_calls) == 2
+
+    def test_intraday_provider_called(self):
+        """
+        The coordinator must call the provider for intraday requests,
+        not delegate to store.fetch_intraday().
+        """
+        from unittest.mock import MagicMock
+
+        store = FakeStore()
+        provider = MagicMock()
+        # Return a valid intraday DataFrame
+        provider.fetch.return_value = _make_intraday_df(["VOO"])
+
+        c = DataCoordinator(store, provider=provider)
+        c.register(_intraday_req(["VOO"], "test.intraday"))
+        c.fulfill()
+
+        provider.fetch.assert_called_once()
+        call_kwargs = provider.fetch.call_args
+        assert call_kwargs[1]["frequency"] == Frequency.INTRADAY_15M
+
+    def test_intraday_provider_failure_returns_empty(self):
+        """
+        If the provider raises during an intraday fetch, the coordinator
+        returns an empty DataFrame rather than crashing.
+        """
+        from datamgr.interfaces import DataProvider
+
+        class FailingProvider(DataProvider):
+            @property
+            def name(self):
+                return "failing"
+            def fetch(self, **kwargs):
+                raise RuntimeError("provider down")
+
+        store = FakeStore()
+        c = DataCoordinator(store, provider=FailingProvider())
+        c.register(_intraday_req(["VOO"], "test.intraday_fail"))
+        results = c.fulfill()
+
+        assert results["test.intraday_fail"].empty
+
+    def test_intraday_no_provider_raises(self):
+        """
+        If no provider is injected and an intraday request is registered,
+        fulfill() must raise RuntimeError.
+        """
+        store = FakeStore()
+        c = DataCoordinator(store)  # no provider
+        c.register(_intraday_req(["VOO"], "test.no_provider"))
+        with pytest.raises(RuntimeError, match="Provider required"):
+            c.fulfill()
+
+    def test_cache_flag_default_is_true(self):
+        """DataRequest.cache defaults to True for backward compatibility."""
+        req = _daily_req(["VOO"])
+        assert req.cache is True
+
+    def test_cache_flag_on_intraday_request(self):
+        """Intraday requests can set cache=False."""
+        req = DataRequest(
+            tickers    = ("VOO",),
+            start      = "2026-03-12",
+            end        = "2026-03-12",
+            frequency  = Frequency.INTRADAY_15M,
+            retention  = "ephemeral",
+            requester  = "test",
+            trade_date = "2026-03-12",
+            cache      = False,
+        )
+        assert req.cache is False

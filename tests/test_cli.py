@@ -152,6 +152,8 @@ class TestCmdBuild:
             universe = "us"
             data_dir = temp_dir
             no_log   = True
+            use_prior_close = False
+            from_open = False
 
         with patch.object(pipeline, "_coordinator", side_effect=_fresh_coord):
             cmd_build(Args())
@@ -174,6 +176,8 @@ class TestCmdShow:
             universe = "us"
             data_dir = temp_dir
             verbose = False
+            use_prior_close = False
+            from_open = False
 
         cmd_show(Args())
         out = capsys.readouterr().out
@@ -188,6 +192,8 @@ class TestCmdShow:
             universe = "us"
             data_dir = temp_dir
             verbose = True
+            use_prior_close = False
+            from_open = False
 
         cmd_show(Args())
         out = capsys.readouterr().out
@@ -199,6 +205,8 @@ class TestCmdShow:
             universe = "us"
             data_dir = temp_dir
             verbose = False
+            use_prior_close = False
+            from_open = False
 
         with pytest.raises(SystemExit):
             cmd_show(Args())
@@ -217,6 +225,8 @@ class TestCmdExport:
         class Args:
             universe = "us"
             data_dir = temp_dir
+            use_prior_close = False
+            from_open = False
 
         cmd_export(Args())
         files = os.listdir(temp_dir)
@@ -249,6 +259,8 @@ class TestCmdScore:
             output = None
             top = 20
             no_log = True
+            use_prior_close = False
+            from_open = False
 
         os.environ["SHOCK_ARB_DATA_DIR"] = temp_dir
         try:
@@ -277,6 +289,8 @@ class TestCmdScore:
             output = output_path
             top = 20
             no_log = True
+            use_prior_close = False
+            from_open = False
 
         os.environ["SHOCK_ARB_DATA_DIR"] = temp_dir
         try:
@@ -390,6 +404,8 @@ class TestCmdScoreSaveTape:
             top = 20
             no_log = True
             save_tape = True
+            use_prior_close = False
+            from_open = False
 
         os.environ["SHOCK_ARB_DATA_DIR"] = temp_dir
         try:
@@ -422,6 +438,8 @@ class TestCmdScoreSaveTape:
             top = 20
             no_log = True
             save_tape = True
+            use_prior_close = False
+            from_open = False
 
         os.environ["SHOCK_ARB_DATA_DIR"] = temp_dir
         try:
@@ -455,6 +473,8 @@ class TestCmdScoreSaveTape:
             top = 20
             no_log = True
             save_tape = False
+            use_prior_close = False
+            from_open = False
 
         import shockarb.pipeline as _pl
         original = _pl.save_live_tape
@@ -495,6 +515,8 @@ class TestCmdScoreSaveTape:
                 top = 20
                 no_log = True
                 save_tape = True
+                use_prior_close = False
+                from_open = False
 
             os.environ["SHOCK_ARB_DATA_DIR"] = temp_dir
             try:

@@ -61,6 +61,11 @@ class DataCoordinator:
         self._store    = store
         self._provider = provider
         self._requests: List[DataRequest] = []
+        # In-memory cache for intraday fetches (keyed by requester label).
+        # Populated during fulfill(); read by _read_intraday().
+        # TODO Step 5: intraday caching — cache the open on the first call
+        #   of the day, then fetch only the latest bar on subsequent calls.
+        self._intraday_results: Dict[str, pd.DataFrame] = {}
 
     # =========================================================================
     # Public API
@@ -97,8 +102,11 @@ class DataCoordinator:
         # Steps 2-3
         merged = self._merge_requests()
         for merged_req in merged:
-            if merged_req.frequency == Frequency.INTRADAY_15M:
-                # Intraday: delegate directly to the store, no gap-analysis needed
+            if merged_req.frequency != Frequency.DAILY:
+                # Intraday: fetch via provider, skip gap analysis.
+                # The cache flag on the original requests controls whether
+                # data is committed to the store (Step 2b: always False).
+                self._fetch_intraday(merged_req)
                 continue
             gaps = self._gap_analyse(merged_req)
             if not gaps:
@@ -121,8 +129,9 @@ class DataCoordinator:
         return results
     
     def clear(self) -> None:
-        """Clear all registered requests."""
+        """Clear all registered requests and in-memory intraday results."""
         self._requests.clear()
+        self._intraday_results.clear()
         logger.debug("[Coordinator] Request registry cleared.")
 
     # =========================================================================
@@ -144,6 +153,10 @@ class DataCoordinator:
             all_tickers = tuple(sorted(set(t for r in reqs for t in r.tickers)))
             earliest    = min(r.start for r in reqs)
             latest      = max(r.end   for r in reqs)
+            # If any request in the group opts out of caching, the merged
+            # request inherits cache=False.  This is conservative: we never
+            # silently commit data that a caller asked not to cache.
+            should_cache = all(r.cache for r in reqs)
             merged.append(DataRequest(
                 tickers   = all_tickers,
                 start     = earliest,
@@ -151,6 +164,7 @@ class DataCoordinator:
                 frequency = frequency,
                 retention = retention,
                 requester = f"_merged_{frequency}_{retention}",
+                cache     = should_cache,
             ))
             logger.debug(
                 f"[Coordinator] Merged {len(reqs)} request(s) into "
@@ -180,6 +194,14 @@ class DataCoordinator:
           - Fully covered      -> skipped
 
         Returns dict of ticker -> (gap_start, gap_end).
+
+        Note on post-close staleness
+        ----------------------------
+        The redundant-download problem (yfinance hasn't published today's
+        daily bar yet) is handled by _market_is_open()'s grace period
+        (extended to 17:00 ET), which routes to the intraday path during
+        the window where the daily bar is unavailable.  Gap analysis itself
+        does NOT apply any grace — if the cache is behind, it fetches.
         """
         gaps: Dict[str, Tuple[str, str]] = {}
 
@@ -306,6 +328,65 @@ class DataCoordinator:
         logger.debug(f"[Coordinator] Committed {key}: {len(combined)} rows")
 
     # =========================================================================
+    # Step 3b: intraday fetch (provider-backed, optionally no-commit)
+    # =========================================================================
+
+    def _fetch_intraday(self, merged_req: DataRequest) -> None:
+        """
+        Fetch intraday data via the provider and stash in _intraday_results.
+
+        The merged request's cache flag determines whether data is also
+        committed to the store.  In Step 2b, callers pass cache=False so
+        intraday data is returned to the caller without polluting the
+        daily store with partial-day bars.
+
+        The result is keyed by the merged request's requester label and
+        picked up by _read_intraday() during the Step 4 slice phase.
+        """
+        if self._provider is None:
+            raise RuntimeError(
+                "[Coordinator] Provider required for intraday fetch but none was injected. "
+                "Pass provider= to DataCoordinator()."
+            )
+
+        tickers = list(merged_req.tickers)
+        logger.info(
+            f"[Coordinator] Intraday fetch: {len(tickers)} ticker(s) "
+            f"({merged_req.frequency})"
+        )
+
+        try:
+            raw = self._provider.fetch(
+                tickers   = tickers,
+                start     = merged_req.start,
+                end       = merged_req.end,
+                frequency = merged_req.frequency,
+            )
+        except Exception as exc:
+            logger.error(f"[Coordinator] Intraday provider fetch failed: {exc}")
+            return
+
+        if raw is None or raw.empty:
+            logger.warning(
+                f"[Coordinator] Intraday provider returned empty for "
+                f"{len(tickers)} tickers"
+            )
+            return
+
+        # Stash the raw result for _read_intraday() to slice
+        self._intraday_results[merged_req.requester] = raw
+
+        # Honour the cache flag — commit to store only if requested.
+        if merged_req.cache:
+            for ticker in tickers:
+                self._commit_ticker(ticker, raw, merged_req)
+        else:
+            logger.debug(
+                f"[Coordinator] Intraday fetch complete — cache=False, "
+                f"skipping store commit ({len(tickers)} tickers)"
+            )
+
+    # =========================================================================
     # Step 4: read slices for callers
     # =========================================================================
 
@@ -345,21 +426,20 @@ class DataCoordinator:
         return pd.concat(frames, axis=1)
     
     def _read_intraday(self, req: DataRequest) -> pd.DataFrame:
-        """Delegate intraday reads to the store's fetch_intraday method."""
-        import datetime
-        trade_date = (
-            datetime.date.fromisoformat(req.trade_date)
-            if req.trade_date
-            else datetime.date.today()
-        )
-        try:
-            df = self._store.fetch_intraday(
-                tickers    = list(req.tickers),
-                trade_date = trade_date,
-            )
-            return df if df is not None else pd.DataFrame()
-        except Exception as exc:
-            logger.error(
-                f"[Coordinator] fetch_intraday failed for {req.requester!r}: {exc}"
+        """
+        Return intraday data from the in-memory results stashed by _fetch_intraday().
+
+        The merged request's requester label is a synthetic key like
+        '_merged_15m_ephemeral'.  We locate the stashed result by scanning
+        _intraday_results for a key whose frequency and retention match
+        the original request.
+        """
+        # Find the merged key that covers this request's frequency+retention
+        merged_key = f"_merged_{req.frequency}_{req.retention}"
+        raw = self._intraday_results.get(merged_key)
+        if raw is None or raw.empty:
+            logger.warning(
+                f"[Coordinator] No intraday data available for {req.requester!r}"
             )
             return pd.DataFrame()
+        return raw

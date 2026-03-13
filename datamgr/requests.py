@@ -98,6 +98,12 @@ class DataRequest:
         "daily_scanner", "backtest".  Used in logs and manifest entries.
     trade_date : str, optional
         YYYY-MM-DD trading date for intraday requests.  Not used for daily.
+    cache : bool
+        If True (default), downloaded data is committed to the store.
+        If False, data is fetched and returned without writing to the store.
+        Used by intraday callers that want fresh data without polluting the
+        daily store.  Step 5 will add true intraday caching: cache the open
+        on the first call, then fetch only the latest bar on subsequent calls.
 
     Notes
     -----
@@ -112,6 +118,7 @@ class DataRequest:
     retention  : str
     requester  : str
     trade_date : Optional[str] = None
+    cache      : bool = True
 
     def __post_init__(self):
         Frequency.validate(self.frequency)

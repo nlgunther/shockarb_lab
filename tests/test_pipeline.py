@@ -244,16 +244,20 @@ class TestFetchLiveReturns:
         """
         When no data can be retrieved, fetch_live_returns must raise ValueError.
 
-        fetch_live_returns has two paths:
-          - Market open  → _fetch_live_direct() (hot-fix, bypasses coordinator)
-          - Market closed → coordinator cache path
-
-        Both paths are covered here by forcing the market-open path and making
-        _fetch_live_direct raise, so the test is not sensitive to market hours.
+        Force the coordinator to return empty data by injecting a store with
+        no coverage and a provider that also returns empty.
         """
-        with patch.object(pipeline, "_market_is_open", return_value=True), \
-             patch.object(pipeline, "_fetch_live_direct",
-                          side_effect=ValueError("fetch_live_returns: coordinator returned no data.")):
+        from datamgr.coordinator import DataCoordinator
+
+        class EmptyProvider:
+            name = "empty"
+            def fetch(self, **kwargs):
+                return pd.DataFrame()
+
+        store = _InMemoryStore()
+        coord = DataCoordinator(store, provider=EmptyProvider())
+
+        with patch.object(pipeline, "_coordinator", return_value=coord):
             with pytest.raises(ValueError, match="no data"):
                 pipeline.fetch_live_returns(["AAPL"])
 
@@ -291,9 +295,10 @@ class TestScoreUniverse:
         coord = self._make_coordinator(store)
         with patch.object(pipeline, "_coordinator", return_value=coord), \
              patch.object(pipeline, "_market_is_open", return_value=False):
-            scores = pipeline.score_universe(self._UNIVERSE, fitted_model)
+            scores, prov = pipeline.score_universe(self._UNIVERSE, fitted_model)
         assert isinstance(scores, pd.DataFrame)
         assert not scores.empty
+        assert prov.path == "daily"
 
     def test_single_coordinator_single_fulfill(self, fitted_model):
         """
@@ -416,8 +421,158 @@ class TestScoreUniverse:
         with patch.object(pipeline, "_coordinator", return_value=coord), \
              patch.object(pipeline, "_market_is_open", return_value=False):
             # Should not raise — tickers sourced from universe config
-            scores = pipeline.score_universe(self._UNIVERSE, model_copy)
+            scores, prov = pipeline.score_universe(self._UNIVERSE, model_copy)
         assert isinstance(scores, pd.DataFrame)
+
+
+# =============================================================================
+# score_universe() — intraday path (Step 2b)
+# =============================================================================
+
+class TestScoreUniverseIntraday:
+    """
+    Tests for the Step 2b intraday path in score_universe().
+
+    All tests mock _market_is_open() to return True and inject a coordinator
+    with MockProvider + _InMemoryStore so no filesystem or network access
+    occurs.  The coordinator is wired with a daily cache (for prev close)
+    and a provider that returns intraday bars.
+    """
+
+    _UNIVERSE = UniverseConfig(
+        name="test",
+        market_etfs=["VOO", "TLT", "GLD"],
+        individual_stocks=["AAPL", "MSFT"],
+        n_components=2,
+        start_date="2022-02-10",
+        end_date="2022-03-31",
+    )
+
+    def _make_coordinator(self, store):
+        from datamgr.coordinator import DataCoordinator
+        from datamgr.providers.mock import MockProvider
+        return DataCoordinator(store, provider=MockProvider())
+
+    def test_intraday_single_coordinator_call(self, fitted_model):
+        """
+        During market hours, score_universe() must create exactly one
+        coordinator and call fulfill() exactly once — daily prev-close
+        and intraday legs both go through the same instance.
+        """
+        store = _seeded_store({"VOO": 400, "TLT": 100, "GLD": 180,
+                               "AAPL": 150, "MSFT": 300})
+        real_coord = self._make_coordinator(store)
+
+        fulfill_calls = []
+        original_fulfill = real_coord.fulfill
+
+        def counting_fulfill(**kwargs):
+            fulfill_calls.append(1)
+            return original_fulfill(**kwargs)
+
+        real_coord.fulfill = counting_fulfill
+
+        coordinator_calls = []
+
+        def factory(*args, **kwargs):
+            coordinator_calls.append(1)
+            return real_coord
+
+        with patch.object(pipeline, "_coordinator", side_effect=factory), \
+             patch.object(pipeline, "_market_is_open", return_value=True):
+            pipeline.score_universe(self._UNIVERSE, fitted_model)
+
+        assert len(coordinator_calls) == 1, (
+            f"Expected 1 coordinator instantiation, got {len(coordinator_calls)}"
+        )
+        assert len(fulfill_calls) == 1, (
+            f"Expected 1 fulfill() call, got {len(fulfill_calls)}"
+        )
+
+    def test_intraday_etf_and_stock_tickers_combined(self, fitted_model):
+        """
+        All ETF and stock tickers must appear in a single intraday
+        DataRequest — not separate requests per leg.
+        """
+        import copy
+        model_copy = copy.copy(fitted_model)
+        # Force fallback to universe config (model columns come from the
+        # full fixture universe, not _UNIVERSE)
+        object.__setattr__(model_copy, "etf_returns",   pd.DataFrame())
+        object.__setattr__(model_copy, "stock_returns", pd.DataFrame())
+
+        store = _seeded_store({"VOO": 400, "TLT": 100, "GLD": 180,
+                               "AAPL": 150, "MSFT": 300})
+        real_coord = self._make_coordinator(store)
+
+        registered = []
+        original_register = real_coord.register
+
+        def capturing_register(req):
+            registered.append(req)
+            return original_register(req)
+
+        real_coord.register = capturing_register
+
+        with patch.object(pipeline, "_coordinator", return_value=real_coord), \
+             patch.object(pipeline, "_market_is_open", return_value=True):
+            pipeline.score_universe(self._UNIVERSE, model_copy)
+
+        # Find the intraday request
+        from datamgr.requests import Frequency
+        intraday_reqs = [r for r in registered
+                         if r.frequency == Frequency.INTRADAY_15M]
+        assert len(intraday_reqs) == 1, (
+            f"Expected 1 intraday request, got {len(intraday_reqs)}"
+        )
+        intraday_tickers = set(intraday_reqs[0].tickers)
+        expected = set(self._UNIVERSE.market_etfs) | set(self._UNIVERSE.individual_stocks)
+        assert intraday_tickers == expected, (
+            f"Intraday request tickers {intraday_tickers} != expected {expected}"
+        )
+
+    def test_intraday_returns_dataframe(self, fitted_model):
+        """score_universe() returns a non-empty DataFrame during market hours."""
+        store = _seeded_store({"VOO": 400, "TLT": 100, "GLD": 180,
+                               "AAPL": 150, "MSFT": 300})
+        coord = self._make_coordinator(store)
+        with patch.object(pipeline, "_coordinator", return_value=coord), \
+             patch.object(pipeline, "_market_is_open", return_value=True):
+            scores, prov = pipeline.score_universe(self._UNIVERSE, fitted_model)
+        assert isinstance(scores, pd.DataFrame)
+        assert not scores.empty
+        assert prov.path == "intraday"
+        assert prov.n_intraday_bars > 0
+        assert prov.numerator_field != ""
+        assert prov.sample_tickers  # at least one sample ticker
+
+    def test_intraday_cache_false(self, fitted_model):
+        """
+        The intraday DataRequest must have cache=False so the daily store
+        is not polluted with partial-day bars.
+        """
+        store = _seeded_store({"VOO": 400, "TLT": 100, "GLD": 180,
+                               "AAPL": 150, "MSFT": 300})
+        real_coord = self._make_coordinator(store)
+
+        registered = []
+        original_register = real_coord.register
+
+        def capturing_register(req):
+            registered.append(req)
+            return original_register(req)
+
+        real_coord.register = capturing_register
+
+        with patch.object(pipeline, "_coordinator", return_value=real_coord), \
+             patch.object(pipeline, "_market_is_open", return_value=True):
+            pipeline.score_universe(self._UNIVERSE, fitted_model)
+
+        from datamgr.requests import Frequency
+        intraday_reqs = [r for r in registered
+                         if r.frequency == Frequency.INTRADAY_15M]
+        assert len(intraday_reqs) == 1
+        assert intraday_reqs[0].cache is False
 
 
 # =============================================================================
