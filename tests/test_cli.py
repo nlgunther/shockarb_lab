@@ -57,6 +57,7 @@ import pandas as pd
 import pytest
 
 import shockarb.pipeline as pipeline
+from shockarb.pipeline import ScoreProvenance
 from shockarb.cli import (
     UNIVERSES,
     _fetch_historical,
@@ -138,6 +139,33 @@ class TestPrintScores:
 # =============================================================================
 # cmd_build
 # =============================================================================
+
+
+def _mock_score_universe_return():
+    """Return a (scores, prov) tuple suitable for patching score_universe.
+
+    scores must have all columns that print_scores / report.py reads:
+    actual_return, expected_rel, expected_abs, delta_rel, delta_abs,
+    r_squared, residual_vol, confidence_delta.
+    """
+    import pandas as pd
+    scores = pd.DataFrame(
+        {
+            "actual_return":    [-0.025, -0.030],
+            "expected_rel":     [ 0.010,  0.005],
+            "expected_abs":     [ 0.011,  0.006],
+            "delta_rel":        [ 0.035,  0.035],
+            "delta_abs":        [ 0.036,  0.036],
+            "r_squared":        [ 0.800,  0.700],
+            "residual_vol":     [ 0.200,  0.250],
+            "confidence_delta": [ 0.050, -0.030],
+        },
+        index=["AAPL", "MSFT"],
+    )
+    prov = ScoreProvenance(universe="us", provider="yfinance", n_etfs=5, n_stocks=5)
+    prov.path = "daily"
+    prov.return_formula = "adj_close / prev_adj_close - 1"
+    return scores, prov
 
 class TestCmdBuild:
 
@@ -241,15 +269,10 @@ class TestCmdExport:
 
 class TestCmdScore:
 
-    @patch("shockarb.pipeline.fetch_live_returns")
-    def test_live_score_prints_table(self, mock_fetch, fitted_model, temp_dir, capsys):
+    @patch("shockarb.pipeline.score_universe", return_value=_mock_score_universe_return())
+    def test_live_score_prints_table(self, mock_score, fitted_model, temp_dir, capsys):
         cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
         pipeline.save_model(fitted_model, "us", cfg)
-
-        mock_fetch.side_effect = [
-            pd.Series({"VOO": -0.02, "VDE": 0.03, "TLT": 0.01, "GLD": 0.02, "ITA": 0.025}),
-            pd.Series({"V": -0.025, "MSFT": -0.03, "LMT": 0.02, "CVX": 0.035, "UNH": -0.01}),
-        ]
 
         class Args:
             universe = "us"
@@ -270,16 +293,11 @@ class TestCmdScore:
 
         assert "SHOCKARB SCORES" in capsys.readouterr().out
 
-    @patch("shockarb.pipeline.fetch_live_returns")
-    def test_output_csv_saved(self, mock_fetch, fitted_model, temp_dir):
+    @patch("shockarb.pipeline.score_universe", return_value=_mock_score_universe_return())
+    def test_output_csv_saved(self, mock_score, fitted_model, temp_dir):
         cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
         pipeline.save_model(fitted_model, "us", cfg)
         output_path = os.path.join(temp_dir, "results.csv")
-
-        mock_fetch.side_effect = [
-            pd.Series({"VOO": -0.02, "VDE": 0.03, "TLT": 0.01, "GLD": 0.02, "ITA": 0.025}),
-            pd.Series({"V": -0.025, "MSFT": -0.03, "LMT": 0.02, "CVX": 0.035, "UNH": -0.01}),
-        ]
 
         class Args:
             universe = "us"
@@ -375,10 +393,10 @@ class TestMain:
 
 class TestCmdScoreSaveTape:
 
+    @patch("shockarb.pipeline.score_universe", return_value=_mock_score_universe_return())
     @patch("shockarb.pipeline.save_live_tape")
-    @patch("shockarb.pipeline.fetch_live_returns")
     def test_save_tape_flag_calls_save_live_tape(
-        self, mock_fetch, mock_tape, mock_model, temp_dir, capsys
+        self, mock_tape, mock_score, mock_model, temp_dir, capsys
     ):
         cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
         pipeline.save_model(mock_model, "us", cfg)
@@ -390,10 +408,6 @@ class TestCmdScoreSaveTape:
         mock_tape.return_value.columns = pd.MultiIndex.from_tuples(
             mock_tape.return_value.columns
         )
-        mock_fetch.side_effect = [
-            pd.Series({"VOO": -0.02, "TLT": 0.01, "GLD": 0.015}),
-            pd.Series({"AAPL": -0.03, "MSFT": -0.025}),
-        ]
 
         class Args:
             universe = "us"
@@ -415,19 +429,15 @@ class TestCmdScoreSaveTape:
 
         assert mock_tape.called
 
+    @patch("shockarb.pipeline.score_universe", return_value=_mock_score_universe_return())
     @patch("shockarb.pipeline.save_live_tape")
-    @patch("shockarb.pipeline.fetch_live_returns")
     def test_tape_path_contains_universe_name(
-        self, mock_fetch, mock_tape, mock_model, temp_dir
+        self, mock_tape, mock_score, mock_model, temp_dir
     ):
         cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
         pipeline.save_model(mock_model, "us", cfg)
 
         mock_tape.return_value = None   # simulate failure — score should still proceed
-        mock_fetch.side_effect = [
-            pd.Series({"VOO": -0.02, "TLT": 0.01, "GLD": 0.015}),
-            pd.Series({"AAPL": -0.03, "MSFT": -0.025}),
-        ]
 
         class Args:
             universe = "us"
@@ -452,17 +462,12 @@ class TestCmdScoreSaveTape:
         assert "us" in tape_path
         assert "tapes" in tape_path
 
-    @patch("shockarb.pipeline.fetch_live_returns")
+    @patch("shockarb.pipeline.score_universe", return_value=_mock_score_universe_return())
     def test_no_save_tape_flag_skips_tape(
-        self, mock_fetch, mock_model, temp_dir
+        self, mock_score, mock_model, temp_dir
     ):
         cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
         pipeline.save_model(mock_model, "us", cfg)
-
-        mock_fetch.side_effect = [
-            pd.Series({"VOO": -0.02, "TLT": 0.01, "GLD": 0.015}),
-            pd.Series({"AAPL": -0.03, "MSFT": -0.025}),
-        ]
 
         class Args:
             universe = "us"

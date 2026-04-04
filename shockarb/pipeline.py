@@ -42,7 +42,7 @@ import glob
 import json
 import os
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -213,6 +213,19 @@ def _default_exec() -> ExecutionConfig:
     cfg = ExecutionConfig()
     cfg.configure_logger()
     return cfg
+
+
+def _last_business_day() -> str:
+    """
+    Return today's date string if today is a weekday, otherwise the most
+    recent Friday.  Prevents passing a weekend date as req.end to the
+    coordinator, which would cause a spurious tail-gap on Saturdays/Sundays
+    (cached data ends Friday; req.end is Saturday → gap detected → fetch
+    attempted even though the cache is fully current).
+    """
+    today  = date.today()
+    offset = max(0, today.weekday() - 4)   # Mon-Fri → 0, Sat → 1, Sun → 2
+    return (today - timedelta(days=offset)).strftime("%Y-%m-%d")
 
 
 def _exec(exec_config: Optional[ExecutionConfig]) -> ExecutionConfig:
@@ -522,7 +535,7 @@ def fetch_live_returns(
     # After close — use coordinator cache
     period_days = {"1d": 4, "5d": 7, "1mo": 35, "3mo": 95}
     lookback    = period_days.get(period, 7)
-    end   = date.today().strftime("%Y-%m-%d")
+    end   = _last_business_day()
     start = (date.today() - timedelta(days=lookback)).strftime("%Y-%m-%d")
     coordinator = _coordinator(exec_cfg)
     coordinator.register(DataRequest(
@@ -767,7 +780,7 @@ def score_universe(
     prov.interval     = "1d"
     prov.fetch_period = "5d"
 
-    end   = date.today().strftime("%Y-%m-%d")
+    end   = _last_business_day()
     start = (date.today() - timedelta(days=7)).strftime("%Y-%m-%d")
 
     coordinator.register(DataRequest(
