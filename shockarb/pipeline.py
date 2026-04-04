@@ -42,7 +42,7 @@ import glob
 import json
 import os
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -743,7 +743,7 @@ def score_universe(
 
         # Populate provenance
         now_et = _now_et()
-        prov.timestamp_utc        = datetime.utcnow().isoformat() + "Z"
+        prov.timestamp_utc        = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
         prov.timestamp_et         = now_et.isoformat()
         prov.numerator_field      = field_used
         prov.numerator_timestamp  = latest_bar_ts
@@ -832,7 +832,7 @@ def score_universe(
         yesterday_date = "unknown"
 
     now_et = _now_et()
-    prov.timestamp_utc         = datetime.utcnow().isoformat() + "Z"
+    prov.timestamp_utc         = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
     prov.timestamp_et          = now_et.isoformat()
     prov.numerator_field       = "adj_close"
     prov.numerator_timestamp   = today_date + " (daily close)"
