@@ -4,32 +4,35 @@ ShockArb Command-Line Interface
 
 Commands
 --------
-  build   Fit and save a factor model from historical data.
-  score   Score live or historical returns against a fitted model.
-  export  Generate CSV reports (ETF basis + stock loadings).
-  show    Display a saved model's diagnostics and factor structure.
+  build        Fit and save a factor model from historical data.
+  score        Score live or historical returns against a fitted model.
+  export       Generate CSV reports (ETF basis + stock loadings).
+  show         Display a saved model's diagnostics and factor structure.
+  set-regime   Set the active regime (sticky across sessions).
+  show-regime  Display the current sticky regime.
+  list-regimes List all available regimes.
 
 Examples
 --------
-    # Fit and save the US model
+    # Set and build with a regime
+    python -m shockarb set-regime ukraine_shock
+    python -m shockarb build
+
+    # One-shot regime override (doesn't change sticky)
+    python -m shockarb build --regime gulf_war_recovery
+
+    # Score with regime
+    python -m shockarb score
+    python -m shockarb score --regime ukraine_shock --save-tape
+
+    # Legacy universe syntax still works (maps to ukraine_shock)
     python -m shockarb build --universe us
-
-    # Score today's live tape (and save raw OHLCV parquet)
-    python -m shockarb score --universe us --save-tape
-
-    # Score a specific historical date
-    python -m shockarb score --universe us --date 2022-03-01
-
-    # Export CSVs for manual inspection
-    python -m shockarb export --universe us
-
-    # Show model diagnostics (add -v for factor loadings)
-    python -m shockarb show --universe us -v
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from typing import Optional
 
@@ -44,11 +47,136 @@ from shockarb.config import (
     ExecutionConfig,
     UniverseConfig,
 )
+from shockarb.regimes import HistoricFactorModel, get_regime, list_regimes
 from shockarb.report import print_model_state, print_scores
 
 
 # =============================================================================
-# Universe registry
+# Regime management
+# =============================================================================
+
+def _get_sticky_file(exec_config: ExecutionConfig) -> str:
+    """Return path to the sticky regime file."""
+    return os.path.join(exec_config.data_dir, ".shockarb_regime")
+
+
+def _get_sticky_regime(exec_config: ExecutionConfig) -> Optional[str]:
+    """
+    Read the sticky regime from .shockarb_regime file.
+    
+    Returns
+    -------
+    str or None
+        Regime name if sticky file exists, None otherwise.
+    """
+    sticky_file = _get_sticky_file(exec_config)
+    if not os.path.exists(sticky_file):
+        return None
+    
+    with open(sticky_file, "r") as f:
+        regime_name = f.read().strip()
+    
+    return regime_name if regime_name else None
+
+
+def _set_sticky_regime(regime_name: str, exec_config: ExecutionConfig) -> None:
+    """
+    Write the sticky regime to .shockarb_regime file.
+    
+    Parameters
+    ----------
+    regime_name : str
+        Name of regime to set as sticky.
+    exec_config : ExecutionConfig
+        For resolving data directory path.
+    """
+    # Validate regime exists
+    get_regime(regime_name)  # Will raise ValueError if invalid
+    
+    sticky_file = _get_sticky_file(exec_config)
+    with open(sticky_file, "w") as f:
+        f.write(regime_name)
+
+
+def _resolve_regime(
+    args,
+    exec_config: ExecutionConfig,
+    require: bool = True,
+) -> Optional[HistoricFactorModel]:
+    """
+    Resolve regime from CLI args or sticky file.
+    
+    Resolution order:
+    1. --regime flag (highest priority)
+    2. --universe flag (legacy, maps to ukraine_shock)
+    3. Sticky file (.shockarb_regime)
+    4. Error if require=True, None if require=False
+    
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed CLI arguments.
+    exec_config : ExecutionConfig
+        For reading sticky file.
+    require : bool, default True
+        If True, exit with error if no regime is found.
+        If False, return None when no regime is found.
+    
+    Returns
+    -------
+    HistoricFactorModel or None
+        Resolved regime, or None if require=False and no regime found.
+    """
+    regime_name = None
+    source = None
+    
+    # Priority 1: --regime flag
+    if hasattr(args, "regime") and args.regime:
+        regime_name = args.regime
+        source = "--regime flag"
+    
+    # Priority 2: --universe flag (legacy compatibility)
+    elif hasattr(args, "universe") and args.universe:
+        universe_map = {
+            "us": "ukraine_shock",
+            "global": "ukraine_shock",  # Map global to ukraine_shock for now
+        }
+        regime_name = universe_map.get(args.universe.lower())
+        if regime_name:
+            source = f"--universe {args.universe} (mapped to {regime_name})"
+        else:
+            print(f"❌ Unknown universe: '{args.universe}'. Use --regime instead.")
+            sys.exit(1)
+    
+    # Priority 3: Sticky file
+    else:
+        regime_name = _get_sticky_regime(exec_config)
+        if regime_name:
+            source = "sticky file (.shockarb_regime)"
+    
+    # Handle not found
+    if not regime_name:
+        if require:
+            print("❌ No regime specified.")
+            print("   Set a regime: python -m shockarb set-regime <regime_name>")
+            print("   Or use:       python -m shockarb build --regime <regime_name>")
+            print(f"   Available regimes: {', '.join(list_regimes())}")
+            sys.exit(1)
+        else:
+            return None
+    
+    # Resolve regime
+    try:
+        regime = get_regime(regime_name)
+        logger.info(f"Regime: {regime.name} (from {source})")
+        return regime
+    except ValueError as e:
+        print(f"❌ {e}")
+        sys.exit(1)
+
+
+# =============================================================================
+# Universe registry (legacy compatibility)
 # =============================================================================
 
 UNIVERSES: dict[str, UniverseConfig] = {
@@ -58,7 +186,7 @@ UNIVERSES: dict[str, UniverseConfig] = {
 
 
 def get_universe(name: str) -> UniverseConfig:
-    """Look up a universe by name (case-insensitive)."""
+    """Look up a universe by name (case-insensitive). DEPRECATED."""
     key = name.lower()
     if key not in UNIVERSES:
         raise ValueError(
@@ -73,17 +201,21 @@ def get_universe(name: str) -> UniverseConfig:
 
 def cmd_build(args) -> None:
     """Fit and save a factor model."""
-    universe = get_universe(args.universe)
     exec_cfg = ExecutionConfig(
         data_dir=args.data_dir,
         log_to_file=not args.no_log,
     )
-
-    model = pipeline.build(universe, exec_cfg)
-    path = pipeline.save_model(model, universe.name, exec_cfg)
+    
+    regime = _resolve_regime(args, exec_cfg, require=True)
+    universe = regime.universe
+    
+    logger.info(f"Building model: {regime.description}")
+    model = pipeline.build(universe, exec_cfg, regime=regime)
+    path = pipeline.save_model(model, universe.name, exec_cfg, regime=regime)
     pipeline.export_csvs(model, universe.name, exec_cfg)
 
     print(f"\n✅ Model saved: {path}")
+    print(f"   Regime:            {regime.name}")
     print(f"   Factors:           {model.diagnostics.n_factors}")
     print(f"   Variance explained: {model.diagnostics.cumulative_variance:.1%}")
     print(f"   Stocks:            {model.diagnostics.n_stocks}")
@@ -91,17 +223,30 @@ def cmd_build(args) -> None:
 
 def cmd_score(args) -> None:
     """Score returns against a fitted model."""
-    import os
     from datetime import date as _date
-    universe = get_universe(args.universe)
+    
     exec_cfg = ExecutionConfig(
         data_dir=args.data_dir,
         log_to_file=not args.no_log,
     )
-    model_path = args.model or pipeline.find_latest_model(universe.name, exec_cfg)
+    
+    regime = _resolve_regime(args, exec_cfg, require=True)
+    universe = regime.universe
+    
+    # Find model - use regime-specific search if regime was explicit
+    if hasattr(args, "regime") and args.regime:
+        model_path = args.model or pipeline.find_latest_model(
+            universe.name, exec_cfg, regime=regime.name
+        )
+    else:
+        # Sticky regime - search broadly
+        model_path = args.model or pipeline.find_latest_model(universe.name, exec_cfg)
+    
     if not model_path:
-        print(f"❌ No model found for '{universe.name}'. Run 'build' first.")
+        print(f"❌ No model found for regime '{regime.name}' / universe '{universe.name}'.")
+        print("   Run 'build' first.")
         sys.exit(1)
+    
     model = pipeline.load_model(model_path)
     etf_tickers   = list(model.etf_returns.columns) or list(universe.market_etfs)
     stock_tickers = list(model.stock_returns.columns) or list(universe.individual_stocks)
@@ -111,7 +256,7 @@ def cmd_score(args) -> None:
         etf_returns, stock_returns = _fetch_historical(
             etf_tickers, stock_tickers, args.date
         )
-        title = f"{universe.name.upper()} | {args.date}"
+        title = f"{regime.name.upper()} | {args.date}"
         scores = model.score(etf_returns, stock_returns)
     else:
         # Live scoring — optionally save the raw OHLCV tape first
@@ -130,7 +275,7 @@ def cmd_score(args) -> None:
                                         force_daily=args.use_prior_close,
                                         from_open=args.from_open)
         prov.model_file = model_path
-        title = f"{universe.name.upper()} | LIVE"
+        title = f"{regime.name.upper()} | LIVE"
         print(f"\n{prov.summary()}\n")
 
     print_scores(scores, title, top_n=args.top)
@@ -141,12 +286,19 @@ def cmd_score(args) -> None:
 
 def cmd_export(args) -> None:
     """Export model factor tables to CSV."""
-    universe = get_universe(args.universe)
     exec_cfg = ExecutionConfig(data_dir=args.data_dir)
-
-    model_path = pipeline.find_latest_model(universe.name, exec_cfg)
+    
+    regime = _resolve_regime(args, exec_cfg, require=True)
+    universe = regime.universe
+    
+    # Find model
+    if hasattr(args, "regime") and args.regime:
+        model_path = pipeline.find_latest_model(universe.name, exec_cfg, regime=regime.name)
+    else:
+        model_path = pipeline.find_latest_model(universe.name, exec_cfg)
+    
     if not model_path:
-        print(f"❌ No model found for '{universe.name}'")
+        print(f"❌ No model found for regime '{regime.name}'")
         sys.exit(1)
 
     model = pipeline.load_model(model_path)
@@ -159,12 +311,19 @@ def cmd_export(args) -> None:
 
 def cmd_show(args) -> None:
     """Display model diagnostics and factor structure."""
-    universe = get_universe(args.universe)
     exec_cfg = ExecutionConfig(data_dir=args.data_dir)
-
-    model_path = pipeline.find_latest_model(universe.name, exec_cfg)
+    
+    regime = _resolve_regime(args, exec_cfg, require=True)
+    universe = regime.universe
+    
+    # Find model
+    if hasattr(args, "regime") and args.regime:
+        model_path = pipeline.find_latest_model(universe.name, exec_cfg, regime=regime.name)
+    else:
+        model_path = pipeline.find_latest_model(universe.name, exec_cfg)
+    
     if not model_path:
-        print(f"❌ No model found for '{universe.name}'")
+        print(f"❌ No model found for regime '{regime.name}'")
         sys.exit(1)
 
     if args.verbose:
@@ -173,13 +332,91 @@ def cmd_show(args) -> None:
     else:
         # Compact diagnostics via loaded model
         model = pipeline.load_model(model_path)
+        
+        # For display: use universe.name if it's short/meaningful, otherwise regime.name
+        # This maintains backward compat with tests expecting "US"
+        display_name = universe.name.upper() if len(universe.name) <= 15 else regime.name.upper()
+        
         print(f"\n{'='*60}")
-        print(f"  SHOCKARB MODEL: {universe.name.upper()}")
+        print(f"  SHOCKARB MODEL: {display_name}")
         print(f"{'='*60}")
-        print(f"  Source: {model_path}")
+        print(f"  Regime:  {regime.description}")
+        print(f"  Source:  {model_path}")
         print()
         print(model.diagnostics.summary())
         print()
+
+
+def cmd_set_regime(args) -> None:
+    """Set the active regime (sticky across sessions)."""
+    exec_cfg = ExecutionConfig(data_dir=args.data_dir)
+    
+    regime_name = args.regime_name
+    
+    try:
+        regime = get_regime(regime_name)
+        _set_sticky_regime(regime_name, exec_cfg)
+        print(f"✅ Active regime set to: {regime.name}")
+        print(f"   {regime.description}")
+        print(f"\n   This regime will be used by default for all commands.")
+        print(f"   Override with --regime flag if needed.")
+    except ValueError as e:
+        print(f"❌ {e}")
+        sys.exit(1)
+
+
+def cmd_show_regime(args) -> None:
+    """Display the current sticky regime."""
+    exec_cfg = ExecutionConfig(data_dir=args.data_dir)
+    
+    regime_name = _get_sticky_regime(exec_cfg)
+    
+    if not regime_name:
+        print("❌ No regime is currently set.")
+        print("   Set one with: python -m shockarb set-regime <regime_name>")
+        print(f"   Available: {', '.join(list_regimes())}")
+        sys.exit(1)
+    
+    try:
+        regime = get_regime(regime_name)
+        print(f"\n✅ Current regime: {regime.name}")
+        print(f"   {regime.description}")
+        print(f"\n   Period: {regime.universe.start_date} to {regime.universe.end_date}")
+        print(f"   Factors: {regime.universe.n_components}")
+        
+        if regime.tags:
+            print(f"   Tags: {', '.join(regime.tags)}")
+        
+        if regime.supersedes:
+            print(f"   Supersedes: {regime.supersedes}")
+        
+        print()
+    except ValueError as e:
+        print(f"❌ Sticky regime '{regime_name}' is invalid: {e}")
+        print("   Clear the sticky file and set a new regime.")
+        sys.exit(1)
+
+
+def cmd_list_regimes(args) -> None:
+    """List all available regimes."""
+    regimes = [get_regime(name) for name in list_regimes()]
+    
+    print("\n" + "="*70)
+    print("  AVAILABLE REGIMES")
+    print("="*70)
+    
+    for regime in regimes:
+        print(f"\n  {regime.name}")
+        print(f"  {'-' * len(regime.name)}")
+        print(f"  {regime.description}")
+        print(f"  Period: {regime.universe.start_date} to {regime.universe.end_date}")
+        print(f"  Factors: {regime.universe.n_components}")
+        
+        if regime.tags:
+            print(f"  Tags: {', '.join(regime.tags)}")
+    
+    print("\n" + "="*70)
+    print()
 
 
 # =============================================================================
@@ -234,9 +471,17 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  # Regime workflow
+  %(prog)s set-regime ukraine_shock
+  %(prog)s build
+  %(prog)s score
+
+  # One-shot regime override
+  %(prog)s build --regime gulf_war_recovery
+  %(prog)s score --regime ukraine_shock --date 2022-03-01
+
+  # Legacy universe syntax (still works)
   %(prog)s build --universe us
-  %(prog)s score --universe us
-  %(prog)s score --universe us --date 2022-03-01
   %(prog)s show  --universe us -v
         """,
     )
@@ -250,17 +495,19 @@ Examples:
 
     # build
     p = sub.add_parser("build", help="Fit and save a factor model")
-    p.add_argument("--universe", "-u", required=True, help="us | global")
+    p.add_argument("--regime", "-r", help="Regime name (overrides sticky)")
+    p.add_argument("--universe", "-u", help="[LEGACY] us | global (maps to ukraine_shock)")
     p.add_argument("--no-log", action="store_true", help="Disable file logging")
     p.set_defaults(func=cmd_build)
 
     # score
     p = sub.add_parser("score", help="Score returns against a fitted model")
+    p.add_argument("--regime", "-r", help="Regime name (overrides sticky)")
+    p.add_argument("--universe", "-u", help="[LEGACY] us | global (maps to ukraine_shock)")
     p.add_argument("--from-open", "-O", action="store_true",
                 help="Use today's session open as denominator (pure intraday)")
     p.add_argument("--use-prior-close", "-p", action="store_true",
-                help="Force daily close-to-close returns")    
-    p.add_argument("--universe", "-u", required=True)
+                help="Force daily close-to-close returns")
     p.add_argument("--date",   "-d", help="Historical date YYYY-MM-DD")
     p.add_argument("--model",  "-m", help="Specific model .json to load")
     p.add_argument("--output", "-o", help="Save score results to CSV")
@@ -278,14 +525,29 @@ Examples:
 
     # export
     p = sub.add_parser("export", help="Export model to CSVs")
-    p.add_argument("--universe", "-u", required=True)
+    p.add_argument("--regime", "-r", help="Regime name (overrides sticky)")
+    p.add_argument("--universe", "-u", help="[LEGACY] us | global (maps to ukraine_shock)")
     p.set_defaults(func=cmd_export)
 
     # show
     p = sub.add_parser("show", help="Display model summary")
-    p.add_argument("--universe", "-u", required=True)
+    p.add_argument("--regime", "-r", help="Regime name (overrides sticky)")
+    p.add_argument("--universe", "-u", help="[LEGACY] us | global (maps to ukraine_shock)")
     p.add_argument("--verbose", "-v", action="store_true", help="Full factor tables")
     p.set_defaults(func=cmd_show)
+
+    # set-regime
+    p = sub.add_parser("set-regime", help="Set active regime (sticky)")
+    p.add_argument("regime_name", help="Regime to activate")
+    p.set_defaults(func=cmd_set_regime)
+
+    # show-regime
+    p = sub.add_parser("show-regime", help="Display current regime")
+    p.set_defaults(func=cmd_show_regime)
+
+    # list-regimes
+    p = sub.add_parser("list-regimes", help="List all available regimes")
+    p.set_defaults(func=cmd_list_regimes)
 
     return parser
 
@@ -297,7 +559,6 @@ def main() -> None:
     # Propagate --data-dir via environment so ExecutionConfig picks it up
     # even in code paths that don't thread exec_config explicitly
     if args.data_dir:
-        import os
         os.environ["SHOCK_ARB_DATA_DIR"] = args.data_dir
 
     try:
