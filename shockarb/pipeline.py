@@ -43,11 +43,14 @@ import json
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import yfinance as yf
+
+if TYPE_CHECKING:
+    from shockarb.regimes import HistoricFactorModel
 from loguru import logger
 
 from shockarb.cache import CacheManager
@@ -1052,6 +1055,7 @@ def _minimal_tape(data: pd.DataFrame) -> pd.DataFrame:
 def build(
     universe: UniverseConfig,
     exec_config: Optional[ExecutionConfig] = None,
+    regime: Optional['HistoricFactorModel'] = None,
 ) -> FactorModel:
     """
     Full pipeline: fetch → compute returns → fit model.
@@ -1062,6 +1066,10 @@ def build(
         Defines what to analyze: tickers, date window, n_components.
     exec_config : ExecutionConfig, optional
         Controls caching, paths, and logging.
+    regime : HistoricFactorModel, optional
+        The regime this model represents. If provided, metadata is embedded
+        when the model is saved via save_model(). Not used during fitting,
+        but passed to save_model() by callers for provenance tracking.
 
     Returns
     -------
@@ -1103,12 +1111,16 @@ def save_model(
     model: FactorModel,
     name: str,
     exec_config: Optional[ExecutionConfig] = None,
+    regime: Optional['HistoricFactorModel'] = None,
 ) -> str:
     """
     Persist a fitted model to JSON.
 
     The filename embeds a timestamp so multiple saves don't overwrite each
-    other.  Use find_latest_model() to retrieve the most recent one.
+    other. If a regime is provided, the filename is prefixed with the regime
+    name for easy filtering: {regime}_{name}_{timestamp}.json
+
+    Use find_latest_model() to retrieve the most recent one.
 
     Parameters
     ----------
@@ -1116,6 +1128,9 @@ def save_model(
     name : str
         Short identifier, e.g. "us" or "global".
     exec_config : ExecutionConfig, optional
+    regime : HistoricFactorModel, optional
+        If provided, the regime name is embedded in both the filename and
+        the model's metadata JSON for full provenance tracking.
 
     Returns
     -------
@@ -1123,15 +1138,26 @@ def save_model(
         Absolute path to the saved file.
     """
     exec_cfg = _exec(exec_config)
-    path = exec_cfg.resolve_path(
-        f"{name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    )
+    
+    # Build filename with optional regime prefix
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    if regime:
+        filename = f"{regime.name}_{name}_{timestamp}.json"
+    else:
+        filename = f"{name}_{timestamp}.json"
+    
+    path = exec_cfg.resolve_path(filename)
 
     payload = model.to_dict()
     payload["metadata"].update({
         "name": name,
         "created_at": datetime.now().isoformat(),
     })
+    
+    # Embed regime metadata if provided
+    if regime:
+        payload["metadata"]["regime_name"] = regime.name
+        payload["metadata"]["regime_description"] = regime.description
 
     with open(path, "w") as f:
         json.dump(payload, f, indent=2)
@@ -1163,6 +1189,7 @@ def load_model(path: str) -> FactorModel:
 def find_latest_model(
     name: str,
     exec_config: Optional[ExecutionConfig] = None,
+    regime: Optional[str] = None,
 ) -> Optional[str]:
     """
     Find the most recently saved model file for *name*.
@@ -1172,17 +1199,35 @@ def find_latest_model(
     name : str
         Model name prefix, e.g. "us".
     exec_config : ExecutionConfig, optional
+    regime : str, optional
+        If provided, search for regime-specific models: {regime}_{name}_*.json
+        If None, search for both old-style ({name}_*.json) and new-style files.
 
     Returns
     -------
     str or None
         Path to the latest file, or None if none found.
+    
+    Notes
+    -----
+    The search pattern depends on the regime parameter:
+    - regime="ukraine_shock": searches "ukraine_shock_us_*.json"
+    - regime=None: searches "us_*.json" (backward compatible, finds both old and new)
     """
     exec_cfg = _exec(exec_config)
-    files = sorted(glob.glob(exec_cfg.resolve_path(f"{name}_*.json")))
+    
+    if regime:
+        # Regime-specific search: {regime}_{name}_*.json
+        pattern = f"{regime}_{name}_*.json"
+    else:
+        # Backward-compatible search: matches both old ({name}_*.json) 
+        # and new ({regime}_{name}_*.json) files
+        pattern = f"*{name}_*.json"
+    
+    files = sorted(glob.glob(exec_cfg.resolve_path(pattern)))
 
     if not files:
-        logger.warning(f"No saved models found matching: {name}_*.json")
+        logger.warning(f"No saved models found matching: {pattern}")
         return None
 
     return files[-1]

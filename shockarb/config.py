@@ -212,6 +212,10 @@ class ExecutionConfig:
 # Pre-built universes
 # =============================================================================
 
+# DEPRECATED: This is an alias for backward compatibility.
+# New code should use: from shockarb.regimes import UKRAINE_SHOCK
+# and access UKRAINE_SHOCK.universe instead.
+# This alias will be removed once all callers are migrated.
 US_UNIVERSE = UniverseConfig(
     name="us",
     market_etfs=[
