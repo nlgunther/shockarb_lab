@@ -308,7 +308,13 @@ class DataCoordinator:
             new_df = raw[ticker_cols].copy()
             new_df.columns = pd.Index([c[0] for c in ticker_cols])  # flatten to field names
         else:
-            new_df = raw.copy()
+            # Flat wide format (e.g. MockProvider, single-ticker yfinance):
+            # extract just this ticker's column so we don't store every ticker's
+            # data under a single key, which corrupts the adj_close column on merge.
+            if ticker in raw.columns:
+                new_df = raw[[ticker]].copy().rename(columns={ticker: "adj_close"})
+            else:
+                new_df = raw.copy()
 
         key      = f"{req.frequency}/{ticker}"
         existing = self._store.read(key, start="1900-01-01", end="2100-01-01")

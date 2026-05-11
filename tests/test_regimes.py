@@ -5,6 +5,7 @@ Tests for shockarb.regimes module.
 import pytest
 
 from shockarb.regimes import (
+    GLOBAL_UKRAINE_SHOCK,
     GULF_WAR_RECOVERY,
     LIBERATION_DAY_RECOVERY,
     REGIME_REGISTRY,
@@ -83,6 +84,11 @@ class TestListRegimes:
         assert "ukraine_shock" in names
         assert "gulf_war_recovery" in names
         assert "liberation_day_recovery" in names
+        assert "global_ukraine_shock" in names
+
+    def test_regime_count(self):
+        """Registry contains exactly 4 regimes."""
+        assert len(list_regimes()) == 4
 
     def test_sorted(self):
         """Names are sorted alphabetically."""
@@ -102,7 +108,14 @@ class TestFindByTag:
         results = find_by_tag("geopolitical")
         assert UKRAINE_SHOCK in results
         assert GULF_WAR_RECOVERY in results
+        assert GLOBAL_UKRAINE_SHOCK in results
         assert LIBERATION_DAY_RECOVERY not in results
+
+    def test_global_tag(self):
+        """Global tag returns only the global regime."""
+        results = find_by_tag("global")
+        assert GLOBAL_UKRAINE_SHOCK in results
+        assert UKRAINE_SHOCK not in results
 
     def test_recovery_tag(self):
         """Recovery tag finds recovery regimes."""
@@ -131,6 +144,7 @@ class TestRegimeRegistry:
         assert "ukraine_shock" in REGIME_REGISTRY
         assert "gulf_war_recovery" in REGIME_REGISTRY
         assert "liberation_day_recovery" in REGIME_REGISTRY
+        assert "global_ukraine_shock" in REGIME_REGISTRY
 
     def test_registry_values_are_regimes(self):
         """All registry values are HistoricFactorModel instances."""
@@ -176,3 +190,57 @@ class TestRegimeContent:
         """Gulf War supersedes Ukraine."""
         assert GULF_WAR_RECOVERY.supersedes == "ukraine_shock"
         assert UKRAINE_SHOCK.supersedes is None
+
+    def test_global_ukraine_shock_dates(self):
+        """Global Ukraine shock uses the same event window as the US variant."""
+        assert GLOBAL_UKRAINE_SHOCK.universe.start_date == "2022-02-10"
+        assert GLOBAL_UKRAINE_SHOCK.universe.end_date == "2022-03-31"
+
+    def test_global_ukraine_shock_universe_name(self):
+        """Global regime universe is named 'global', not 'us'."""
+        assert GLOBAL_UKRAINE_SHOCK.universe.name == "global"
+
+    def test_global_ukraine_shock_components(self):
+        """Global Ukraine shock uses 3 factors."""
+        assert GLOBAL_UKRAINE_SHOCK.universe.n_components == 3
+
+
+class TestGlobalUkraineShock:
+    """Focused tests for the GLOBAL_UKRAINE_SHOCK regime."""
+
+    def test_regime_is_registered(self):
+        """GLOBAL_UKRAINE_SHOCK is reachable via get_regime."""
+        regime = get_regime("global_ukraine_shock")
+        assert regime is GLOBAL_UKRAINE_SHOCK
+
+    def test_etf_count(self):
+        """Global regime has exactly 14 market ETFs."""
+        assert len(GLOBAL_UKRAINE_SHOCK.universe.market_etfs) == 14
+
+    def test_stock_count(self):
+        """Global regime has exactly 15 individual stocks."""
+        assert len(GLOBAL_UKRAINE_SHOCK.universe.individual_stocks) == 15
+
+    def test_global_tag_present(self):
+        """'global' tag is present in the new regime."""
+        assert "global" in GLOBAL_UKRAINE_SHOCK.tags
+
+    def test_geopolitical_tag_present(self):
+        """Shares 'geopolitical' tag with the US ukraine_shock."""
+        assert "geopolitical" in GLOBAL_UKRAINE_SHOCK.tags
+
+    def test_no_supersedes(self):
+        """Global Ukraine shock does not supersede any other regime."""
+        assert GLOBAL_UKRAINE_SHOCK.supersedes is None
+
+    def test_distinct_from_us_variant(self):
+        """Global and US ukraine_shock are different objects."""
+        assert GLOBAL_UKRAINE_SHOCK is not UKRAINE_SHOCK
+        assert GLOBAL_UKRAINE_SHOCK.universe.market_etfs != UKRAINE_SHOCK.universe.market_etfs
+
+    def test_expected_dynamics_keys(self):
+        """Global regime documents expected dynamics for key regional sectors."""
+        keys = set(GLOBAL_UKRAINE_SHOCK.expected_dynamics.keys())
+        assert "european_energy" in keys
+        assert "emerging_markets" in keys
+        assert "commodities" in keys

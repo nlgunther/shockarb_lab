@@ -4,31 +4,99 @@ Quick reference for day-to-day use. Full details in [API.md](./API.md).
 
 ---
 
-## CLI — The Three Daily Commands
+## CLI — Daily Workflow
 
 ```bash
+# One-time: set your active regime (saved as a sticky default)
+python -m shockarb set-regime ukraine_shock
+
 # 1. Build (run once per event, or daily for live use)
-python -m shockarb build --universe us
+python -m shockarb build
 
 # 2. Score today's tape
-python -m shockarb score --universe us
+python -m shockarb score
 
 # 3. Score a historical date
-python -m shockarb score --universe us --date 2022-03-01
+python -m shockarb score --date 2022-03-01
 
 # Save results to CSV
-python -m shockarb score --universe us --output results.csv
+python -m shockarb score --output results.csv
 
 # Show model quality (add -v for full factor tables)
-python -m shockarb show --universe us
-python -m shockarb show --universe us -v
+python -m shockarb show
+python -m shockarb show -v
 
 # Export CSVs for spreadsheet review
-python -m shockarb export --universe us
+python -m shockarb export
+
+# Switch to a different regime
+python -m shockarb set-regime global_ukraine_shock
+python -m shockarb build
+
+# Override sticky regime for a single command
+python -m shockarb score --regime gulf_war_recovery --date 1991-04-15
 
 # Override data directory
-python -m shockarb --data-dir /data/shockarb build --universe us
-# OR: export SHOCK_ARB_DATA_DIR=/data/shockarb
+python -m shockarb --data-dir /data/shockarb build
+# OR: set SHOCK_ARB_DATA_DIR=C:\data\shockarb
+```
+
+---
+
+## Regime Management
+
+```bash
+# List all available regimes
+python -m shockarb list-regimes
+
+# Show current sticky regime
+python -m shockarb show-regime
+
+# Set sticky regime (persists across sessions)
+python -m shockarb set-regime <regime_name>
+
+# Available regimes:
+#   ukraine_shock           - US universe, Feb-Mar 2022
+#   global_ukraine_shock    - Global universe, Feb-Mar 2022
+#   gulf_war_recovery       - US recovery, Mar-Jun 1991
+#   liberation_day_recovery - US universe, Apr-Jul 2025
+```
+
+---
+
+## Adding and Removing Tickers
+
+```bash
+# Remove a ticker (e.g. accidentally added to the wrong model)
+python -m shockarb remove-asset RTX --regime global_ukraine_shock --save
+
+# Add a ticker
+python -m shockarb add-asset SHOP --save
+```
+
+---
+
+## Adding Tickers to an Existing Model
+
+```bash
+# Add one or more tickers without refitting
+python -m shockarb add-asset SHOP COIN --save
+
+# Explicit regime (if not using sticky)
+python -m shockarb add-asset SHOP --regime ukraine_shock --save
+```
+
+Or programmatically:
+
+```python
+from shockarb.regimes import get_regime
+import shockarb.pipeline as pipeline
+
+regime = get_regime("ukraine_shock")
+model  = pipeline.load_model(pipeline.find_latest_model("us"))
+summary = pipeline.add_assets(["SHOP", "COIN"], model, regime.universe)
+print(summary)
+pipeline.save_model(model, "us")   # persists the new tickers
 ```
 
 ---
@@ -158,7 +226,7 @@ print(loadings)  # Factor_1, Factor_2, ... betas
 | `cumulative_variance` < 0.50 | Factors don't span the crisis | Increase `n_components` or widen ETF selection |
 | Many signals but all similar stocks | Sector concentration | Inspect `etf_basis` — one factor may dominate |
 | Synthetic data warning | yfinance network failure | Check internet; check if tickers are still listed |
-| "No model found" on score | Forgot to run `build` | Run `python -m shockarb build --universe us` first |
+| "No model found" on score | Forgot to run `build` | Run `python -m shockarb build` (or `set-regime` first if no sticky regime is set) |
 | `Index mismatch` on `FactorModel()` | ETF and stock return dates don't align | `pipeline.build()` handles alignment automatically |
 
 ---
@@ -180,25 +248,36 @@ data/
 
 ---
 
-## Adding a Universe to the CLI
+## Adding a Custom Regime
 
-Edit `shockarb/cli.py`:
+Edit `shockarb/regimes.py`:
 
 ```python
 from shockarb.config import UniverseConfig
+from shockarb.regimes import HistoricFactorModel, REGIME_REGISTRY
 
-UNIVERSES["taiwan"] = UniverseConfig(
-    name="taiwan",
-    market_etfs=["EWT", "KWEB", "TLT", "GLD", "XLE"],
-    individual_stocks=["TSM", "AMAT", "LRCX", "ASML", "KLAC"],
-    n_components=3,
-    start_date="2022-02-10",
-    end_date="2022-03-31",
+TAIWAN_STRAIT_CRISIS = HistoricFactorModel(
+    name="taiwan_strait_crisis",
+    description="Taiwan Strait tensions (hypothetical)",
+    narrative="...",
+    universe=UniverseConfig(
+        name="taiwan",
+        market_etfs=["EWT", "KWEB", "TLT", "GLD", "XLE"],
+        individual_stocks=["TSM", "AMAT", "LRCX", "ASML", "KLAC"],
+        n_components=3,
+        start_date="2024-01-01",
+        end_date="2024-03-31",
+    ),
+    tags=("geopolitical", "semiconductor", "asia"),
+    supersedes=None,
 )
+
+REGIME_REGISTRY["taiwan_strait_crisis"] = TAIWAN_STRAIT_CRISIS
 ```
 
 Then:
 ```bash
-python -m shockarb build --universe taiwan
-python -m shockarb score --universe taiwan
+python -m shockarb set-regime taiwan_strait_crisis
+python -m shockarb build
+python -m shockarb score
 ```

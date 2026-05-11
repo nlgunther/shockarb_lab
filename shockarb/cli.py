@@ -139,13 +139,20 @@ def _resolve_regime(
     elif hasattr(args, "universe") and args.universe:
         universe_map = {
             "us": "ukraine_shock",
-            "global": "ukraine_shock",  # Map global to ukraine_shock for now
+            "global": "global_ukraine_shock",  # FIXED: was "ukraine_shock" (bug)
         }
         regime_name = universe_map.get(args.universe.lower())
         if regime_name:
-            source = f"--universe {args.universe} (mapped to {regime_name})"
+            # Deprecation warning: guide users to --regime
+            logger.warning(
+                "--universe flag is DEPRECATED. "
+                f"Use --regime instead: --regime {regime_name}"
+            )
+            source = f"--universe {args.universe} (DEPRECATED, mapped to {regime_name})"
         else:
-            print(f"❌ Unknown universe: '{args.universe}'. Use --regime instead.")
+            print(f"❌ Unknown universe: '{args.universe}'.")
+            print("   The --universe flag is deprecated.")
+            print(f"   Use --regime instead. Available: {', '.join(list_regimes())}")
             sys.exit(1)
     
     # Priority 3: Sticky file
@@ -419,6 +426,118 @@ def cmd_list_regimes(args) -> None:
     print()
 
 
+
+def cmd_add_asset(args) -> None:
+    """Add new assets to an existing model and optionally save the result."""
+    exec_cfg = ExecutionConfig(
+        data_dir=args.data_dir,
+        log_to_file=not args.no_log,
+    )
+
+    regime = _resolve_regime(args, exec_cfg, require=True)
+    universe = regime.universe
+
+    if hasattr(args, "regime") and args.regime:
+        model_path = args.model or pipeline.find_latest_model(
+            universe.name, exec_cfg, regime=regime.name
+        )
+    else:
+        model_path = args.model or pipeline.find_latest_model(universe.name, exec_cfg)
+
+    if not model_path:
+        print(f"❌ No model found for regime '{regime.name}'.")
+        print("   Run 'build' first.")
+        sys.exit(1)
+
+    model = pipeline.load_model(model_path)
+    tickers = args.tickers
+
+    already = [t for t in tickers if t in model.loadings.index]
+    if already:
+        print(f"⚠️  Already in model (skipped): {already}")
+        tickers = [t for t in tickers if t not in already]
+
+    if not tickers:
+        print("Nothing new to add.")
+        sys.exit(0)
+
+    summary = pipeline.add_assets(tickers, model, universe, exec_cfg)
+
+    if summary.empty:
+        print("❌ No tickers could be added (check logs for details).")
+        sys.exit(1)
+
+    # Print result table
+    print(f"\n{'='*60}")
+    print(f"  ADDED ASSETS — {regime.name.upper()}")
+    print(f"{'='*60}")
+    pd.set_option("display.float_format", "{:.4f}".format)
+    print(summary.to_string())
+    print()
+
+    if args.save:
+        path = pipeline.save_model(model, universe.name, exec_cfg, regime=regime)
+        pipeline.export_csvs(model, universe.name, exec_cfg)
+        print(f"✅ Model saved: {path}")
+        print(f"   Stocks now in model: {model.diagnostics.n_stocks}")
+    else:
+        print("ℹ️  Model NOT saved (pass --save to persist the change).")
+
+
+def cmd_remove_asset(args) -> None:
+    """Remove assets from an existing model and optionally save the result."""
+    exec_cfg = ExecutionConfig(
+        data_dir=args.data_dir,
+        log_to_file=not args.no_log,
+    )
+
+    regime = _resolve_regime(args, exec_cfg, require=True)
+    universe = regime.universe
+
+    if hasattr(args, "regime") and args.regime:
+        model_path = args.model or pipeline.find_latest_model(
+            universe.name, exec_cfg, regime=regime.name
+        )
+    else:
+        model_path = args.model or pipeline.find_latest_model(universe.name, exec_cfg)
+
+    if not model_path:
+        print(f"❌ No model found for regime '{regime.name}'.")
+        print("   Run 'build' first.")
+        sys.exit(1)
+
+    model = pipeline.load_model(model_path)
+
+    missing = [t for t in args.tickers if t not in model.loadings.index]
+    if missing:
+        print(f"⚠️  Not in model (skipped): {missing}")
+
+    tickers = [t for t in args.tickers if t in model.loadings.index]
+    if not tickers:
+        print("Nothing to remove.")
+        sys.exit(0)
+
+    removed = []
+    for ticker in tickers:
+        model.remove_asset(ticker)
+        removed.append(ticker)
+
+    print(f"\n{'='*60}")
+    print(f"  REMOVED ASSETS — {regime.name.upper()}")
+    print(f"{'='*60}")
+    for t in removed:
+        print(f"  ✅ {t}")
+    print()
+
+    if args.save:
+        path = pipeline.save_model(model, universe.name, exec_cfg, regime=regime)
+        pipeline.export_csvs(model, universe.name, exec_cfg)
+        print(f"✅ Model saved: {path}")
+        print(f"   Stocks now in model: {model.diagnostics.n_stocks}")
+    else:
+        print("ℹ️  Model NOT saved (pass --save to persist the change).")
+
+
 # =============================================================================
 # Helpers
 # =============================================================================
@@ -549,6 +668,26 @@ Examples:
     p = sub.add_parser("list-regimes", help="List all available regimes")
     p.set_defaults(func=cmd_list_regimes)
 
+    # add-asset
+    p = sub.add_parser("add-asset", help="Add new assets to an existing model")
+    p.add_argument("tickers", nargs="+", help="Ticker symbol(s) to add")
+    p.add_argument("--regime", "-r", help="Regime name (overrides sticky)")
+    p.add_argument("--model",  "-m", help="Specific model .json to load")
+    p.add_argument("--save",   "-s", action="store_true",
+                   help="Save the updated model after adding assets")
+    p.add_argument("--no-log", action="store_true")
+    p.set_defaults(func=cmd_add_asset)
+
+    # remove-asset
+    p = sub.add_parser("remove-asset", help="Remove assets from an existing model")
+    p.add_argument("tickers", nargs="+", help="Ticker symbol(s) to remove")
+    p.add_argument("--regime", "-r", help="Regime name (overrides sticky)")
+    p.add_argument("--model",  "-m", help="Specific model .json to load")
+    p.add_argument("--save",   "-s", action="store_true",
+                   help="Save the updated model after removing assets")
+    p.add_argument("--no-log", action="store_true")
+    p.set_defaults(func=cmd_remove_asset)
+
     return parser
 
 
@@ -564,7 +703,7 @@ def main() -> None:
     try:
         args.func(args)
     except KeyboardInterrupt:
-        print("\n⏹️  Interrupted")
+        print("\n\u23f9\ufe0f  Interrupted")
         sys.exit(130)
     except Exception as exc:
         logger.exception(f"Error: {exc}")

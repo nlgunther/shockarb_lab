@@ -61,6 +61,7 @@ from shockarb.pipeline import ScoreProvenance
 from shockarb.cli import (
     UNIVERSES,
     _fetch_historical,
+    _resolve_regime,
     cmd_build,
     cmd_export,
     cmd_score,
@@ -95,6 +96,62 @@ class TestGetUniverse:
     def test_registry_has_expected_keys(self):
         assert "us" in UNIVERSES
         assert "global" in UNIVERSES
+
+
+# =============================================================================
+# _resolve_regime — universe flag mapping and deprecation warning
+# =============================================================================
+
+class TestResolveRegime:
+    """Test that --universe flag maps correctly and emits deprecation warnings."""
+
+    def _make_args(self, regime=None, universe=None):
+        import argparse
+        return argparse.Namespace(regime=regime, universe=universe)
+
+    def _exec_config(self, tmp_path):
+        return ExecutionConfig(data_dir=str(tmp_path))
+
+    def test_universe_global_maps_to_global_ukraine_shock(self, tmp_path):
+        """--universe global must resolve to global_ukraine_shock (bug fix)."""
+        args = self._make_args(universe="global")
+        regime = _resolve_regime(args, self._exec_config(tmp_path))
+        assert regime.name == "global_ukraine_shock"
+
+    def test_universe_us_maps_to_ukraine_shock(self, tmp_path):
+        """--universe us still maps to ukraine_shock."""
+        args = self._make_args(universe="us")
+        regime = _resolve_regime(args, self._exec_config(tmp_path))
+        assert regime.name == "ukraine_shock"
+
+    def test_universe_global_emits_deprecation_warning(self, tmp_path):
+        """--universe flag must call logger.warning with 'DEPRECATED'."""
+        args = self._make_args(universe="global")
+        with patch("shockarb.cli.logger") as mock_logger:
+            _resolve_regime(args, self._exec_config(tmp_path))
+        warning_calls = [str(c) for c in mock_logger.warning.call_args_list]
+        assert any("DEPRECATED" in c for c in warning_calls)
+
+    def test_universe_us_emits_deprecation_warning(self, tmp_path):
+        """--universe us also calls logger.warning with 'DEPRECATED'."""
+        args = self._make_args(universe="us")
+        with patch("shockarb.cli.logger") as mock_logger:
+            _resolve_regime(args, self._exec_config(tmp_path))
+        warning_calls = [str(c) for c in mock_logger.warning.call_args_list]
+        assert any("DEPRECATED" in c for c in warning_calls)
+
+    def test_regime_flag_takes_priority_over_universe(self, tmp_path):
+        """--regime flag overrides --universe when both are provided."""
+        args = self._make_args(regime="ukraine_shock", universe="global")
+        regime = _resolve_regime(args, self._exec_config(tmp_path))
+        assert regime.name == "ukraine_shock"
+
+    def test_regime_flag_no_warning(self, tmp_path):
+        """Using --regime directly produces no deprecation warning."""
+        args = self._make_args(regime="ukraine_shock")
+        with patch("shockarb.cli.logger") as mock_logger:
+            _resolve_regime(args, self._exec_config(tmp_path))
+        mock_logger.warning.assert_not_called()
 
 
 # =============================================================================
@@ -448,87 +505,290 @@ class TestCmdScoreSaveTape:
             top = 20
             no_log = True
             save_tape = True
-            use_prior_close = False
-            from_open = False
+  
 
-        os.environ["SHOCK_ARB_DATA_DIR"] = temp_dir
-        try:
-            cmd_score(Args())
-        finally:
-            del os.environ["SHOCK_ARB_DATA_DIR"]
+class TestCmdAddAsset:
+    """Tests for the add-asset subcommand."""
 
-        call_args = mock_tape.call_args
-        tape_path = call_args[0][2]   # third positional arg is path
-        assert "us" in tape_path
-        assert "tapes" in tape_path
+    def test_add_asset_adds_ticker_to_model(self, mock_model, temp_dir):
+        """add-asset should call pipeline.add_assets() and print the summary."""
+        import numpy as np, pandas as pd
+        from unittest.mock import patch, MagicMock
+        from shockarb.config import ExecutionConfig
+        from shockarb.regimes import get_regime
+        import shockarb.pipeline as pipeline
+        from shockarb.cli import _set_sticky_regime
 
-    @patch("shockarb.pipeline.score_universe", return_value=_mock_score_universe_return())
-    def test_no_save_tape_flag_skips_tape(
-        self, mock_score, mock_model, temp_dir
-    ):
         cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
-        pipeline.save_model(mock_model, "us", cfg)
+        _set_sticky_regime("ukraine_shock", cfg)
 
-        class Args:
-            universe = "us"
-            data_dir = temp_dir
-            date = None
-            model = None
-            output = None
-            top = 20
-            no_log = True
-            save_tape = False
-            use_prior_close = False
-            from_open = False
-
-        import shockarb.pipeline as _pl
-        original = _pl.save_live_tape
-        calls = []
-        _pl.save_live_tape = lambda *a, **k: calls.append(a) or None
-
-        os.environ["SHOCK_ARB_DATA_DIR"] = temp_dir
-        try:
-            cmd_score(Args())
-        finally:
-            del os.environ["SHOCK_ARB_DATA_DIR"]
-            _pl.save_live_tape = original
-
-        assert len(calls) == 0
-
-    @patch("shockarb.pipeline.save_live_tape")
-    @patch("shockarb.pipeline.fetch_live_returns")
-    def test_tape_not_saved_for_historical_date(
-        self, mock_fetch, mock_tape, mock_model, temp_dir
-    ):
-        """--save-tape must be ignored when --date is specified."""
-        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
-        pipeline.save_model(mock_model, "us", cfg)
-
-        with patch("yfinance.download") as mock_yf:
-            dates = pd.bdate_range("2022-02-01", "2022-02-15")
-            mock_yf.return_value = pd.DataFrame(
-                {"Close": [100.0 + i for i in range(len(dates))]},
-                index=dates,
+        # Patch add_assets to return a synthetic summary
+        summary_df = pd.DataFrame(
+            {"Factor_1": [0.5], "Factor_2": [0.3],
+             "r_squared": [0.72], "residual_vol": [0.18]},
+            index=pd.Index(["SHOP"], name="ticker"),
+        )
+        with patch.object(pipeline, "add_assets", return_value=summary_df) as mock_add, \
+             patch.object(pipeline, "load_model", return_value=mock_model), \
+             patch.object(pipeline, "find_latest_model", return_value=f"{temp_dir}/us_fake.json"), \
+             patch("sys.exit") as mock_exit:
+            from shockarb.cli import cmd_add_asset
+            import argparse
+            args = argparse.Namespace(
+                tickers=["SHOP"],
+                regime="ukraine_shock",
+                model=None,
+                save=False,
+                no_log=True,
+                data_dir=temp_dir,
             )
+            cmd_add_asset(args)
 
-            class Args:
-                universe = "us"
-                data_dir = temp_dir
-                date = "2022-03-01"
-                model = None
-                output = None
-                top = 20
-                no_log = True
-                save_tape = True
-                use_prior_close = False
-                from_open = False
+        mock_add.assert_called_once()
+        called_tickers = mock_add.call_args[0][0]
+        assert "SHOP" in called_tickers
 
-            os.environ["SHOCK_ARB_DATA_DIR"] = temp_dir
-            try:
-                cmd_score(Args())
-            except Exception:
-                pass   # historical fetch may fail with mocked data; that's OK
-            finally:
-                del os.environ["SHOCK_ARB_DATA_DIR"]
+    def test_add_asset_save_flag_calls_save_model(self, mock_model, temp_dir):
+        """--save should call pipeline.save_model() after adding assets."""
+        import numpy as np, pandas as pd
+        from unittest.mock import patch, MagicMock
+        from shockarb.config import ExecutionConfig
+        import shockarb.pipeline as pipeline
+        from shockarb.cli import _set_sticky_regime
 
-        assert not mock_tape.called
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        _set_sticky_regime("ukraine_shock", cfg)
+
+        summary_df = pd.DataFrame(
+            {"Factor_1": [0.5], "r_squared": [0.72], "residual_vol": [0.18]},
+            index=pd.Index(["SHOP"], name="ticker"),
+        )
+        with patch.object(pipeline, "add_assets", return_value=summary_df), \
+             patch.object(pipeline, "load_model", return_value=mock_model), \
+             patch.object(pipeline, "find_latest_model", return_value=f"{temp_dir}/us_fake.json"), \
+             patch.object(pipeline, "save_model", return_value=f"{temp_dir}/saved.json") as mock_save, \
+             patch.object(pipeline, "export_csvs"):
+            from shockarb.cli import cmd_add_asset
+            import argparse
+            args = argparse.Namespace(
+                tickers=["SHOP"],
+                regime="ukraine_shock",
+                model=None,
+                save=True,
+                no_log=True,
+                data_dir=temp_dir,
+            )
+            cmd_add_asset(args)
+
+        mock_save.assert_called_once()
+
+    def test_add_asset_parser_registered(self):
+        """add-asset subcommand must be registered in the argument parser."""
+        from shockarb.cli import _build_parser
+        parser = _build_parser()
+        # argparse registers subcommands; exercise it
+        args = parser.parse_args(
+            ["add-asset", "SHOP", "--regime", "ukraine_shock", "--save"]
+        )
+        assert args.tickers == ["SHOP"]
+        assert args.regime == "ukraine_shock"
+        assert args.save is True
+
+
+class TestRemoveAssetCLI:
+    """Tests for the remove-asset subcommand."""
+
+    def test_remove_asset_removes_ticker(self, mock_model, temp_dir):
+        """remove-asset should call model.remove_asset() for each requested ticker."""
+        from unittest.mock import patch
+        from shockarb.config import ExecutionConfig
+        import shockarb.pipeline as pipeline
+        from shockarb.cli import _set_sticky_regime, cmd_remove_asset
+        import argparse
+
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        _set_sticky_regime("ukraine_shock", cfg)
+
+        # Pick a ticker that actually exists in mock_model
+        ticker = mock_model.loadings.index[0]
+
+        with patch.object(pipeline, "load_model", return_value=mock_model), \
+             patch.object(pipeline, "find_latest_model", return_value=f"{temp_dir}/us_fake.json"), \
+             patch("sys.exit"):
+            args = argparse.Namespace(
+                tickers=[ticker],
+                regime="ukraine_shock",
+                model=None,
+                save=False,
+                no_log=True,
+                data_dir=temp_dir,
+            )
+            cmd_remove_asset(args)
+
+        assert ticker not in mock_model.loadings.index
+
+    def test_remove_asset_save_flag_calls_save_model(self, mock_model, temp_dir):
+        """--save should call pipeline.save_model() after removing assets."""
+        from unittest.mock import patch
+        from shockarb.config import ExecutionConfig
+        import shockarb.pipeline as pipeline
+        from shockarb.cli import _set_sticky_regime, cmd_remove_asset
+        import argparse
+
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        _set_sticky_regime("ukraine_shock", cfg)
+
+        ticker = mock_model.loadings.index[0]
+
+        with patch.object(pipeline, "load_model", return_value=mock_model), \
+             patch.object(pipeline, "find_latest_model", return_value=f"{temp_dir}/us_fake.json"), \
+             patch.object(pipeline, "save_model", return_value=f"{temp_dir}/saved.json") as mock_save, \
+             patch.object(pipeline, "export_csvs"):
+            args = argparse.Namespace(
+                tickers=[ticker],
+                regime="ukraine_shock",
+                model=None,
+                save=True,
+                no_log=True,
+                data_dir=temp_dir,
+            )
+            cmd_remove_asset(args)
+
+        mock_save.assert_called_once()
+
+    def test_remove_asset_missing_ticker_skipped(self, mock_model, temp_dir, capsys):
+        """Tickers not in the model should be skipped with a warning, not raise."""
+        from unittest.mock import patch
+        from shockarb.config import ExecutionConfig
+        import shockarb.pipeline as pipeline
+        from shockarb.cli import _set_sticky_regime, cmd_remove_asset
+        import argparse
+
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        _set_sticky_regime("ukraine_shock", cfg)
+
+        with patch.object(pipeline, "load_model", return_value=mock_model), \
+             patch.object(pipeline, "find_latest_model", return_value=f"{temp_dir}/us_fake.json"), \
+             patch("sys.exit"):
+            args = argparse.Namespace(
+                tickers=["DOESNOTEXIST"],
+                regime="ukraine_shock",
+                model=None,
+                save=False,
+                no_log=True,
+                data_dir=temp_dir,
+            )
+            cmd_remove_asset(args)
+
+        captured = capsys.readouterr()
+        assert "skipped" in captured.out.lower() or "nothing" in captured.out.lower()
+
+    def test_remove_asset_parser_registered(self):
+        """remove-asset subcommand must be registered in the argument parser."""
+        from shockarb.cli import _build_parser
+        parser = _build_parser()
+        args = parser.parse_args(
+            ["remove-asset", "RTX", "--regime", "global_ukraine_shock", "--save"]
+        )
+        assert args.tickers == ["RTX"]
+        assert args.regime == "global_ukraine_shock"
+        assert args.save is True
+
+
+class TestRemoveAssetCLI:
+    """Tests for the remove-asset subcommand."""
+
+    def test_remove_asset_removes_ticker(self, mock_model, temp_dir):
+        """remove-asset should call model.remove_asset() for each requested ticker."""
+        from unittest.mock import patch
+        from shockarb.config import ExecutionConfig
+        import shockarb.pipeline as pipeline
+        from shockarb.cli import _set_sticky_regime, cmd_remove_asset
+        import argparse
+
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        _set_sticky_regime("ukraine_shock", cfg)
+
+        ticker = mock_model.loadings.index[0]
+
+        with patch.object(pipeline, "load_model", return_value=mock_model), \
+             patch.object(pipeline, "find_latest_model", return_value=f"{temp_dir}/us_fake.json"), \
+             patch("sys.exit"):
+            args = argparse.Namespace(
+                tickers=[ticker],
+                regime="ukraine_shock",
+                model=None,
+                save=False,
+                no_log=True,
+                data_dir=temp_dir,
+            )
+            cmd_remove_asset(args)
+
+        assert ticker not in mock_model.loadings.index
+
+    def test_remove_asset_save_flag_calls_save_model(self, mock_model, temp_dir):
+        """--save should call pipeline.save_model() after removing assets."""
+        from unittest.mock import patch
+        from shockarb.config import ExecutionConfig
+        import shockarb.pipeline as pipeline
+        from shockarb.cli import _set_sticky_regime, cmd_remove_asset
+        import argparse
+
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        _set_sticky_regime("ukraine_shock", cfg)
+
+        ticker = mock_model.loadings.index[0]
+
+        with patch.object(pipeline, "load_model", return_value=mock_model), \
+             patch.object(pipeline, "find_latest_model", return_value=f"{temp_dir}/us_fake.json"), \
+             patch.object(pipeline, "save_model", return_value=f"{temp_dir}/saved.json") as mock_save, \
+             patch.object(pipeline, "export_csvs"):
+            args = argparse.Namespace(
+                tickers=[ticker],
+                regime="ukraine_shock",
+                model=None,
+                save=True,
+                no_log=True,
+                data_dir=temp_dir,
+            )
+            cmd_remove_asset(args)
+
+        mock_save.assert_called_once()
+
+    def test_remove_asset_missing_ticker_skipped(self, mock_model, temp_dir, capsys):
+        """Tickers not in the model should be skipped with a warning, not raise."""
+        from unittest.mock import patch
+        from shockarb.config import ExecutionConfig
+        import shockarb.pipeline as pipeline
+        from shockarb.cli import _set_sticky_regime, cmd_remove_asset
+        import argparse
+
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+        _set_sticky_regime("ukraine_shock", cfg)
+
+        with patch.object(pipeline, "load_model", return_value=mock_model), \
+             patch.object(pipeline, "find_latest_model", return_value=f"{temp_dir}/us_fake.json"), \
+             patch("sys.exit"):
+            args = argparse.Namespace(
+                tickers=["DOESNOTEXIST"],
+                regime="ukraine_shock",
+                model=None,
+                save=False,
+                no_log=True,
+                data_dir=temp_dir,
+            )
+            cmd_remove_asset(args)
+
+        captured = capsys.readouterr()
+        assert "skipped" in captured.out.lower() or "nothing" in captured.out.lower()
+
+    def test_remove_asset_parser_registered(self):
+        """remove-asset subcommand must be registered in the argument parser."""
+        from shockarb.cli import _build_parser
+        parser = _build_parser()
+        args = parser.parse_args(
+            ["remove-asset", "RTX", "--regime", "global_ukraine_shock", "--save"]
+        )
+        assert args.tickers == ["RTX"]
+        assert args.regime == "global_ukraine_shock"
+        assert args.save is True

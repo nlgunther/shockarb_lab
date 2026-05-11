@@ -285,3 +285,207 @@ class TestSerialisation:
         m = FactorModel(sample_etf_returns, sample_stock_returns)
         with pytest.raises(RuntimeError, match="not fitted"):
             m.to_dict()
+
+
+class TestAddAsset:
+    """Tests for FactorModel.add_asset() — in-place model extension."""
+
+    @pytest.fixture
+    def factor_returns(self, fitted_model, sample_etf_returns):
+        """Pre-computed factor returns for the calibration window."""
+        import numpy as np
+        r_e = sample_etf_returns.values - fitted_model._etf_mean.values
+        F = r_e @ fitted_model._Vt.T
+        import pandas as pd
+        return pd.DataFrame(
+            F,
+            index=sample_etf_returns.index,
+            columns=[f"Factor_{i+1}" for i in range(fitted_model._Vt.shape[0])],
+        )
+
+    @pytest.fixture
+    def new_ticker_returns(self, sample_etf_returns):
+        """Synthetic returns for a new ticker aligned with the calibration window."""
+        np.random.seed(99)
+        n = len(sample_etf_returns)
+        market = sample_etf_returns["VOO"].values
+        returns = 0.9 * market + np.random.normal(-0.001, 0.013, n)
+        return pd.Series(returns, index=sample_etf_returns.index, name="SHOP")
+
+    def test_add_asset_appears_in_loadings(self, fitted_model, new_ticker_returns, factor_returns):
+        fitted_model.add_asset("SHOP", new_ticker_returns, factor_returns)
+        assert "SHOP" in fitted_model.loadings.index
+
+    def test_add_asset_loadings_shape(self, fitted_model, new_ticker_returns, factor_returns):
+        n_before = len(fitted_model.loadings)
+        fitted_model.add_asset("SHOP", new_ticker_returns, factor_returns)
+        assert len(fitted_model.loadings) == n_before + 1
+
+    def test_add_asset_diagnostics_updated(self, fitted_model, new_ticker_returns, factor_returns):
+        n_before = fitted_model.diagnostics.n_stocks
+        fitted_model.add_asset("SHOP", new_ticker_returns, factor_returns)
+        assert fitted_model.diagnostics.n_stocks == n_before + 1
+        assert "SHOP" in fitted_model.diagnostics.stock_r_squared.index
+        assert "SHOP" in fitted_model.diagnostics.residual_vol.index
+
+    def test_add_asset_r_squared_in_range(self, fitted_model, new_ticker_returns, factor_returns):
+        stats = fitted_model.add_asset("SHOP", new_ticker_returns, factor_returns)
+        assert 0.0 <= stats["r_squared"] <= 1.0
+
+    def test_add_asset_residual_vol_positive(self, fitted_model, new_ticker_returns, factor_returns):
+        stats = fitted_model.add_asset("SHOP", new_ticker_returns, factor_returns)
+        assert stats["residual_vol"] >= 0.0
+
+    def test_add_asset_returns_loadings_series(self, fitted_model, new_ticker_returns, factor_returns):
+        stats = fitted_model.add_asset("SHOP", new_ticker_returns, factor_returns)
+        assert isinstance(stats["loadings"], pd.Series)
+        assert list(stats["loadings"].index) == ["Factor_1", "Factor_2"]
+
+    def test_add_asset_appears_in_score_output(self, fitted_model, new_ticker_returns, factor_returns, sample_etf_returns):
+        fitted_model.add_asset("SHOP", new_ticker_returns, factor_returns)
+        etf_ret = sample_etf_returns.iloc[-1]
+        stock_ret = pd.Series({"V": 0.001, "MSFT": -0.002, "SHOP": 0.003})
+        scores = fitted_model.score(etf_ret, stock_ret)
+        assert "SHOP" in scores.index
+        assert "r_squared" in scores.columns
+        assert "residual_vol" in scores.columns
+
+    def test_add_asset_score_has_expected_columns(self, fitted_model, new_ticker_returns, factor_returns, sample_etf_returns):
+        fitted_model.add_asset("SHOP", new_ticker_returns, factor_returns)
+        etf_ret = sample_etf_returns.iloc[-1]
+        stock_ret = pd.Series({"SHOP": 0.003})
+        scores = fitted_model.score(etf_ret, stock_ret)
+        for col in ("actual_return", "expected_rel", "expected_abs",
+                    "delta_rel", "delta_abs", "r_squared",
+                    "residual_vol", "confidence_delta"):
+            assert col in scores.columns
+
+    def test_duplicate_ticker_raises(self, fitted_model, new_ticker_returns, factor_returns):
+        fitted_model.add_asset("SHOP", new_ticker_returns, factor_returns)
+        with pytest.raises(ValueError, match="already in the model"):
+            fitted_model.add_asset("SHOP", new_ticker_returns, factor_returns)
+
+    def test_original_ticker_raises(self, fitted_model, factor_returns, sample_stock_returns):
+        with pytest.raises(ValueError, match="already in the model"):
+            fitted_model.add_asset("V", sample_stock_returns["V"], factor_returns)
+
+    def test_low_coverage_raises(self, fitted_model, factor_returns):
+        bad = pd.Series([0.01, 0.02], index=pd.date_range("2020-01-01", periods=2))
+        with pytest.raises(ValueError, match="overlap"):
+            fitted_model.add_asset("BAD", bad, factor_returns)
+
+    def test_add_asset_survives_serialisation(self, fitted_model, new_ticker_returns, factor_returns, sample_etf_returns):
+        """Added ticker must persist through to_dict() / from_dict()."""
+        fitted_model.add_asset("SHOP", new_ticker_returns, factor_returns)
+        restored = FactorModel.from_dict(fitted_model.to_dict())
+        assert "SHOP" in restored.loadings.index
+        assert "SHOP" in restored.diagnostics.stock_r_squared.index
+        assert "SHOP" in restored.diagnostics.residual_vol.index
+
+    def test_serialised_stock_columns_includes_added_ticker(self, fitted_model, new_ticker_returns, factor_returns):
+        fitted_model.add_asset("SHOP", new_ticker_returns, factor_returns)
+        d = fitted_model.to_dict()
+        assert "SHOP" in d["stock_columns"]
+
+    def test_score_still_works_for_original_tickers_after_add(
+        self, fitted_model, new_ticker_returns, factor_returns, sample_etf_returns, sample_stock_returns
+    ):
+        """Adding an asset must not break scoring for existing tickers."""
+        etf_ret = sample_etf_returns.iloc[-1]
+        stk_ret_before = sample_stock_returns.iloc[-1]
+        scores_before = fitted_model.score(etf_ret, stk_ret_before)
+
+        fitted_model.add_asset("SHOP", new_ticker_returns, factor_returns)
+
+        stk_ret_after = pd.concat([stk_ret_before, pd.Series({"SHOP": 0.003})])
+        scores_after = fitted_model.score(etf_ret, stk_ret_after)
+
+        # Original tickers unchanged
+        for ticker in stk_ret_before.index:
+            assert scores_after.loc[ticker, "expected_rel"] == pytest.approx(
+                scores_before.loc[ticker, "expected_rel"]
+            )
+
+
+class TestRemoveAsset:
+    """Tests for FactorModel.remove_asset() — in-place model contraction."""
+
+    def test_remove_asset_drops_from_loadings(self, fitted_model):
+        ticker = fitted_model.loadings.index[0]
+        fitted_model.remove_asset(ticker)
+        assert ticker not in fitted_model.loadings.index
+
+    def test_remove_asset_loadings_shape(self, fitted_model):
+        n_before = len(fitted_model.loadings)
+        ticker = fitted_model.loadings.index[0]
+        fitted_model.remove_asset(ticker)
+        assert len(fitted_model.loadings) == n_before - 1
+
+    def test_remove_asset_diagnostics_updated(self, fitted_model):
+        ticker = fitted_model.loadings.index[0]
+        n_before = fitted_model.diagnostics.n_stocks
+        fitted_model.remove_asset(ticker)
+        assert fitted_model.diagnostics.n_stocks == n_before - 1
+        assert ticker not in fitted_model.diagnostics.stock_r_squared.index
+        assert ticker not in fitted_model.diagnostics.residual_vol.index
+
+    def test_remove_asset_returns_removed_values(self, fitted_model):
+        ticker = fitted_model.loadings.index[0]
+        r2_before = float(fitted_model.diagnostics.stock_r_squared.loc[ticker])
+        result = fitted_model.remove_asset(ticker)
+        assert isinstance(result["loadings"], pd.Series)
+        assert result["r_squared"] == pytest.approx(r2_before)
+        assert result["residual_vol"] >= 0.0
+
+    def test_remove_unknown_ticker_raises(self, fitted_model):
+        with pytest.raises(ValueError, match="not in the model"):
+            fitted_model.remove_asset("DOESNOTEXIST")
+
+    def test_remove_asset_score_excludes_ticker(self, fitted_model, sample_etf_returns, sample_stock_returns):
+        ticker = fitted_model.loadings.index[0]
+        fitted_model.remove_asset(ticker)
+        etf_ret = sample_etf_returns.iloc[-1]
+        stk_ret = sample_stock_returns.iloc[-1]
+        scores = fitted_model.score(etf_ret, stk_ret)
+        assert ticker not in scores.index
+
+    def test_remove_asset_score_unchanged_for_remaining(self, fitted_model, sample_etf_returns, sample_stock_returns):
+        """Removing one ticker must not affect scores for the rest."""
+        etf_ret = sample_etf_returns.iloc[-1]
+        stk_ret = sample_stock_returns.iloc[-1]
+        scores_before = fitted_model.score(etf_ret, stk_ret)
+
+        ticker = fitted_model.loadings.index[0]
+        fitted_model.remove_asset(ticker)
+        scores_after = fitted_model.score(etf_ret, stk_ret)
+
+        for t in scores_after.index:
+            assert scores_after.loc[t, "expected_rel"] == pytest.approx(
+                scores_before.loc[t, "expected_rel"]
+            )
+
+    def test_remove_then_readd(self, fitted_model, sample_etf_returns):
+        """A ticker removed and re-added via add_asset should score normally."""
+        import numpy as np
+        ticker = fitted_model.loadings.index[0]
+        original_returns = sample_etf_returns["VOO"]  # proxy returns for re-add
+        r_e = sample_etf_returns.values - fitted_model._etf_mean.values
+        F = r_e @ fitted_model._Vt.T
+        factor_rets = pd.DataFrame(
+            F,
+            index=sample_etf_returns.index,
+            columns=[f"Factor_{i+1}" for i in range(fitted_model._Vt.shape[0])],
+        )
+        fitted_model.remove_asset(ticker)
+        assert ticker not in fitted_model.loadings.index
+        fitted_model.add_asset(ticker, original_returns, factor_rets)
+        assert ticker in fitted_model.loadings.index
+
+    def test_remove_asset_survives_serialisation(self, fitted_model, sample_etf_returns):
+        """Ticker must stay absent after to_dict() / from_dict()."""
+        from shockarb.engine import FactorModel
+        ticker = fitted_model.loadings.index[0]
+        fitted_model.remove_asset(ticker)
+        restored = FactorModel.from_dict(fitted_model.to_dict())
+        assert ticker not in restored.loadings.index
+        assert ticker not in restored.diagnostics.stock_r_squared.index

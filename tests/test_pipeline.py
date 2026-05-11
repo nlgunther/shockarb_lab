@@ -231,7 +231,10 @@ class TestFetchLiveReturns:
                 {"adj_close": vals}, index=idx
             )
 
-        coord = DataCoordinator(store)  # no provider needed — full cache hit
+        from datamgr.providers.mock import MockProvider
+        # MockProvider handles any gap-fill (e.g. when today is a weekend
+        # and the store ends on the last business day, causing a tail miss).
+        coord = DataCoordinator(store, provider=MockProvider())
 
         with patch.object(pipeline, "_coordinator", return_value=coord):
             returns = pipeline.fetch_live_returns(["AAPL", "MSFT"], period="1d")
@@ -875,3 +878,137 @@ class TestSaveLiveTape:
         pipeline.save_live_tape(["VOO"], ["AAPL"], path)
         assert mock_dl.call_args[1].get("auto_adjust") is False
 
+
+
+class TestAddAssets:
+    """Tests for pipeline.add_assets() and compute_factor_returns()."""
+
+    @pytest.fixture
+    def small_model(self):
+        """A 3-ETF / 2-stock model with no dependency on the file system."""
+        import numpy as np, pandas as pd
+        from shockarb.engine import FactorModel
+        np.random.seed(7)
+        dates = pd.bdate_range("2022-02-10", "2022-03-31")
+        n = len(dates)
+        etf = pd.DataFrame(
+            {"VOO": np.random.randn(n) * 0.01,
+             "TLT": np.random.randn(n) * 0.01,
+             "GLD": np.random.randn(n) * 0.01},
+            index=dates,
+        )
+        stk = pd.DataFrame(
+            {"AAPL": np.random.randn(n) * 0.015,
+             "MSFT": np.random.randn(n) * 0.015},
+            index=dates,
+        )
+        return FactorModel(etf, stk).fit(n_components=2)
+
+    def test_compute_factor_returns_shape(self, small_model):
+        """compute_factor_returns returns (T × k) DataFrame."""
+        import numpy as np, pandas as pd
+        from shockarb.pipeline import compute_factor_returns
+        np.random.seed(7)
+        dates = pd.bdate_range("2022-02-10", "2022-03-31")
+        n = len(dates)
+        etf = pd.DataFrame(
+            {"VOO": np.random.randn(n) * 0.01,
+             "TLT": np.random.randn(n) * 0.01,
+             "GLD": np.random.randn(n) * 0.01},
+            index=dates,
+        )
+        F = compute_factor_returns(small_model, etf)
+        assert F.shape == (n, 2)
+        assert list(F.columns) == ["Factor_1", "Factor_2"]
+
+    def test_add_assets_calls_model_add_asset(self, small_model, temp_dir):
+        """add_assets() should call model.add_asset() for each new ticker."""
+        import numpy as np, pandas as pd
+        from unittest.mock import patch, MagicMock
+        from shockarb.config import ExecutionConfig, UniverseConfig
+        from shockarb.engine import FactorModel
+        import shockarb.pipeline as pipeline
+
+        dates = pd.bdate_range("2022-02-10", "2022-03-31")
+        n = len(dates)
+
+        # ETF prices (coordinator "add_assets.etf" result)
+        etf_prices = pd.DataFrame(
+            {"VOO": 100 * (1 + np.random.randn(n) * 0.01).cumprod(),
+             "TLT": 100 * (1 + np.random.randn(n) * 0.01).cumprod(),
+             "GLD": 100 * (1 + np.random.randn(n) * 0.01).cumprod()},
+            index=dates,
+        )
+        # New ticker prices
+        new_prices = pd.DataFrame(
+            {"SHOP": 100 * (1 + np.random.randn(n) * 0.015).cumprod()},
+            index=dates,
+        )
+        # Merge for coordinator result
+        fulfill_result = {
+            "add_assets.etf": etf_prices.pct_change().iloc[1:],
+            "add_assets.new": new_prices.pct_change().iloc[1:],
+        }
+
+        mock_coord = MagicMock()
+        mock_coord.fulfill.return_value = fulfill_result
+
+        universe = UniverseConfig(
+            name="us",
+            market_etfs=["VOO", "TLT", "GLD"],
+            individual_stocks=["AAPL", "MSFT"],
+            start_date="2022-02-10",
+            end_date="2022-03-31",
+            n_components=2,
+        )
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+
+        with patch.object(pipeline, "_coordinator", return_value=mock_coord):
+            summary = pipeline.add_assets(["SHOP"], small_model, universe, cfg)
+
+        assert not summary.empty, "summary should not be empty"
+        assert "SHOP" in summary.index
+        assert "r_squared" in summary.columns
+        assert "residual_vol" in summary.columns
+        assert "SHOP" in small_model.loadings.index
+
+    def test_add_assets_skips_existing_tickers(self, small_model, temp_dir):
+        """add_assets() skips tickers already in the model (via model.add_asset raising)."""
+        import numpy as np, pandas as pd
+        from unittest.mock import patch, MagicMock
+        from shockarb.config import ExecutionConfig, UniverseConfig
+        import shockarb.pipeline as pipeline
+
+        dates = pd.bdate_range("2022-02-10", "2022-03-31")
+        n = len(dates)
+        etf_prices = pd.DataFrame(
+            {"VOO": 100 * (1 + np.random.randn(n) * 0.01).cumprod(),
+             "TLT": 100 * (1 + np.random.randn(n) * 0.01).cumprod(),
+             "GLD": 100 * (1 + np.random.randn(n) * 0.01).cumprod()},
+            index=dates,
+        )
+        fulfill_result = {
+            "add_assets.etf": etf_prices.pct_change().iloc[1:],
+            "add_assets.new": pd.DataFrame(
+                {"AAPL": 100 * (1 + np.random.randn(n) * 0.015).cumprod()},
+                index=dates,
+            ).pct_change().iloc[1:],
+        }
+        mock_coord = MagicMock()
+        mock_coord.fulfill.return_value = fulfill_result
+
+        universe = UniverseConfig(
+            name="us",
+            market_etfs=["VOO", "TLT", "GLD"],
+            individual_stocks=["AAPL", "MSFT"],
+            start_date="2022-02-10",
+            end_date="2022-03-31",
+            n_components=2,
+        )
+        cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
+
+        with patch.object(pipeline, "_coordinator", return_value=mock_coord):
+            # AAPL is already in the model — should be skipped (returns empty)
+            summary = pipeline.add_assets(["AAPL"], small_model, universe, cfg)
+
+        assert summary.empty, "AAPL is already in the model; summary should be empty"

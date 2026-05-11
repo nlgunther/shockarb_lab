@@ -26,7 +26,9 @@ class UniverseConfig:
 - `individual_stocks` must be non-empty
 - `n_components` must be ≥ 1
 
-**Pre-built constants:**
+**NOTE:** `UniverseConfig` is still used internally, but the recommended workflow is now regime-based. See `shockarb.regimes` below.
+
+**Legacy pre-built constants** (use regimes instead):
 
 | Constant | `name` | ETFs | Stocks | n_components | Window |
 |----------|--------|------|--------|-------------|--------|
@@ -62,6 +64,74 @@ path = cfg.resolve_path("us_model.json")
 #### `configure_logger() → None`
 
 Configure loguru for stdout (and optionally a rotating log file). Idempotent — safe to call multiple times.
+
+---
+
+## `shockarb.regimes`
+
+### `HistoricFactorModel`
+
+Immutable (frozen dataclass) representing a named historical regime with its universe and metadata.
+
+```python
+@dataclass(frozen=True)
+class HistoricFactorModel:
+    name: str
+    description: str
+    narrative: str
+    universe: UniverseConfig
+    expected_dynamics: Dict[str, str]
+    tags: Tuple[str, ...]
+    supersedes: Optional[str]
+```
+
+**Pre-built regimes:**
+
+| Constant | Name | Description | Period | Universe |
+|----------|------|-------------|--------|----------|
+| `UKRAINE_SHOCK` | `ukraine_shock` | Russia-Ukraine invasion (US) | Feb-Mar 2022 | 80+ US stocks |
+| `GLOBAL_UKRAINE_SHOCK` | `global_ukraine_shock` | Russia-Ukraine invasion (Global) | Feb-Mar 2022 | 15 global ADRs |
+| `GULF_WAR_RECOVERY` | `gulf_war_recovery` | Gulf War ceasefire recovery | Mar-Jun 1991 | 33 US stocks |
+| `LIBERATION_DAY_RECOVERY` | `liberation_day_recovery` | Post-Liberation Day tariff recovery | Apr-Jul 2025 | US |
+
+---
+
+### `get_regime(name: str) -> HistoricFactorModel`
+
+Look up a regime by name (case-insensitive). Raises `ValueError` for unknown names.
+
+```python
+from shockarb.regimes import get_regime
+
+regime = get_regime("ukraine_shock")
+print(regime.description)
+```
+
+---
+
+### `list_regimes() -> List[str]`
+
+Return sorted list of all registered regime names.
+
+```python
+from shockarb.regimes import list_regimes
+
+print(list_regimes())
+# ['global_ukraine_shock', 'gulf_war_recovery', 'liberation_day_recovery', 'ukraine_shock']
+```
+
+---
+
+### `find_by_tag(tag: str) -> List[HistoricFactorModel]`
+
+Find all regimes with a given tag (case-insensitive).
+
+```python
+from shockarb.regimes import find_by_tag
+
+geopolitical = find_by_tag("geopolitical")
+# [UKRAINE_SHOCK, GLOBAL_UKRAINE_SHOCK, GULF_WAR_RECOVERY]
+```
 
 ---
 
@@ -190,6 +260,38 @@ loadings = model.project_security("SHOP", shop_returns)
 
 ---
 
+#### `remove_asset(ticker: str) → dict`
+
+Remove a ticker from the model **in-place**. Drops the ticker's row from loadings, diagnostics, and the internal mean vector. The factor basis (SVD result) is unchanged.
+
+**Returns:** `dict` with keys `loadings` (Series), `r_squared` (float), `residual_vol` (float) — the values that were removed.
+
+**Raises:** `ValueError` if `ticker` is not in the model.
+
+```python
+model.remove_asset("RTX")
+# model.score() no longer includes RTX
+```
+
+---
+
+#### `add_asset(ticker, returns, factor_returns, min_overlap=0.8) → dict`
+
+Project a new asset onto the fitted factor basis and add it to the scoring universe **in-place**. Unlike `project_security()`, the ticker is immediately available in subsequent `score()` calls. Use `pipeline.add_assets()` rather than calling this directly — it handles data fetching and factor-return reconstruction.
+
+**Parameters:**
+- `ticker: str` — display name for the security
+- `returns: pd.Series` — daily returns with a DatetimeIndex; only dates present in `factor_returns` are used
+- `factor_returns: pd.DataFrame` — pre-computed calibration-window factor return series, shape (T × k); produced by `pipeline.add_assets()`
+- `min_overlap: float` — minimum fraction of `factor_returns` dates that must have return data (default 0.8)
+
+**Returns:** `dict` with keys `loadings` (Series), `r_squared` (float), `residual_vol` (float)
+
+**Raises:**
+- `ValueError` if `ticker` is already in the model or coverage is below `min_overlap`
+
+---
+
 #### `to_dict() → dict`
 
 Serialise the fitted model to a JSON-compatible dict. Does **not** include raw return matrices — only the minimal state needed for `score()`.
@@ -218,9 +320,14 @@ import shockarb.pipeline as pipeline
 
 Full pipeline: fetch prices → compute returns → fit model.
 
+**Note:** The regime-based CLI workflow (`python -m shockarb build --regime <name>`) is now preferred. When calling programmatically, pass `regime.universe` from a `HistoricFactorModel`.
+
 ```python
-from shockarb.config import US_UNIVERSE
-model = pipeline.build(US_UNIVERSE)
+from shockarb.regimes import get_regime
+import shockarb.pipeline as pipeline
+
+regime = get_regime("global_ukraine_shock")
+model = pipeline.build(regime.universe)
 ```
 
 **Parameters:**
@@ -333,6 +440,28 @@ Return the path to the most recently saved model matching `name`, or `None` if n
 ```python
 path = pipeline.find_latest_model("us")
 ```
+
+---
+
+### `add_assets(tickers, model, universe, exec_config=None) → pd.DataFrame`
+
+Download calibration-window data for new tickers and add them to an existing model in-place. Fetches ETF prices (to reconstruct the factor return series) and the new ticker prices, then calls `model.add_asset()` for each. Saving with `save_model()` afterwards persists the change.
+
+```python
+model = pipeline.load_model(path)
+regime = get_regime("ukraine_shock")
+summary = pipeline.add_assets(["SHOP", "COIN"], model, regime.universe)
+print(summary)
+pipeline.save_model(model, "us")   # new tickers persisted
+```
+
+**Parameters:**
+- `tickers: List[str]` — new ticker symbols to add; tickers already in the model are skipped with a warning
+- `model: FactorModel` — a fitted model from `build()` or `load_model()`
+- `universe: UniverseConfig` — defines the calibration window and ETF basket
+- `exec_config: ExecutionConfig` — optional
+
+**Returns:** `pd.DataFrame` with one row per successfully added ticker; columns are `Factor_1`…`Factor_k`, `R_squared`, `Residual_Vol`. Empty if no tickers could be added.
 
 ---
 
@@ -460,6 +589,48 @@ class Args:
 
 cmd_build(Args())
 ```
+
+### `remove-asset` subcommand
+
+Remove one or more tickers from an existing saved model without refitting.
+
+```bash
+python -m shockarb remove-asset RTX --regime global_ukraine_shock --save
+```
+
+**Arguments:**
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `tickers` (positional) | *(required)* | One or more ticker symbols to remove |
+| `--regime / -r` | sticky regime | Regime name (overrides sticky) |
+| `--model / -m` | *(latest)* | Explicit model `.json` path |
+| `--save / -s` | False | Save the updated model after removing |
+| `--no-log` | False | Suppress log file output |
+
+Tickers not found in the model are skipped with a warning rather than raising an error.
+
+---
+
+### `add-asset` subcommand
+
+Add new tickers to an existing saved model without refitting.
+
+```bash
+python -m shockarb add-asset SHOP COIN --regime ukraine_shock --save
+```
+
+**Arguments:**
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `tickers` (positional) | *(required)* | One or more ticker symbols to add |
+| `--regime / -r` | sticky regime | Regime name (overrides sticky) |
+| `--model / -m` | *(latest)* | Explicit model `.json` path |
+| `--save / -s` | False | Save the updated model after adding |
+| `--no-log` | False | Suppress log file output |
+
+---
 
 ### `get_universe(name: str) → UniverseConfig`
 

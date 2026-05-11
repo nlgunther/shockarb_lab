@@ -12,17 +12,42 @@ ShockArb decomposes daily stock returns into a macro-factor-explained component 
 # Install
 pip install -e .
 
-# Build the US model (downloads ~35 days of price history, fits SVD, saves JSON)
-python -m shockarb build --universe us
+# Set the active regime (saved as a sticky default)
+python -m shockarb set-regime ukraine_shock
+
+# Build the model (downloads ~35 days of price history, fits SVD, saves JSON)
+python -m shockarb build
 
 # Score today's live tape
-python -m shockarb score --universe us
+python -m shockarb score
 
 # Score a specific historical date
-python -m shockarb score --universe us --date 2022-03-01
+python -m shockarb score --date 2022-03-01
 
 # Show model diagnostics
-python -m shockarb show --universe us --verbose
+python -m shockarb show --verbose
+
+# Or use explicit --regime flag (overrides sticky regime for one command)
+python -m shockarb build --regime global_ukraine_shock
+```
+
+---
+
+### Available Regimes
+
+| Regime Name | Description | Period | Universe |
+|-------------|-------------|--------|----------|
+| `ukraine_shock` | Russia-Ukraine invasion shock | Feb-Mar 2022 | US (80+ stocks) |
+| `global_ukraine_shock` | Russia-Ukraine invasion shock | Feb-Mar 2022 | Global (15 ADRs) |
+| `gulf_war_recovery` | Gulf War ceasefire recovery | Mar-Jun 1991 | US (33 stocks) |
+| `liberation_day_recovery` | Post-Liberation Day tariff recovery | Apr-Jul 2025 | US |
+
+```bash
+# List all available regimes
+python -m shockarb list-regimes
+
+# Show the current sticky regime
+python -m shockarb show-regime
 ```
 
 ---
@@ -68,19 +93,16 @@ shockarb/
 │   └── cli.py                 # CLI: build / score / export / show subcommands
 │
 ├── tests/
-│   ├── conftest.py            # Shared fixtures (sample_etf_returns, fitted_model, …)
-│   ├── unit/                  # Tests for individual modules in isolation
-│   │   ├── test_config.py     # UniverseConfig, ExecutionConfig
-│   │   ├── test_engine.py     # FactorModel, FactorDiagnostics
-│   │   ├── test_cache.py      # CacheManager
-│   │   ├── test_pipeline.py   # fetch_prices, prices_to_returns, save/load
-│   │   ├── test_cli.py        # CLI argument parsing, command dispatch
-│   │   └── test_report.py     # print_scores, print_model_state, print_live_alpha
-│   └── integration/           # Multi-module and end-to-end tests
-│       ├── test_pipeline.py   # Pipeline with real cache writes
-│       ├── test_cli.py        # CLI commands against real model files
-│       ├── test_end_to_end.py # Full build → score → save → load → score cycles
-│       └── test_integration.py # Cross-module column contract, CLI → score chain
+│   ├── conftest.py                    # Shared fixtures (sample_etf_returns, fitted_model, …)
+│   ├── test_config.py                 # UniverseConfig, ExecutionConfig
+│   ├── test_engine.py                 # FactorModel, FactorDiagnostics, add_asset
+│   ├── test_cache.py                  # CacheManager
+│   ├── test_pipeline.py               # fetch_prices, prices_to_returns, save/load, add_assets
+│   ├── test_cli.py                    # CLI argument parsing, command dispatch
+│   ├── test_report.py                 # print_scores, print_model_state, print_live_alpha
+│   ├── test_backtest.py               # Backtest utilities
+│   ├── test_regimes.py                # Regime registry, HistoricFactorModel
+│   └── test_coordinator_phase1.py     # DataCoordinator integration
 │
 ├── docs/
 │   ├── README.md              # This file
@@ -215,8 +237,9 @@ cfg = ExecutionConfig(
 Set `SHOCK_ARB_DATA_DIR` to override `data_dir` without code changes:
 
 ```bash
-export SHOCK_ARB_DATA_DIR=/data/shockarb
-python -m shockarb build --universe us
+set SHOCK_ARB_DATA_DIR=C:\data\shockarb
+python -m shockarb set-regime ukraine_shock
+python -m shockarb build
 ```
 
 ### Pre-built Universes
@@ -236,10 +259,17 @@ python -m shockarb [--data-dir DIR] COMMAND [OPTIONS]
 
 | Command | Key Options | Description |
 |---------|-------------|-------------|
-| `build` | `--universe us\|global` | Fetch data, fit model, save JSON |
-| `score` | `--universe`, `--date YYYY-MM-DD`, `--top N`, `--output file.csv` | Score returns |
-| `export` | `--universe` | Write ETF basis + stock loadings to CSV |
-| `show` | `--universe`, `--verbose / -v` | Display model diagnostics |
+| `build` | `--regime <name>` | Fetch data, fit model, save JSON |
+| `score` | `--regime <name>`, `--date YYYY-MM-DD`, `--top N`, `--output file.csv` | Score returns |
+| `export` | `--regime <name>` | Write ETF basis + stock loadings to CSV |
+| `show` | `--regime <name>`, `--verbose / -v` | Display model diagnostics |
+| `add-asset` | `<tickers>`, `--regime <name>`, `--save` | Add new tickers to an existing model without refitting |
+| `remove-asset` | `<tickers>`, `--regime <name>`, `--save` | Remove tickers from an existing model without refitting |
+| `set-regime` | `<name>` | Set sticky default regime (persists across sessions) |
+| `show-regime` | — | Display current sticky regime |
+| `list-regimes` | — | List all available regimes |
+
+**Legacy (deprecated):** `--universe us|global` still works but emits a deprecation warning. Use `--regime` instead.
 
 ---
 

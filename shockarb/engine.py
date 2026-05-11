@@ -421,6 +421,163 @@ class FactorModel:
             name=ticker,
         )
 
+
+    def add_asset(
+        self,
+        ticker: str,
+        returns: pd.Series,
+        factor_returns: pd.DataFrame,
+        min_overlap: float = 0.8,
+    ) -> dict:
+        """
+        Project a new asset onto the fitted factor basis and add it to the scoring universe.
+
+        Unlike project_security(), this method mutates the model in-place: the
+        ticker becomes immediately available in score() without refitting.
+
+        Parameters
+        ----------
+        ticker : str
+            Display name for the security.
+        returns : Series
+            Daily returns with a DatetimeIndex.  Only dates present in
+            factor_returns are used; others are ignored.
+        factor_returns : DataFrame
+            Pre-computed calibration-window factor return series, shape (T × k).
+            Produced by pipeline.add_assets(), which reconstructs it from cached
+            ETF data and the model's stored _Vt / _etf_mean.
+        min_overlap : float
+            Minimum fraction of factor_returns dates that must have return data.
+
+        Returns
+        -------
+        dict
+            {"loadings": Series, "r_squared": float, "residual_vol": float}
+
+        Raises
+        ------
+        ValueError
+            If ticker is already in the model or coverage is below min_overlap.
+
+        Example
+        -------
+            F = pipeline.compute_factor_returns(model, etf_returns)
+            stats = model.add_asset("SHOP", shop_returns, F)
+            # model.score() now includes SHOP
+        """
+        self._require_fitted()
+
+        if ticker in self.loadings.index:
+            raise ValueError(
+                f"{ticker!r} is already in the model. "
+                "Remove it first or refit with the expanded universe."
+            )
+
+        aligned = returns.reindex(factor_returns.index)
+        coverage = aligned.notna().mean()
+        if coverage < min_overlap:
+            raise ValueError(
+                f"{ticker} has only {coverage:.0%} overlap with the calibration window "
+                f"(minimum required: {min_overlap:.0%})."
+            )
+
+        mask = aligned.notna()
+        r_mean = float(aligned[mask].mean())
+        r = (aligned[mask] - r_mean).values        # mean-centred returns
+        F_sub = factor_returns.loc[mask].values     # (T_valid × k)
+
+        betas, *_ = np.linalg.lstsq(F_sub, r, rcond=None)
+
+        r_hat  = F_sub @ betas
+        resid  = r - r_hat
+        ss_res = float((resid ** 2).sum())
+        ss_tot = float((r ** 2).sum())
+        r_squared  = float(1.0 - ss_res / ss_tot) if ss_tot > 1e-10 else 0.0
+        resid_vol  = float(resid.std() * np.sqrt(252))
+
+        # Extend model state
+        new_row = pd.DataFrame(
+            [betas],
+            index=[ticker],
+            columns=self.loadings.columns,
+        )
+        self.loadings = pd.concat([self.loadings, new_row])
+
+        self.diagnostics.stock_r_squared = pd.concat([
+            self.diagnostics.stock_r_squared,
+            pd.Series({ticker: r_squared}),
+        ])
+        self.diagnostics.residual_vol = pd.concat([
+            self.diagnostics.residual_vol,
+            pd.Series({ticker: resid_vol}),
+        ])
+        self.diagnostics.n_stocks += 1
+        self._stock_mean = pd.concat([
+            self._stock_mean,
+            pd.Series({ticker: r_mean}),
+        ])
+
+        logger.info(
+            f"[Engine] Added {ticker!r}: R²={r_squared:.3f}, "
+            f"residual_vol={resid_vol:.4f}"
+        )
+        return {
+            "loadings":    pd.Series(betas, index=self.loadings.columns, name=ticker),
+            "r_squared":   r_squared,
+            "residual_vol": resid_vol,
+        }
+
+    def remove_asset(self, ticker: str) -> dict:
+        """
+        Remove a ticker from the model in-place.
+
+        Drops the ticker's row from loadings, diagnostics, and the internal
+        mean vector.  The factor basis (SVD result) is unchanged.
+
+        Parameters
+        ----------
+        ticker : str
+            Ticker to remove.  Must already be present in the model.
+
+        Returns
+        -------
+        dict
+            {"loadings": Series, "r_squared": float, "residual_vol": float}
+            The values that were removed, useful for logging / confirmation.
+
+        Raises
+        ------
+        ValueError
+            If ticker is not in the model.
+
+        Example
+        -------
+            model.remove_asset("RTX")
+            # model.score() no longer includes RTX
+        """
+        self._require_fitted()
+
+        if ticker not in self.loadings.index:
+            raise ValueError(
+                f"{ticker!r} is not in the model. "
+                f"Available tickers: {sorted(self.loadings.index.tolist())}"
+            )
+
+        removed = {
+            "loadings":    self.loadings.loc[ticker].copy(),
+            "r_squared":   float(self.diagnostics.stock_r_squared.loc[ticker]),
+            "residual_vol": float(self.diagnostics.residual_vol.loc[ticker]),
+        }
+
+        self.loadings = self.loadings.drop(index=ticker)
+        self.diagnostics.stock_r_squared = self.diagnostics.stock_r_squared.drop(index=ticker)
+        self.diagnostics.residual_vol    = self.diagnostics.residual_vol.drop(index=ticker)
+        self.diagnostics.n_stocks       -= 1
+        self._stock_mean                 = self._stock_mean.drop(index=ticker)
+
+        logger.info(f"[Engine] Removed {ticker!r} from model")
+        return removed
+
     # -------------------------------------------------------------------------
     # Serialisation
     # -------------------------------------------------------------------------
@@ -451,8 +608,8 @@ class FactorModel:
             "etf_columns": list(self.etf_returns.columns),
             "etf_mean": self._etf_mean.tolist(),
             "loadings": self.loadings.values.tolist(),
-            "stock_columns": list(self.stock_returns.columns),
-            "stock_mean": self._stock_mean.tolist(),
+            "stock_columns": list(self.loadings.index),
+            "stock_mean": self._stock_mean.reindex(self.loadings.index).fillna(0.0).tolist(),
             "explained_variance_ratio": self.diagnostics.explained_variance_ratio.tolist(),
             "stock_r_squared": self.diagnostics.stock_r_squared.to_dict(),
             "residual_vol": self.diagnostics.residual_vol.to_dict(),
@@ -461,12 +618,12 @@ class FactorModel:
     @classmethod
     def from_dict(cls, d: dict) -> "FactorModel":
         """
-        Reconstruct a scored-ready model from a dict produced by to_dict().
+        Reconstruct a scoring-ready model from a dict produced by to_dict().
 
         The returned model can call score() and project_security() immediately.
         etf_returns and stock_returns are set to empty stubs (zero rows) since
         the raw calibration data is not persisted.  If you need those matrices
-        (e.g. to refit), call Pipeline.build() instead.
+        (e.g. to refit), call pipeline.build() instead.
         """
         n_factors = d["metadata"]["n_factors"]
         etf_cols = d["etf_columns"]

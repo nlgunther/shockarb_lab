@@ -1107,6 +1107,144 @@ def build(
     return model
 
 
+
+def compute_factor_returns(
+    model: FactorModel,
+    etf_returns: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Reconstruct calibration-window factor returns from ETF data and model state.
+
+    This is the bridge between pipeline.add_assets() and engine.add_asset():
+    the engine knows _Vt and _etf_mean, but not the raw ETF data; the pipeline
+    fetches ETF data and calls this helper to produce F.
+
+    Parameters
+    ----------
+    model : FactorModel
+        Fitted model (works even when loaded from JSON; needs _Vt, _etf_mean).
+    etf_returns : DataFrame
+        Daily ETF returns covering the calibration window, columns = ETF tickers.
+
+    Returns
+    -------
+    DataFrame
+        Factor return series, shape (T × k), columns = ["Factor_1", ...].
+    """
+    r_e = (
+        etf_returns
+        .reindex(columns=model._etf_mean.index)
+        .fillna(0.0)
+        .sub(model._etf_mean.values)
+    )
+    n_factors = model._Vt.shape[0]
+    return pd.DataFrame(
+        r_e.values @ model._Vt.T,
+        index=etf_returns.index,
+        columns=[f"Factor_{i+1}" for i in range(n_factors)],
+    )
+
+
+def add_assets(
+    tickers: List[str],
+    model: FactorModel,
+    universe: "UniverseConfig",
+    exec_config: Optional[ExecutionConfig] = None,
+) -> pd.DataFrame:
+    """
+    Download calibration-window data for new tickers and add them to the model.
+
+    Fetches price data for both the universe's ETFs (needed to reconstruct the
+    factor series) and the new tickers.  For each ticker the method calls
+    model.add_asset() in-place, so score() will include the new tickers
+    immediately.  Saving the model with save_model() persists the change.
+
+    Parameters
+    ----------
+    tickers : list of str
+        New ticker symbols to add.  Tickers already in the model are skipped
+        with a warning rather than raising.
+    model : FactorModel
+        A fitted model — either fresh from build() or loaded via load_model().
+    universe : UniverseConfig
+        Defines the calibration window (start_date / end_date) and the ETF
+        basket used to reconstruct the factor return series.
+    exec_config : ExecutionConfig, optional
+
+    Returns
+    -------
+    DataFrame
+        One row per successfully added ticker.  Columns: Factor_1..k,
+        R_squared, Residual_Vol.  Empty if no tickers could be added.
+
+    Example
+    -------
+        model = pipeline.load_model(path)
+        summary = pipeline.add_assets(["SHOP", "COIN"], model, universe, cfg)
+        print(summary)
+        pipeline.save_model(model, "us", cfg)   # new tickers persisted
+    """
+    exec_cfg = _exec(exec_config)
+
+    # Fetch ETF prices (needed to reconstruct factor returns) and new tickers
+    coordinator = _coordinator(exec_cfg)
+    coordinator.register(DataRequest(
+        tickers   = tuple(universe.market_etfs),
+        start     = universe.start_date,
+        end       = universe.end_date,
+        frequency = Frequency.DAILY,
+        retention = "permanent",
+        requester = "add_assets.etf",
+    ))
+    coordinator.register(DataRequest(
+        tickers   = tuple(tickers),
+        start     = universe.start_date,
+        end       = universe.end_date,
+        frequency = Frequency.DAILY,
+        retention = "permanent",
+        requester = "add_assets.new",
+    ))
+    results = coordinator.fulfill()
+
+    etf_prices = results.get("add_assets.etf", pd.DataFrame())
+    new_prices  = results.get("add_assets.new", pd.DataFrame())
+
+    if etf_prices is None or etf_prices.empty:
+        logger.error("add_assets: coordinator returned no ETF data — cannot reconstruct factor returns")
+        return pd.DataFrame()
+    if new_prices is None or new_prices.empty:
+        logger.warning("add_assets: coordinator returned no data for new tickers")
+        return pd.DataFrame()
+
+    etf_returns = prices_to_returns(etf_prices)
+    new_returns = prices_to_returns(new_prices)
+    factor_rets = compute_factor_returns(model, etf_returns)
+
+    rows = []
+    for ticker in tickers:
+        if ticker not in new_returns.columns:
+            logger.warning(f"add_assets: no return data for {ticker!r}, skipping")
+            continue
+        try:
+            stats = model.add_asset(ticker, new_returns[ticker], factor_rets)
+        except ValueError as exc:
+            logger.warning(f"add_assets: skipping {ticker!r} — {exc}")
+            continue
+        row = {"ticker": ticker, **{k: v for k, v in stats.items() if k != "loadings"}}
+        for col, val in stats["loadings"].items():
+            row[col] = val
+        rows.append(row)
+
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(rows).set_index("ticker")
+    # Reorder: Factor columns first, then diagnostics
+    factor_cols = [c for c in df.columns if c.startswith("Factor_")]
+    diag_cols   = [c for c in df.columns if c not in factor_cols]
+    return df[factor_cols + diag_cols]
+
+
 def save_model(
     model: FactorModel,
     name: str,

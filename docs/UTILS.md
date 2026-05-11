@@ -42,21 +42,23 @@ Each CSV has one row per stock with columns: `actual_return`, `expected_rel`, `d
 **Usage**
 
 ```bash
-# Scan both universes (default)
-python utils/daily_scanner.py
+# Scan both US and Global regimes (if models exist)
+python utils\daily_scanner.py
 
-# Scan one universe only
-python utils/daily_scanner.py --universe us
+# Scan one regime only
+python utils\daily_scanner.py --regime ukraine_shock
 
 # Custom data directory
-python utils/daily_scanner.py --data-dir /path/to/data
+python utils\daily_scanner.py --data-dir /path/to/data
+
+# NOTE: --universe flag is deprecated, use --regime instead
 ```
 
 **Arguments**
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `--universe` / `-u` | `us global` | One or more universe names to scan. Must match a saved model. |
+| `--regime` / `-r` | `ukraine_shock global_ukraine_shock` | One or more regime names to scan. Must match a saved model. |
 | `--data-dir` | `./data` | Override data directory. Also accepts `$SHOCK_ARB_DATA_DIR`. |
 
 **Notes**
@@ -227,24 +229,29 @@ Scores any historical trading date against a saved factor model. Equivalent to `
 
 ```bash
 # Score the day Russia invaded Ukraine
-python utils/score_history.py --universe us --date 2022-02-24
+python utils\score_history.py --regime ukraine_shock --date 2022-02-24
+
+# Score with the global regime
+python utils\score_history.py --regime global_ukraine_shock --date 2022-02-24
 
 # Score a Fed rate decision
-python utils/score_history.py --universe us --date 2022-03-16
+python utils\score_history.py --regime ukraine_shock --date 2022-03-16
 
 # Use a specific model file
-python utils/score_history.py --universe us --date 2022-03-16 \
-    --model data/model_us_20220401.json
+python utils\score_history.py --regime ukraine_shock --date 2022-03-16 \
+    --model data/model_ukraine_shock_20220401.json
 
 # Show all results (not just top 20)
-python utils/score_history.py --universe us --date 2022-02-24 --top 0
+python utils\score_history.py --regime ukraine_shock --date 2022-02-24 --top 0
+
+# NOTE: --universe flag is deprecated, use --regime instead
 ```
 
 **Arguments**
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `--universe` / `-u` | `us` | Universe name. Must match a saved model. |
+| `--regime` / `-r` | `ukraine_shock` | Regime name. Must match a saved model. |
 | `--date` / `-d` | *(required)* | Historical date in `YYYY-MM-DD` format. |
 | `--model` / `-m` | *(latest)* | Explicit path to a model JSON. Uses the most-recently saved model by default. |
 | `--data-dir` | `./data` | Override data directory. |
