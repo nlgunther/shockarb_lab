@@ -29,6 +29,50 @@ store.py     — ShockArbStore: parquet file management for the datamgr coordina
 
 **Why engine.py has zero I/O:** swapping the data source (yfinance → Bloomberg) means touching `pipeline.py` only. The math is untouched. This boundary has been deliberately enforced — don't put file reads or network calls in engine.py.
 
+### Architecture Diagram
+
+```mermaid
+graph TB
+    CLI["CLI"]
+    CLI -->|parses args| PIPELINE["pipeline.py"]
+    CLI -->|formats output| REPORT["report.py"]
+    
+    PIPELINE -->|reads/writes models| STORE["store.py<br/>ShockArbStore"]
+    PIPELINE -->|builds & scores| ENGINE["engine.py<br/>FactorModel"]
+    PIPELINE -->|fetches prices| COORD["DataCoordinator"]
+    PIPELINE -->|lookups| REGIMES["regimes.py<br/>REGIME_REGISTRY"]
+    
+    ENGINE -->|serializes| JSON["model.json<br/>frozen model"]
+    
+    COORD -->|uses| PROVIDER["DataProvider<br/>yfinance|bloomberg|..."]
+    COORD -->|stores results| STORE_PARQUET["ParquetStore<br/>data/prices/"]
+    COORD -->|deduplicates requests| MERGE["Gap analysis<br/>& merging"]
+    
+    REGIMES -->|defines| CONFIG["UniverseConfig<br/>tickers, dates, factors"]
+    CONFIG -->|feeds| PIPELINE
+    
+    PROVIDER -->|fetches| MARKET["External API<br/>yfinance,Bloomberg,etc"]
+    
+    REPORT -->|displays| SCORES["Ranked signals<br/>confidence_delta"]
+    
+    style ENGINE fill:#e1f5ff
+    style PIPELINE fill:#f3e5f5
+    style STORE fill:#e8f5e9
+    style COORD fill:#fff3e0
+    style REGIMES fill:#fce4ec
+    style CLI fill:#f1f8e9
+```
+
+**Key observations:**
+- **CLI** → pipeline + report: glue layer
+- **pipeline** → engine + datamgr: all I/O isolation
+- **engine**: pure math, stateless until fit()
+- **regimes**: registry drives everything; adding a regime requires only editing this file
+- **datamgr**: provider-agnostic abstraction for swapping data sources
+- **store.py**: implements DataStore interface; parquet-based persistence
+
+For extension patterns, see [docs/EXTENDING.md](EXTENDING.md).
+
 ---
 
 ## The Build / Score Lifecycle
@@ -46,9 +90,13 @@ data/
 ├── ukraine_shock_us_20260510_143022.json         ← frozen US model
 ├── global_ukraine_shock_global_20260510_143055.json
 ├── .shockarb_regime                              ← sticky regime (one line, regime name)
+├── ticker_reference_cache.json                   ← company name/industry cache for reports
+├── nyse_*.csv, nasdaq_*.csv                      ← reference data (download from exchanges)
 ├── cache/                                        ← parquet OHLCV cache
 └── backups/                                      ← pre-mutation parquet backups (7-day)
 ```
+
+**Ticker reference cache:** Used by `csv_to_md.py` to resolve ticker symbols to company names and industries in markdown reports. The cache starts with stubs for new tickers and is upgraded from NYSE/NASDAQ reference CSVs. See [UTILS.md § maintain_ticker_cache.py](UTILS.md#maintain_ticker_cachepy) for how to update it.
 
 `find_latest_model(name)` picks the most-recent JSON matching the universe name. The sticky file is stored in `data_dir` (not the project root) so different data directories can have independent sticky regimes.
 
@@ -69,7 +117,7 @@ A regime is a `HistoricFactorModel`: a `UniverseConfig` (tickers + calibration w
 
 **Why `gulf_war_recovery` has 4 factors:** 1991 had a distinct recovery dynamic (market + energy + defensive rotation + recovery axis) that 3 factors didn't capture cleanly in testing.
 
-**Adding a new regime:** define a `HistoricFactorModel` in `regimes.py`, add it to `REGIME_REGISTRY`. The CLI and pipeline pick it up automatically — no other files change.
+**Adding a new regime:** define a `HistoricFactorModel` in `regimes.py`, add it to `REGIME_REGISTRY`. The CLI and pipeline pick it up automatically — no other files change. See [EXTENDING.md § 2](EXTENDING.md#2-adding-a-new-regime) for step-by-step instructions.
 
 ---
 
@@ -87,6 +135,8 @@ python -m shockarb add-asset SHOP COIN --save
 - `add-asset` — you want to score a new ticker quickly and don't need it to influence factor directions  
 - Full refit (`build`) — you're adding a ticker that should shape the factor structure (e.g. a new ETF for the basis), or you want maximum accuracy
 
+For more details on modifying factor structure, see [EXTENDING.md § 3](EXTENDING.md#3-modifying-factor-structure).
+
 ---
 
 ## DataCoordinator / datamgr
@@ -94,6 +144,8 @@ python -m shockarb add-asset SHOP COIN --save
 `datamgr/` is a provider-agnostic data management layer introduced in a later refactor. `pipeline.py` uses it via `_coordinator()` for all price fetching. The coordinator deduplicates requests, handles caching, and routes to the right provider (currently yfinance).
 
 `datamgr/coordinator.py` is the entry point. `store.py` (in `shockarb/`) is the `ShockArbStore` implementation of the `DataStore` interface — it wraps the parquet files in `data_dir/cache/`.
+
+To add a new data provider (Bloomberg, Polygon, etc.), implement the `DataProvider` interface and register it in `pipeline._coordinator()`. See [EXTENDING.md § 1](EXTENDING.md#1-adding-a-new-data-provider) for details.
 
 ---
 
@@ -127,6 +179,8 @@ python verify_install.py --regenerate
 - **Small calibration window (~35 trading days).** A single stock-specific event during calibration can contaminate that ticker's loadings. Inspect R² before trusting any signal.
 - **No position sizing.** ShockArb generates ranked signals only.
 - **`liberation_day_recovery` end date is `2025-07-31`** — this window is still in the future as of the last session. Update it once the period is complete and you have a view on when normalization finished.
+
+For handling edge cases (missing data, provider failures, low R², etc.), see [EXTENDING.md § 4](EXTENDING.md#4-handling-edge-cases-and-error-scenarios).
 
 ---
 

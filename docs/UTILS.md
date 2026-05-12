@@ -269,6 +269,89 @@ If the requested date is a Saturday, Sunday, or market holiday, the script autom
 
 ---
 
+## maintain_ticker_cache.py
+
+Maintains the ticker reference cache (`data/ticker_reference_cache.json`) used by `csv_to_md.py` to resolve company names and industry classifications. The cache populates lazily as tickers are looked up, but it can accumulate "stub" entries (fallback placeholders) when new tickers lack matching reference data.
+
+**When to run this**
+
+- After downloading fresh NYSE/NASDAQ reference CSVs (from NASDAQ or NYSE websites)
+- When you notice many tickers showing "ETF / Unknown" in markdown reports despite being well-known companies
+- Before a major reporting run to ensure all tickers have current data
+
+**Usage**
+
+```bash
+# Full maintenance pass (recommended): update, fix stubs, and sort
+python utils/maintain_ticker_cache.py --update --fix-stubs --sort
+
+# Just fix stubs (upgrade placeholder entries from reference CSVs)
+python utils/maintain_ticker_cache.py --fix-stubs
+
+# Preview changes without writing to disk
+python utils/maintain_ticker_cache.py --fix-stubs --dry-run
+
+# Custom cache and reference directory
+python utils/maintain_ticker_cache.py \
+    --update --fix-stubs --sort \
+    --cache data/my_cache.json \
+    --ref-dir data/
+```
+
+**Operations**
+
+| Operation | Description |
+|-----------|-------------|
+| `--update` | Add tickers present in NYSE/NASDAQ CSVs but missing from the cache. Does not touch existing cache entries. |
+| `--fix-stubs` | Find stub entries (Name = ticker, Industry = "ETF / Unknown") and replace with real CSV data where available. This is the key operation for fixing "Unknown" industries. |
+| `--sort` | Rewrite the cache in alphabetical key order for readability and consistency. |
+
+All operations are applied in the order listed above, so `--fix-stubs` always runs against an already-updated cache.
+
+**Arguments**
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--cache` | `./data/ticker_reference_cache.json` | Path to the ticker reference cache JSON. |
+| `--ref-dir` | `./data` | Directory containing NYSE/NASDAQ reference CSVs (any file with `nyse` or `nasdaq` in the name, case-insensitive). |
+| `--update` | `False` | Add missing tickers from CSVs to the cache. |
+| `--fix-stubs` | `False` | Upgrade stub entries with real CSV data. |
+| `--sort` | `False` | Rewrite cache in alphabetical order. |
+| `--dry-run` | `False` | Report changes without writing to disk. |
+
+**Reference CSV format**
+
+The script searches `--ref-dir` for files matching `*nyse*.csv` or `*nasdaq*.csv` (case-insensitive). Each file must contain columns:
+
+```
+Symbol,Name,Industry
+AAPL,Apple Inc. Common Stock,Electronic Computers
+MSFT,Microsoft Corporation Common Stock,Computer Software: Prepackaged Software
+```
+
+Duplicate symbols are deduplicated (NYSE wins over NASDAQ if both have the same symbol).
+
+**Example workflow**
+
+1. Download the latest NASDAQ and NYSE reference CSVs from the exchanges and save to `data/`.
+2. Run the full maintenance pass:
+   ```bash
+   python utils/maintain_ticker_cache.py --update --fix-stubs --sort
+   ```
+3. Verify with a dry-run first if unsure:
+   ```bash
+   python utils/maintain_ticker_cache.py --fix-stubs --dry-run
+   ```
+4. Re-run `csv_to_md.py` on any stored CSVs to refresh their markdown reports with updated industry data.
+
+**Notes**
+
+- The cache is persistent and grows over time. It's safe to run `--fix-stubs --sort` regularly — operations are idempotent.
+- Stubs are identified as entries where `Name == ticker` AND `Industry == "ETF / Unknown"`. Real entries are never overwritten by `--update` alone.
+- ETFs (like VOO, TLT, GLD) intentionally remain as "ETF / Unknown" since they don't appear in stock exchange CSVs. This is expected behavior.
+
+---
+
 ## shockarb/names.py — TickerReferenceResolver
 
 This module lives in the `shockarb` package (not `utils/`) so it can be imported by `csv_to_md.py` and any other tooling. It is not a standalone script.

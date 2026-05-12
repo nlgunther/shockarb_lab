@@ -225,6 +225,7 @@ print(loadings)  # Factor_1, Factor_2, ... betas
 | All `r_squared` < 0.30 | Too few ETFs or wrong sector mix | Add more ETFs covering the relevant sectors |
 | `cumulative_variance` < 0.50 | Factors don't span the crisis | Increase `n_components` or widen ETF selection |
 | Many signals but all similar stocks | Sector concentration | Inspect `etf_basis` — one factor may dominate |
+| Many "ETF / Unknown" industries in reports | Ticker cache stubs not upgraded from reference CSVs | Run `python utils/maintain_ticker_cache.py --fix-stubs --sort` |
 | Synthetic data warning | yfinance network failure | Check internet; check if tickers are still listed |
 | "No model found" on score | Forgot to run `build` | Run `python -m shockarb build` (or `set-regime` first if no sticky regime is set) |
 | `Index mismatch` on `FactorModel()` | ETF and stock return dates don't align | `pipeline.build()` handles alignment automatically |
@@ -238,6 +239,8 @@ data/
 ├── us_20260301_143022.json      # Saved model (load with pipeline.load_model())
 ├── us_etf_basis.csv             # ETF factor directions (human-readable)
 ├── us_stock_loadings.csv        # Stock loadings + R² + residual vol
+├── ticker_reference_cache.json  # Company name/industry cache (for markdown reports)
+├── nyse_*.csv, nasdaq_*.csv     # Reference CSVs (download from exchanges)
 ├── shockarb.log                 # Execution log (rotating, 10MB)
 ├── cache/
 │   ├── us_etf_ohlcv.parquet     # Cached ETF prices
@@ -245,6 +248,13 @@ data/
 │   └── cache_metadata.json      # Cache inventory
 └── backups/                     # Pre-mutation parquet backups (7-day retention)
 ```
+
+**Ticker cache maintenance:**
+```bash
+# Fix "Unknown" industries in markdown reports (update cache from reference CSVs)
+python utils/maintain_ticker_cache.py --fix-stubs --sort
+```
+See [UTILS.md § maintain_ticker_cache.py](./UTILS.md#maintain_ticker_cachepy) for details.
 
 ---
 

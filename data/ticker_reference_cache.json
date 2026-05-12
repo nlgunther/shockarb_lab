@@ -1,22 +1,298 @@
 {
-  "VPU": {
-    "Name": "VPU",
+  "ABBV": {
+    "Name": "AbbVie Inc. Common Stock",
+    "Industry": "Other Pharmaceuticals"
+  },
+  "ADBE": {
+    "Name": "Adobe Inc. Common Stock",
+    "Industry": "Computer Software: Prepackaged Software"
+  },
+  "ADI": {
+    "Name": "Analog Devices Inc. Common Stock",
+    "Industry": "Semiconductors"
+  },
+  "AMAT": {
+    "Name": "Applied Materials Inc. Common Stock",
+    "Industry": "Semiconductors"
+  },
+  "ASML": {
+    "Name": "ASML Holding N.V. New York Registry Shares",
+    "Industry": "Industrial Machinery/Components"
+  },
+  "AXP": {
+    "Name": "American Express Company Common Stock",
+    "Industry": "Finance: Consumer Services"
+  },
+  "BLK": {
+    "Name": "BlackRock Inc. Common Stock",
+    "Industry": "Investment Bankers/Brokers/Service"
+  },
+  "BNO": {
+    "Name": "BNO",
     "Industry": "ETF / Unknown"
   },
-  "VNQ": {
-    "Name": "VNQ",
+  "BP": {
+    "Name": "BP p.l.c. Common Stock",
+    "Industry": "Integrated oil Companies"
+  },
+  "BSX": {
+    "Name": "Boston Scientific Corporation Common Stock",
+    "Industry": "Medical/Dental Instruments"
+  },
+  "CDNS": {
+    "Name": "Cadence Design Systems Inc. Common Stock",
+    "Industry": "Computer Software: Prepackaged Software"
+  },
+  "CME": {
+    "Name": "CME Group Inc. Class A Common Stock",
+    "Industry": "Investment Bankers/Brokers/Service"
+  },
+  "COST": {
+    "Name": "Costco Wholesale Corporation Common Stock",
+    "Industry": "Department/Specialty Retail Stores"
+  },
+  "CPRT": {
+    "Name": "Copart Inc. (DE) Common Stock",
+    "Industry": "Retail-Auto Dealers and Gas Stations"
+  },
+  "CRM": {
+    "Name": "Salesforce Inc. Common Stock",
+    "Industry": "Computer Software: Prepackaged Software"
+  },
+  "CRWD": {
+    "Name": "CrowdStrike Holdings Inc. Class A Common Stock",
+    "Industry": "Computer Software: Prepackaged Software"
+  },
+  "CVX": {
+    "Name": "Chevron Corporation Common Stock",
+    "Industry": "Integrated oil Companies"
+  },
+  "DAL": {
+    "Name": "Delta Air Lines Inc. Common Stock",
+    "Industry": "Air Freight/Delivery Services"
+  },
+  "DHR": {
+    "Name": "Danaher Corporation Common Stock",
+    "Industry": "Medical Specialities"
+  },
+  "ETN": {
+    "Name": "Eaton Corporation PLC Ordinary Shares",
+    "Industry": "Industrial Machinery/Components"
+  },
+  "EW": {
+    "Name": "Edwards Lifesciences Corporation Common Stock",
+    "Industry": "Industrial Specialties"
+  },
+  "FAST": {
+    "Name": "Fastenal Company Common Stock",
+    "Industry": "RETAIL: Building Materials"
+  },
+  "FIS": {
+    "Name": "Fidelity National Information Services Inc. Common Stock",
+    "Industry": "Business Services"
+  },
+  "FTNT": {
+    "Name": "Fortinet Inc. Common Stock",
+    "Industry": "Computer peripheral equipment"
+  },
+  "GD": {
+    "Name": "General Dynamics Corporation Common Stock",
+    "Industry": "Aerospace"
+  },
+  "GLD": {
+    "Name": "GLD",
     "Industry": "ETF / Unknown"
   },
-  "VYM": {
-    "Name": "VYM",
+  "GWW": {
+    "Name": "W.W. Grainger Inc. Common Stock",
+    "Industry": "Telecommunications Equipment"
+  },
+  "HII": {
+    "Name": "Huntington Ingalls Industries Inc. Common Stock",
+    "Industry": "Metal Fabrications"
+  },
+  "HON": {
+    "Name": "Honeywell International Inc. Common Stock",
+    "Industry": "Aerospace"
+  },
+  "HSY": {
+    "Name": "The Hershey Company Common Stock",
+    "Industry": "Specialty Foods"
+  },
+  "ICE": {
+    "Name": "Intercontinental Exchange Inc. Common Stock",
+    "Industry": "Investment Bankers/Brokers/Service"
+  },
+  "IDXX": {
+    "Name": "IDEXX Laboratories Inc. Common Stock",
+    "Industry": "Biotechnology: In Vitro & In Vivo Diagnostic Substances"
+  },
+  "INTU": {
+    "Name": "Intuit Inc. Common Stock",
+    "Industry": "Computer Software: Prepackaged Software"
+  },
+  "ISRG": {
+    "Name": "Intuitive Surgical Inc. Common Stock",
+    "Industry": "Medical/Dental Instruments"
+  },
+  "ITA": {
+    "Name": "ITA",
     "Industry": "ETF / Unknown"
   },
-  "VOX": {
-    "Name": "VOX",
+  "JNJ": {
+    "Name": "Johnson & Johnson Common Stock",
+    "Industry": "Biotechnology: Pharmaceutical Preparations"
+  },
+  "KLAC": {
+    "Name": "KLA Corporation Common Stock",
+    "Industry": "Electronic Components"
+  },
+  "KO": {
+    "Name": "Coca-Cola Company (The) Common Stock",
+    "Industry": "Beverages (Production/Distribution)"
+  },
+  "LHX": {
+    "Name": "L3Harris Technologies Inc. Common Stock",
+    "Industry": "Industrial Machinery/Components"
+  },
+  "LLY": {
+    "Name": "Eli Lilly and Company Common Stock",
+    "Industry": "Biotechnology: Pharmaceutical Preparations"
+  },
+  "LMT": {
+    "Name": "Lockheed Martin Corporation Common Stock",
+    "Industry": "Aerospace"
+  },
+  "LNG": {
+    "Name": "Cheniere Energy Inc. Common Stock",
+    "Industry": "Oil/Gas Transmission"
+  },
+  "LRCX": {
+    "Name": "Lam Research Corporation Common Stock",
+    "Industry": "Industrial Machinery/Components"
+  },
+  "MA": {
+    "Name": "Mastercard Incorporated Common Stock",
+    "Industry": "Business Services"
+  },
+  "MCO": {
+    "Name": "Moody's Corporation Common Stock",
+    "Industry": "Advertising"
+  },
+  "MSFT": {
+    "Name": "Microsoft Corporation Common Stock",
+    "Industry": "Computer Software: Prepackaged Software"
+  },
+  "NOC": {
+    "Name": "Northrop Grumman Corporation Common Stock",
+    "Industry": "Security Systems Services"
+  },
+  "NOW": {
+    "Name": "ServiceNow Inc. Common Stock",
+    "Industry": "Computer Software: Prepackaged Software"
+  },
+  "ORCL": {
+    "Name": "Oracle Corporation Common Stock",
+    "Industry": "Computer Software: Prepackaged Software"
+  },
+  "OXY": {
+    "Name": "Occidental Petroleum Corporation Common Stock",
+    "Industry": "Oil & Gas Production"
+  },
+  "PANW": {
+    "Name": "Palo Alto Networks Inc. Common Stock",
+    "Industry": "Computer peripheral equipment"
+  },
+  "PEP": {
+    "Name": "PepsiCo Inc. Common Stock",
+    "Industry": "Beverages (Production/Distribution)"
+  },
+  "PG": {
+    "Name": "Procter & Gamble Company (The) Common Stock",
+    "Industry": "Package Goods/Cosmetics"
+  },
+  "PH": {
+    "Name": "Parker-Hannifin Corporation Common Stock",
+    "Industry": "Office Equipment/Supplies/Services"
+  },
+  "PLTR": {
+    "Name": "Palantir Technologies Inc. Class A Common Stock",
+    "Industry": "Retail: Computer Software & Peripheral Equipment"
+  },
+  "QCOM": {
+    "Name": "QUALCOMM Incorporated Common Stock",
+    "Industry": "Computer peripheral equipment"
+  },
+  "ROK": {
+    "Name": "Rockwell Automation Inc. Common Stock",
+    "Industry": "Industrial Machinery/Components"
+  },
+  "ROP": {
+    "Name": "Roper Technologies Inc. Common Stock",
+    "Industry": "Industrial Machinery/Components"
+  },
+  "RTX": {
+    "Name": "Raytheon Technologies Corporation Common Stock",
+    "Industry": "Military/Government/Technical"
+  },
+  "SLB": {
+    "Name": "Schlumberger N.V. Common Stock",
+    "Industry": "Oilfield Services/Equipment"
+  },
+  "SNPS": {
+    "Name": "Synopsys Inc. Common Stock",
+    "Industry": "EDP Services"
+  },
+  "SPGI": {
+    "Name": "S&P Global Inc. Common Stock",
+    "Industry": "Advertising"
+  },
+  "SYK": {
+    "Name": "Stryker Corporation Common Stock",
+    "Industry": "Medical/Dental Instruments"
+  },
+  "TLT": {
+    "Name": "TLT",
     "Industry": "ETF / Unknown"
   },
-  "VHT": {
-    "Name": "VHT",
+  "TMO": {
+    "Name": "Thermo Fisher Scientific Inc Common Stock",
+    "Industry": "Biotechnology: Laboratory Analytical Instruments"
+  },
+  "TTE": {
+    "Name": "TotalEnergies SE",
+    "Industry": "Oil & Gas Production"
+  },
+  "TXN": {
+    "Name": "Texas Instruments Incorporated Common Stock",
+    "Industry": "Semiconductors"
+  },
+  "UAL": {
+    "Name": "United Airlines Holdings Inc. Common Stock",
+    "Industry": "Air Freight/Delivery Services"
+  },
+  "UNH": {
+    "Name": "UnitedHealth Group Incorporated Common Stock (DE)",
+    "Industry": "Medical Specialities"
+  },
+  "UUP": {
+    "Name": "UUP",
+    "Industry": "ETF / Unknown"
+  },
+  "V": {
+    "Name": "Visa Inc.",
+    "Industry": "Business Services"
+  },
+  "VAW": {
+    "Name": "VAW",
+    "Industry": "ETF / Unknown"
+  },
+  "VCR": {
+    "Name": "VCR",
+    "Industry": "ETF / Unknown"
+  },
+  "VDC": {
+    "Name": "VDC",
     "Industry": "ETF / Unknown"
   },
   "VDE": {
@@ -27,332 +303,92 @@
     "Name": "VEU",
     "Industry": "ETF / Unknown"
   },
-  "VOO": {
-    "Name": "VOO",
-    "Industry": "ETF / Unknown"
-  },
-  "VAW": {
-    "Name": "VAW",
-    "Industry": "ETF / Unknown"
-  },
   "VFH": {
     "Name": "VFH",
-    "Industry": "ETF / Unknown"
-  },
-  "VDC": {
-    "Name": "VDC",
-    "Industry": "ETF / Unknown"
-  },
-  "ITA": {
-    "Name": "ITA",
-    "Industry": "ETF / Unknown"
-  },
-  "GLD": {
-    "Name": "GLD",
-    "Industry": "ETF / Unknown"
-  },
-  "VCR": {
-    "Name": "VCR",
-    "Industry": "ETF / Unknown"
-  },
-  "UUP": {
-    "Name": "UUP",
-    "Industry": "ETF / Unknown"
-  },
-  "TLT": {
-    "Name": "TLT",
     "Industry": "ETF / Unknown"
   },
   "VGK": {
     "Name": "VGK",
     "Industry": "ETF / Unknown"
   },
-  "VIS": {
-    "Name": "VIS",
-    "Industry": "ETF / Unknown"
-  },
   "VGT": {
     "Name": "VGT",
     "Industry": "ETF / Unknown"
   },
-  "BNO": {
-    "Name": "BNO",
+  "VHT": {
+    "Name": "VHT",
     "Industry": "ETF / Unknown"
   },
-  "ROP": {
-    "Name": "Roper Technologies Inc. Common Stock",
-    "Industry": "Industrial Machinery/Components"
+  "VIS": {
+    "Name": "VIS",
+    "Industry": "ETF / Unknown"
   },
-  "MSFT": {
-    "Name": "Microsoft Corporation Common Stock",
-    "Industry": "Computer Software: Prepackaged Software"
+  "VNQ": {
+    "Name": "VNQ",
+    "Industry": "ETF / Unknown"
   },
-  "UNH": {
-    "Name": "UnitedHealth Group Incorporated Common Stock (DE)",
-    "Industry": "Medical Specialities"
+  "VOO": {
+    "Name": "VOO",
+    "Industry": "ETF / Unknown"
   },
-  "MA": {
-    "Name": "Mastercard Incorporated Common Stock",
-    "Industry": "Business Services"
+  "VOX": {
+    "Name": "VOX",
+    "Industry": "ETF / Unknown"
   },
-  "NOW": {
-    "Name": "ServiceNow Inc. Common Stock",
-    "Industry": "Computer Software: Prepackaged Software"
+  "VPU": {
+    "Name": "VPU",
+    "Industry": "ETF / Unknown"
   },
-  "V": {
-    "Name": "Visa Inc.",
-    "Industry": "Business Services"
-  },
-  "LMT": {
-    "Name": "Lockheed Martin Corporation Common Stock",
-    "Industry": "Aerospace"
-  },
-  "SYK": {
-    "Name": "Stryker Corporation Common Stock",
-    "Industry": "Medical/Dental Instruments"
-  },
-  "TTE": {
-    "Name": "TotalEnergies SE",
-    "Industry": "Oil & Gas Production"
-  },
-  "SLB": {
-    "Name": "Schlumberger N.V. Common Stock",
-    "Industry": "Oilfield Services/Equipment"
-  },
-  "BP": {
-    "Name": "BP p.l.c. Common Stock",
-    "Industry": "Integrated oil Companies"
-  },
-  "CVX": {
-    "Name": "Chevron Corporation Common Stock",
-    "Industry": "Integrated oil Companies"
-  },
-  "CME": {
-    "Name": "CME Group Inc. Class A Common Stock",
-    "Industry": "Investment Bankers/Brokers/Service"
-  },
-  "ISRG": {
-    "Name": "Intuitive Surgical Inc. Common Stock",
-    "Industry": "Medical/Dental Instruments"
-  },
-  "ADBE": {
-    "Name": "Adobe Inc. Common Stock",
-    "Industry": "Computer Software: Prepackaged Software"
-  },
-  "CDNS": {
-    "Name": "Cadence Design Systems Inc. Common Stock",
-    "Industry": "Computer Software: Prepackaged Software"
-  },
-  "HON": {
-    "Name": "Honeywell International Inc. Common Stock",
-    "Industry": "Aerospace"
-  },
-  "CPRT": {
-    "Name": "Copart Inc. (DE) Common Stock",
-    "Industry": "Retail-Auto Dealers and Gas Stations"
-  },
-  "COST": {
-    "Name": "Costco Wholesale Corporation Common Stock",
-    "Industry": "Department/Specialty Retail Stores"
-  },
-  "PEP": {
-    "Name": "PepsiCo Inc. Common Stock",
-    "Industry": "Beverages (Production/Distribution)"
-  },
-  "CRWD": {
-    "Name": "CrowdStrike Holdings Inc. Class A Common Stock",
-    "Industry": "Computer Software: Prepackaged Software"
-  },
-  "PANW": {
-    "Name": "Palo Alto Networks Inc. Common Stock",
-    "Industry": "Computer peripheral equipment"
-  },
-  "LRCX": {
-    "Name": "Lam Research Corporation Common Stock",
-    "Industry": "Industrial Machinery/Components"
-  },
-  "ASML": {
-    "Name": "ASML Holding N.V. New York Registry Shares",
-    "Industry": "Industrial Machinery/Components"
-  },
-  "SNPS": {
-    "Name": "Synopsys Inc. Common Stock",
-    "Industry": "EDP Services"
-  },
-  "FAST": {
-    "Name": "Fastenal Company Common Stock",
-    "Industry": "RETAIL: Building Materials"
-  },
-  "TXN": {
-    "Name": "Texas Instruments Incorporated Common Stock",
-    "Industry": "Semiconductors"
-  },
-  "IDXX": {
-    "Name": "IDEXX Laboratories Inc. Common Stock",
-    "Industry": "Biotechnology: In Vitro & In Vivo Diagnostic Substances"
-  },
-  "AMAT": {
-    "Name": "Applied Materials Inc. Common Stock",
-    "Industry": "Semiconductors"
-  },
-  "FTNT": {
-    "Name": "Fortinet Inc. Common Stock",
-    "Industry": "Computer peripheral equipment"
-  },
-  "INTU": {
-    "Name": "Intuit Inc. Common Stock",
-    "Industry": "Computer Software: Prepackaged Software"
-  },
-  "KLAC": {
-    "Name": "KLA Corporation Common Stock",
-    "Industry": "Electronic Components"
-  },
-  "TMO": {
-    "Name": "Thermo Fisher Scientific Inc Common Stock",
-    "Industry": "Biotechnology: Laboratory Analytical Instruments"
-  },
-  "JNJ": {
-    "Name": "Johnson & Johnson Common Stock",
-    "Industry": "Biotechnology: Pharmaceutical Preparations"
-  },
-  "NOC": {
-    "Name": "Northrop Grumman Corporation Common Stock",
-    "Industry": "Security Systems Services"
+  "VYM": {
+    "Name": "VYM",
+    "Industry": "ETF / Unknown"
   },
   "WMT": {
     "Name": "Walmart Inc. Common Stock",
     "Industry": "Department/Specialty Retail Stores"
   },
-  "ABBV": {
-    "Name": "AbbVie Inc. Common Stock",
-    "Industry": "Other Pharmaceuticals"
-  },
-  "ROK": {
-    "Name": "ROK",
-    "Industry": "ETF / Unknown"
-  },
-  "LHX": {
-    "Name": "LHX",
-    "Industry": "ETF / Unknown"
-  },
-  "MCO": {
-    "Name": "MCO",
-    "Industry": "ETF / Unknown"
-  },
-  "RTX": {
-    "Name": "RTX",
-    "Industry": "ETF / Unknown"
-  },
-  "GD": {
-    "Name": "GD",
-    "Industry": "ETF / Unknown"
-  },
-  "ADI": {
-    "Name": "ADI",
-    "Industry": "ETF / Unknown"
-  },
-  "ORCL": {
-    "Name": "ORCL",
-    "Industry": "ETF / Unknown"
-  },
-  "KO": {
-    "Name": "KO",
-    "Industry": "ETF / Unknown"
-  },
-  "PH": {
-    "Name": "PH",
-    "Industry": "ETF / Unknown"
-  },
-  "FIS": {
-    "Name": "FIS",
-    "Industry": "ETF / Unknown"
-  },
-  "HII": {
-    "Name": "HII",
-    "Industry": "ETF / Unknown"
-  },
-  "AXP": {
-    "Name": "AXP",
-    "Industry": "ETF / Unknown"
-  },
-  "LLY": {
-    "Name": "LLY",
-    "Industry": "ETF / Unknown"
-  },
-  "SPGI": {
-    "Name": "SPGI",
-    "Industry": "ETF / Unknown"
-  },
-  "BSX": {
-    "Name": "BSX",
-    "Industry": "ETF / Unknown"
-  },
-  "BLK": {
-    "Name": "BLK",
-    "Industry": "ETF / Unknown"
-  },
-  "GWW": {
-    "Name": "GWW",
-    "Industry": "ETF / Unknown"
-  },
-  "QCOM": {
-    "Name": "QCOM",
-    "Industry": "ETF / Unknown"
-  },
-  "DHR": {
-    "Name": "DHR",
-    "Industry": "ETF / Unknown"
-  },
-  "PG": {
-    "Name": "PG",
-    "Industry": "ETF / Unknown"
-  },
-  "ZTS": {
-    "Name": "ZTS",
-    "Industry": "ETF / Unknown"
-  },
-  "ETN": {
-    "Name": "ETN",
-    "Industry": "ETF / Unknown"
-  },
-  "ICE": {
-    "Name": "ICE",
-    "Industry": "ETF / Unknown"
-  },
-  "HSY": {
-    "Name": "HSY",
-    "Industry": "ETF / Unknown"
-  },
-  "DAL": {
-    "Name": "Delta Air Lines Inc. Common Stock",
-    "Industry": "Air Freight/Delivery Services"
-  },
-  "OXY": {
-    "Name": "Occidental Petroleum Corporation Common Stock",
-    "Industry": "Oil & Gas Production"
-  },
-  "PLTR": {
-    "Name": "Palantir Technologies Inc. Class A Common Stock",
-    "Industry": "Retail: Computer Software & Peripheral Equipment"
-  },
   "XOM": {
     "Name": "Exxon Mobil Corporation Common Stock",
     "Industry": "Oil & Gas Production"
   },
-  "LNG": {
-    "Name": "Cheniere Energy Inc. Common Stock",
-    "Industry": "Oil/Gas Transmission"
+  "ZTS": {
+    "Name": "Zoetis Inc. Class A Common Stock",
+    "Industry": "Biotechnology: Pharmaceutical Preparations"
   },
-  "UAL": {
-    "Name": "United Airlines Holdings Inc. Common Stock",
-    "Industry": "Air Freight/Delivery Services"
+  "RY": {
+    "Name": "Royal Bank Of Canada Common Stock",
+    "Industry": "Unknown"
   },
-  "EW": {
-    "Name": "Edwards Lifesciences Corporation Common Stock",
-    "Industry": "Industrial Specialties"
+  "NVO": {
+    "Name": "Novo Nordisk A/S Common Stock",
+    "Industry": "Biotechnology: Pharmaceutical Preparations"
   },
-  "CRM": {
-    "Name": "Salesforce Inc. Common Stock",
-    "Industry": "Computer Software: Prepackaged Software"
+  "BHP": {
+    "Name": "BHP Group Limited American Depositary Shares (Each representing two Ordinary Shares)",
+    "Industry": "Metal Mining"
+  },
+  "RIO": {
+    "Name": "Rio Tinto Plc Common Stock",
+    "Industry": "Metal Mining"
+  },
+  "SAP": {
+    "Name": "SAP  SE ADS",
+    "Industry": "EDP Services"
+  },
+  "SHEL": {
+    "Name": "Royal Dutch Shell PLC American Depositary Shares (each representing two (2) Ordinary Shares) ",
+    "Industry": "Oil & Gas Production"
+  },
+  "SONY": {
+    "Name": "Sony Group Corporation American Depositary Shares ",
+    "Industry": "Consumer Electronics/Appliances"
+  },
+  "HSBC": {
+    "Name": "HSBC Holdings plc. Common Stock",
+    "Industry": "Savings Institutions"
+  },
+  "TM": {
+    "Name": "Toyota Motor Corporation Common Stock",
+    "Industry": "Auto Manufacturing"
   }
 }

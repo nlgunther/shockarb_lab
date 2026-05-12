@@ -1364,11 +1364,19 @@ def find_latest_model(
     
     files = sorted(glob.glob(exec_cfg.resolve_path(pattern)))
 
-    if not files:
+    # Filter out sidecar files (provenance, CSV exports, etc.)
+    # Model files: {name}_{timestamp}.json or {regime}_{name}_{timestamp}.json
+    # Exclude: *_provenance.json, live_alpha_*.json, *.csv, etc.
+    model_files = [
+        f for f in files
+        if not any(skip in f for skip in ["_provenance", "live_alpha_"])
+    ]
+
+    if not model_files:
         logger.warning(f"No saved models found matching: {pattern}")
         return None
 
-    return files[-1]
+    return model_files[-1]
 
 
 def export_csvs(
