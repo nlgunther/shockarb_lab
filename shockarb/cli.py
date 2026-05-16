@@ -11,6 +11,7 @@ Commands
   set-regime   Set the active regime (sticky across sessions).
   show-regime  Display the current sticky regime.
   list-regimes List all available regimes.
+  backtest     Run walk-forward backtest to measure signal decay.
 
 Examples
 --------
@@ -61,14 +62,7 @@ def _get_sticky_file(exec_config: ExecutionConfig) -> str:
 
 
 def _get_sticky_regime(exec_config: ExecutionConfig) -> Optional[str]:
-    """
-    Read the sticky regime from .shockarb_regime file.
-    
-    Returns
-    -------
-    str or None
-        Regime name if sticky file exists, None otherwise.
-    """
+    """Read the sticky regime from .shockarb_regime file."""
     sticky_file = _get_sticky_file(exec_config)
     if not os.path.exists(sticky_file):
         return None
@@ -80,17 +74,7 @@ def _get_sticky_regime(exec_config: ExecutionConfig) -> Optional[str]:
 
 
 def _set_sticky_regime(regime_name: str, exec_config: ExecutionConfig) -> None:
-    """
-    Write the sticky regime to .shockarb_regime file.
-    
-    Parameters
-    ----------
-    regime_name : str
-        Name of regime to set as sticky.
-    exec_config : ExecutionConfig
-        For resolving data directory path.
-    """
-    # Validate regime exists
+    """Write the sticky regime to .shockarb_regime file."""
     get_regime(regime_name)  # Will raise ValueError if invalid
     
     sticky_file = _get_sticky_file(exec_config)
@@ -103,30 +87,7 @@ def _resolve_regime(
     exec_config: ExecutionConfig,
     require: bool = True,
 ) -> Optional[HistoricFactorModel]:
-    """
-    Resolve regime from CLI args or sticky file.
-    
-    Resolution order:
-    1. --regime flag (highest priority)
-    2. --universe flag (legacy, maps to ukraine_shock)
-    3. Sticky file (.shockarb_regime)
-    4. Error if require=True, None if require=False
-    
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Parsed CLI arguments.
-    exec_config : ExecutionConfig
-        For reading sticky file.
-    require : bool, default True
-        If True, exit with error if no regime is found.
-        If False, return None when no regime is found.
-    
-    Returns
-    -------
-    HistoricFactorModel or None
-        Resolved regime, or None if require=False and no regime found.
-    """
+    """Resolve regime from CLI args or sticky file."""
     regime_name = None
     source = None
     
@@ -139,11 +100,10 @@ def _resolve_regime(
     elif hasattr(args, "universe") and args.universe:
         universe_map = {
             "us": "ukraine_shock",
-            "global": "global_ukraine_shock",  # FIXED: was "ukraine_shock" (bug)
+            "global": "global_ukraine_shock",
         }
         regime_name = universe_map.get(args.universe.lower())
         if regime_name:
-            # Deprecation warning: guide users to --regime
             logger.warning(
                 "--universe flag is DEPRECATED. "
                 f"Use --regime instead: --regime {regime_name}"
@@ -191,14 +151,11 @@ UNIVERSES: dict[str, UniverseConfig] = {
     "global": GLOBAL_UNIVERSE,
 }
 
-
 def get_universe(name: str) -> UniverseConfig:
     """Look up a universe by name (case-insensitive). DEPRECATED."""
     key = name.lower()
     if key not in UNIVERSES:
-        raise ValueError(
-            f"Unknown universe: '{name}'. Available: {list(UNIVERSES.keys())}"
-        )
+        raise ValueError(f"Unknown universe: '{name}'. Available: {list(UNIVERSES.keys())}")
     return UNIVERSES[key]
 
 
@@ -240,13 +197,9 @@ def cmd_score(args) -> None:
     regime = _resolve_regime(args, exec_cfg, require=True)
     universe = regime.universe
     
-    # Find model - use regime-specific search if regime was explicit
     if hasattr(args, "regime") and args.regime:
-        model_path = args.model or pipeline.find_latest_model(
-            universe.name, exec_cfg, regime=regime.name
-        )
+        model_path = args.model or pipeline.find_latest_model(universe.name, exec_cfg, regime=regime.name)
     else:
-        # Sticky regime - search broadly
         model_path = args.model or pipeline.find_latest_model(universe.name, exec_cfg)
     
     if not model_path:
@@ -259,14 +212,10 @@ def cmd_score(args) -> None:
     stock_tickers = list(model.stock_returns.columns) or list(universe.individual_stocks)
 
     if args.date:
-        # Historical scoring — tape saving not applicable
-        etf_returns, stock_returns = _fetch_historical(
-            etf_tickers, stock_tickers, args.date
-        )
+        etf_returns, stock_returns = _fetch_historical(etf_tickers, stock_tickers, args.date)
         title = f"{regime.name.upper()} | {args.date}"
         scores = model.score(etf_returns, stock_returns)
     else:
-        # Live scoring — optionally save the raw OHLCV tape first
         if getattr(args, "save_tape", False):
             today_str = _date.today().strftime("%Y%m%d")
             tape_dir  = os.path.join(exec_cfg.data_dir, "tapes")
@@ -294,11 +243,9 @@ def cmd_score(args) -> None:
 def cmd_export(args) -> None:
     """Export model factor tables to CSV."""
     exec_cfg = ExecutionConfig(data_dir=args.data_dir)
-    
     regime = _resolve_regime(args, exec_cfg, require=True)
     universe = regime.universe
     
-    # Find model
     if hasattr(args, "regime") and args.regime:
         model_path = pipeline.find_latest_model(universe.name, exec_cfg, regime=regime.name)
     else:
@@ -319,11 +266,9 @@ def cmd_export(args) -> None:
 def cmd_show(args) -> None:
     """Display model diagnostics and factor structure."""
     exec_cfg = ExecutionConfig(data_dir=args.data_dir)
-    
     regime = _resolve_regime(args, exec_cfg, require=True)
     universe = regime.universe
     
-    # Find model
     if hasattr(args, "regime") and args.regime:
         model_path = pipeline.find_latest_model(universe.name, exec_cfg, regime=regime.name)
     else:
@@ -334,22 +279,16 @@ def cmd_show(args) -> None:
         sys.exit(1)
 
     if args.verbose:
-        # Full structural report from the JSON file
         print_model_state(model_path)
     else:
-        # Compact diagnostics via loaded model
         model = pipeline.load_model(model_path)
-        
-        # For display: use universe.name if it's short/meaningful, otherwise regime.name
-        # This maintains backward compat with tests expecting "US"
         display_name = universe.name.upper() if len(universe.name) <= 15 else regime.name.upper()
         
         print(f"\n{'='*60}")
         print(f"  SHOCKARB MODEL: {display_name}")
         print(f"{'='*60}")
         print(f"  Regime:  {regime.description}")
-        print(f"  Source:  {model_path}")
-        print()
+        print(f"  Source:  {model_path}\n")
         print(model.diagnostics.summary())
         print()
 
@@ -357,12 +296,9 @@ def cmd_show(args) -> None:
 def cmd_set_regime(args) -> None:
     """Set the active regime (sticky across sessions)."""
     exec_cfg = ExecutionConfig(data_dir=args.data_dir)
-    
-    regime_name = args.regime_name
-    
     try:
-        regime = get_regime(regime_name)
-        _set_sticky_regime(regime_name, exec_cfg)
+        regime = get_regime(args.regime_name)
+        _set_sticky_regime(args.regime_name, exec_cfg)
         print(f"✅ Active regime set to: {regime.name}")
         print(f"   {regime.description}")
         print(f"\n   This regime will be used by default for all commands.")
@@ -375,7 +311,6 @@ def cmd_set_regime(args) -> None:
 def cmd_show_regime(args) -> None:
     """Display the current sticky regime."""
     exec_cfg = ExecutionConfig(data_dir=args.data_dir)
-    
     regime_name = _get_sticky_regime(exec_cfg)
     
     if not regime_name:
@@ -390,63 +325,40 @@ def cmd_show_regime(args) -> None:
         print(f"   {regime.description}")
         print(f"\n   Period: {regime.universe.start_date} to {regime.universe.end_date}")
         print(f"   Factors: {regime.universe.n_components}")
-        
-        if regime.tags:
-            print(f"   Tags: {', '.join(regime.tags)}")
-        
-        if regime.supersedes:
-            print(f"   Supersedes: {regime.supersedes}")
-        
+        if regime.tags: print(f"   Tags: {', '.join(regime.tags)}")
+        if regime.supersedes: print(f"   Supersedes: {regime.supersedes}")
         print()
     except ValueError as e:
         print(f"❌ Sticky regime '{regime_name}' is invalid: {e}")
-        print("   Clear the sticky file and set a new regime.")
         sys.exit(1)
 
 
 def cmd_list_regimes(args) -> None:
     """List all available regimes."""
     regimes = [get_regime(name) for name in list_regimes()]
-    
     print("\n" + "="*70)
     print("  AVAILABLE REGIMES")
     print("="*70)
-    
     for regime in regimes:
         print(f"\n  {regime.name}")
         print(f"  {'-' * len(regime.name)}")
         print(f"  {regime.description}")
         print(f"  Period: {regime.universe.start_date} to {regime.universe.end_date}")
         print(f"  Factors: {regime.universe.n_components}")
-        
-        if regime.tags:
-            print(f"  Tags: {', '.join(regime.tags)}")
-    
-    print("\n" + "="*70)
-    print()
-
+        if regime.tags: print(f"  Tags: {', '.join(regime.tags)}")
+    print("\n" + "="*70 + "\n")
 
 
 def cmd_add_asset(args) -> None:
     """Add new assets to an existing model and optionally save the result."""
-    exec_cfg = ExecutionConfig(
-        data_dir=args.data_dir,
-        log_to_file=not args.no_log,
-    )
-
+    exec_cfg = ExecutionConfig(data_dir=args.data_dir, log_to_file=not args.no_log)
     regime = _resolve_regime(args, exec_cfg, require=True)
     universe = regime.universe
 
-    if hasattr(args, "regime") and args.regime:
-        model_path = args.model or pipeline.find_latest_model(
-            universe.name, exec_cfg, regime=regime.name
-        )
-    else:
-        model_path = args.model or pipeline.find_latest_model(universe.name, exec_cfg)
-
+    model_path = args.model or pipeline.find_latest_model(universe.name, exec_cfg, regime=regime.name) if hasattr(args, "regime") and args.regime else pipeline.find_latest_model(universe.name, exec_cfg)
+    
     if not model_path:
-        print(f"❌ No model found for regime '{regime.name}'.")
-        print("   Run 'build' first.")
+        print(f"❌ No model found for regime '{regime.name}'.\n   Run 'build' first.")
         sys.exit(1)
 
     model = pipeline.load_model(model_path)
@@ -462,52 +374,35 @@ def cmd_add_asset(args) -> None:
         sys.exit(0)
 
     summary = pipeline.add_assets(tickers, model, universe, exec_cfg)
-
     if summary.empty:
         print("❌ No tickers could be added (check logs for details).")
         sys.exit(1)
 
-    # Print result table
-    print(f"\n{'='*60}")
-    print(f"  ADDED ASSETS — {regime.name.upper()}")
-    print(f"{'='*60}")
+    print(f"\n{'='*60}\n  ADDED ASSETS — {regime.name.upper()}\n{'='*60}")
     pd.set_option("display.float_format", "{:.4f}".format)
-    print(summary.to_string())
-    print()
+    print(summary.to_string() + "\n")
 
     if args.save:
         path = pipeline.save_model(model, universe.name, exec_cfg, regime=regime)
         pipeline.export_csvs(model, universe.name, exec_cfg)
-        print(f"✅ Model saved: {path}")
-        print(f"   Stocks now in model: {model.diagnostics.n_stocks}")
+        print(f"✅ Model saved: {path}\n   Stocks now in model: {model.diagnostics.n_stocks}")
     else:
         print("ℹ️  Model NOT saved (pass --save to persist the change).")
 
 
 def cmd_remove_asset(args) -> None:
     """Remove assets from an existing model and optionally save the result."""
-    exec_cfg = ExecutionConfig(
-        data_dir=args.data_dir,
-        log_to_file=not args.no_log,
-    )
-
+    exec_cfg = ExecutionConfig(data_dir=args.data_dir, log_to_file=not args.no_log)
     regime = _resolve_regime(args, exec_cfg, require=True)
     universe = regime.universe
 
-    if hasattr(args, "regime") and args.regime:
-        model_path = args.model or pipeline.find_latest_model(
-            universe.name, exec_cfg, regime=regime.name
-        )
-    else:
-        model_path = args.model or pipeline.find_latest_model(universe.name, exec_cfg)
-
+    model_path = args.model or pipeline.find_latest_model(universe.name, exec_cfg, regime=regime.name) if hasattr(args, "regime") and args.regime else pipeline.find_latest_model(universe.name, exec_cfg)
+    
     if not model_path:
-        print(f"❌ No model found for regime '{regime.name}'.")
-        print("   Run 'build' first.")
+        print(f"❌ No model found for regime '{regime.name}'.\n   Run 'build' first.")
         sys.exit(1)
 
     model = pipeline.load_model(model_path)
-
     missing = [t for t in args.tickers if t not in model.loadings.index]
     if missing:
         print(f"⚠️  Not in model (skipped): {missing}")
@@ -522,9 +417,7 @@ def cmd_remove_asset(args) -> None:
         model.remove_asset(ticker)
         removed.append(ticker)
 
-    print(f"\n{'='*60}")
-    print(f"  REMOVED ASSETS — {regime.name.upper()}")
-    print(f"{'='*60}")
+    print(f"\n{'='*60}\n  REMOVED ASSETS — {regime.name.upper()}\n{'='*60}")
     for t in removed:
         print(f"  ✅ {t}")
     print()
@@ -532,48 +425,109 @@ def cmd_remove_asset(args) -> None:
     if args.save:
         path = pipeline.save_model(model, universe.name, exec_cfg, regime=regime)
         pipeline.export_csvs(model, universe.name, exec_cfg)
-        print(f"✅ Model saved: {path}")
-        print(f"   Stocks now in model: {model.diagnostics.n_stocks}")
+        print(f"✅ Model saved: {path}\n   Stocks now in model: {model.diagnostics.n_stocks}")
     else:
         print("ℹ️  Model NOT saved (pass --save to persist the change).")
+
+
+def cmd_backtest(args) -> None:
+    """Execute the walk-forward backtest."""
+    from shockarb.backtest import Backtest, BacktestConfig
+    from shockarb.regimes import get_regime
+    import shockarb.pipeline as pipeline
+    from loguru import logger
+    from datetime import date, timedelta
+    
+    exec_cfg = ExecutionConfig(data_dir=args.data_dir)
+    regime_name = _resolve_regime(args, exec_cfg)
+    regime = get_regime(regime_name.name)
+    
+    config = BacktestConfig(
+        universe=regime.universe,
+        holding_periods=tuple(args.holding_periods),
+        top_n=args.top_n,
+        min_confidence=args.min_confidence,
+        min_r_squared=args.min_r_squared,
+        return_type=args.return_type
+    )
+
+    static_model = None
+    if args.model:
+        logger.info(f"Loading static model for out-of-sample backtest: {args.model}")
+        static_model = pipeline.load_model(args.model)
+        
+        # Override dates to fetch recent trailing window
+        end_dt = date.today()
+        start_dt = end_dt - timedelta(days=args.trailing_window + 20) # +20 buffer for weekends/holidays
+        start_str = start_dt.strftime("%Y-%m-%d")
+        end_str = end_dt.strftime("%Y-%m-%d")
+        logger.info(f"Fetching trailing {args.trailing_window} trading days ({start_str} to {end_str})...")
+    else:
+        logger.info(f"Preparing rolling backtest for historical regime: {regime.name}")
+        start_str = regime.universe.start_date
+        end_str = regime.universe.end_date
+
+    all_tickers = regime.universe.market_etfs + regime.universe.individual_stocks
+    prices = pipeline.fetch_prices(
+        tickers=all_tickers,
+        start=start_str,
+        end=end_str,
+        cache_name=f"backtest_{regime.universe.name}_{'static' if static_model else 'rolling'}"
+    )
+    returns = pipeline.prices_to_returns(prices)
+    
+    # If static, strictly enforce the trading day count
+    if static_model:
+        returns = returns.tail(args.trailing_window)
+    
+    historical_etf_returns = returns[regime.universe.market_etfs]
+    historical_stock_returns = returns[regime.universe.individual_stocks]
+    
+    logger.info("Executing cohort-tracking backtest engine...")
+    runner = Backtest(
+        config, 
+        historical_etf_returns, 
+        historical_stock_returns, 
+        static_model=static_model  # Pass it in!
+    )
+    results = runner.run()
+    
+    if results.summary.empty:
+        logger.warning("No trades were generated. Try lowering thresholds.")
+        return
+        
+    mode_str = "STATIC" if static_model else "ROLLING"
+    print(f"\n{'='*80}")
+    print(f" 📊 BACKTEST SUMMARY: {regime.name.upper()} | MODE: {mode_str} | TYPE: {args.return_type.upper()}")
+    print(f"{'='*80}")
+    print(results.summary.to_string())
+    print(f"{'='*80}")
 
 
 # =============================================================================
 # Helpers
 # =============================================================================
 
-def _fetch_historical(
-    etf_tickers: list,
-    stock_tickers: list,
-    date_str: str,
-) -> tuple[pd.Series, pd.Series]:
-    """
-    Fetch closing returns for a historical date, snapping to the nearest
-    valid trading day if the requested date falls on a weekend or holiday.
-    """
+def _fetch_historical(etf_tickers: list, stock_tickers: list, date_str: str) -> tuple[pd.Series, pd.Series]:
+    """Fetch closing returns for a historical date, snapping to nearest valid trading day."""
     target = pd.to_datetime(date_str)
     start = (target - pd.Timedelta(days=10)).strftime("%Y-%m-%d")
     end   = (target + pd.Timedelta(days=2)).strftime("%Y-%m-%d")
 
     def get_returns(tickers: list) -> pd.Series:
         raw = yf.download(tickers, start=start, end=end, progress=False)
-        # yf returns a Series for a single ticker; normalise to DataFrame
         prices = raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw
         if isinstance(prices, pd.Series):
             prices = prices.to_frame(name=tickers[0])
 
         returns = prices.dropna(axis=1, how="all").ffill().pct_change().dropna(how="all")
-
         valid = returns.index[returns.index <= target]
         if valid.empty:
             raise ValueError(f"No trading data on or before {date_str}")
 
         matched = valid[-1]
         if matched != target:
-            logger.warning(
-                f"Date {date_str} is not a trading day; "
-                f"snapped to {matched.strftime('%Y-%m-%d')}"
-            )
+            logger.warning(f"Date {date_str} snapped to {matched.strftime('%Y-%m-%d')}")
         return returns.loc[matched]
 
     return get_returns(etf_tickers), get_returns(stock_tickers)
@@ -599,14 +553,12 @@ Examples:
   %(prog)s build --regime gulf_war_recovery
   %(prog)s score --regime ukraine_shock --date 2022-03-01
 
-  # Legacy universe syntax (still works)
-  %(prog)s build --universe us
-  %(prog)s show  --universe us -v
+  # Walk-forward backtesting
+  %(prog)s backtest --return-type residual
         """,
     )
     parser.add_argument(
-        "--data-dir",
-        default=None,
+        "--data-dir", default=None,
         help="Override data directory (default: ./data or $SHOCK_ARB_DATA_DIR)",
     )
 
@@ -623,70 +575,67 @@ Examples:
     p = sub.add_parser("score", help="Score returns against a fitted model")
     p.add_argument("--regime", "-r", help="Regime name (overrides sticky)")
     p.add_argument("--universe", "-u", help="[LEGACY] us | global (maps to ukraine_shock)")
-    p.add_argument("--from-open", "-O", action="store_true",
-                help="Use today's session open as denominator (pure intraday)")
-    p.add_argument("--use-prior-close", "-p", action="store_true",
-                help="Force daily close-to-close returns")
+    p.add_argument("--from-open", "-O", action="store_true", help="Use today's session open as denominator")
+    p.add_argument("--use-prior-close", "-p", action="store_true", help="Force daily close-to-close returns")
     p.add_argument("--date",   "-d", help="Historical date YYYY-MM-DD")
     p.add_argument("--model",  "-m", help="Specific model .json to load")
     p.add_argument("--output", "-o", help="Save score results to CSV")
     p.add_argument("--top",    "-n", type=int, default=20, help="Show top N results")
-    p.add_argument(
-        "--save-tape", action="store_true",
-        help=(
-            "Save raw daily OHLCV (ETFs + stocks combined) as parquet before scoring. "
-            "Written to data/tapes/{universe}_{YYYYMMDD}.parquet. "
-            "Ignored when --date is used (historical data only)."
-        ),
-    )
+    p.add_argument("--save-tape", action="store_true", help="Save raw daily OHLCV before scoring.")
     p.add_argument("--no-log", action="store_true")
     p.set_defaults(func=cmd_score)
 
     # export
     p = sub.add_parser("export", help="Export model to CSVs")
     p.add_argument("--regime", "-r", help="Regime name (overrides sticky)")
-    p.add_argument("--universe", "-u", help="[LEGACY] us | global (maps to ukraine_shock)")
+    p.add_argument("--universe", "-u", help="[LEGACY] us | global")
     p.set_defaults(func=cmd_export)
 
     # show
     p = sub.add_parser("show", help="Display model summary")
     p.add_argument("--regime", "-r", help="Regime name (overrides sticky)")
-    p.add_argument("--universe", "-u", help="[LEGACY] us | global (maps to ukraine_shock)")
+    p.add_argument("--universe", "-u", help="[LEGACY] us | global")
     p.add_argument("--verbose", "-v", action="store_true", help="Full factor tables")
     p.set_defaults(func=cmd_show)
 
-    # set-regime
-    p = sub.add_parser("set-regime", help="Set active regime (sticky)")
-    p.add_argument("regime_name", help="Regime to activate")
-    p.set_defaults(func=cmd_set_regime)
+    # regimes
+    p_set = sub.add_parser("set-regime", help="Set active regime (sticky)")
+    p_set.add_argument("regime_name")
+    p_set.set_defaults(func=cmd_set_regime)
 
-    # show-regime
-    p = sub.add_parser("show-regime", help="Display current regime")
-    p.set_defaults(func=cmd_show_regime)
+    sub.add_parser("show-regime", help="Display current regime").set_defaults(func=cmd_show_regime)
+    sub.add_parser("list-regimes", help="List all available regimes").set_defaults(func=cmd_list_regimes)
 
-    # list-regimes
-    p = sub.add_parser("list-regimes", help="List all available regimes")
-    p.set_defaults(func=cmd_list_regimes)
-
-    # add-asset
+    # assets
     p = sub.add_parser("add-asset", help="Add new assets to an existing model")
     p.add_argument("tickers", nargs="+", help="Ticker symbol(s) to add")
     p.add_argument("--regime", "-r", help="Regime name (overrides sticky)")
     p.add_argument("--model",  "-m", help="Specific model .json to load")
-    p.add_argument("--save",   "-s", action="store_true",
-                   help="Save the updated model after adding assets")
+    p.add_argument("--save",   "-s", action="store_true", help="Save the updated model")
     p.add_argument("--no-log", action="store_true")
     p.set_defaults(func=cmd_add_asset)
 
-    # remove-asset
     p = sub.add_parser("remove-asset", help="Remove assets from an existing model")
     p.add_argument("tickers", nargs="+", help="Ticker symbol(s) to remove")
     p.add_argument("--regime", "-r", help="Regime name (overrides sticky)")
     p.add_argument("--model",  "-m", help="Specific model .json to load")
-    p.add_argument("--save",   "-s", action="store_true",
-                   help="Save the updated model after removing assets")
+    p.add_argument("--save",   "-s", action="store_true", help="Save the updated model")
     p.add_argument("--no-log", action="store_true")
     p.set_defaults(func=cmd_remove_asset)
+
+    # backtest
+    p = sub.add_parser("backtest", help="Run walk-forward backtest to measure signal decay.")
+    p.add_argument("--regime", "-r", type=str, help="Regime name (overrides sticky)")
+    p.add_argument("--model", "-m", type=str, help="Specific model .json to load (enables static out-of-sample mode)")
+    p.add_argument("--trailing-window", type=int, default=120, help="Days of recent data to test the static model against")
+    p.add_argument("--return-type", choices=["raw", "residual", "both"], default="both",
+                   help="Calculate gross returns ('raw'), factor-hedged ('residual'), or 'both'.")
+    p.add_argument("--holding-periods", nargs="+", type=int, default=[1, 2, 3, 5], 
+                   help="Days to hold positions (space separated, e.g., 1 2 3)")
+    p.add_argument("--top-n", type=int, default=10, help="Max positions to enter per day")
+    p.add_argument("--min-confidence", type=float, default=0.005, help="Minimum entry threshold")
+    p.add_argument("--min-r-squared", type=float, default=0.50, help="Minimum model fit quality")
+    p.set_defaults(func=cmd_backtest)
 
     return parser
 
@@ -695,8 +644,6 @@ def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
 
-    # Propagate --data-dir via environment so ExecutionConfig picks it up
-    # even in code paths that don't thread exec_config explicitly
     if args.data_dir:
         os.environ["SHOCK_ARB_DATA_DIR"] = args.data_dir
 
