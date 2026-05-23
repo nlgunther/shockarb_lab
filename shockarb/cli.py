@@ -234,7 +234,9 @@ def cmd_score(args) -> None:
         title = f"{regime.name.upper()} | LIVE"
         print(f"\n{prov.summary()}\n")
 
-    print_scores(scores, title, top_n=args.top)
+    print_scores(scores, title, top_n=args.top,
+                 min_confidence=args.min_confidence,
+                 min_r_squared=args.min_r_squared)
     if args.output:
         scores.to_csv(args.output)
         print(f"\n📁 Saved to: {args.output}")
@@ -580,7 +582,9 @@ Examples:
     p.add_argument("--date",   "-d", help="Historical date YYYY-MM-DD")
     p.add_argument("--model",  "-m", help="Specific model .json to load")
     p.add_argument("--output", "-o", help="Save score results to CSV")
-    p.add_argument("--top",    "-n", type=int, default=20, help="Show top N results")
+    p.add_argument("--top",           "-n", type=int,   default=20,    help="Show top N results")
+    p.add_argument("--min-confidence",      type=float, default=0.001, help="Min confidence_delta to show (default 0.1%%)")
+    p.add_argument("--min-r-squared",       type=float, default=0.30,  help="Min R² to show (default 0.30)")
     p.add_argument("--save-tape", action="store_true", help="Save raw daily OHLCV before scoring.")
     p.add_argument("--no-log", action="store_true")
     p.set_defaults(func=cmd_score)

@@ -35,6 +35,7 @@ from loguru import logger
 
 from shockarb.config import ExecutionConfig
 import shockarb.pipeline as pipeline
+from shockarb.cli import _get_sticky_regime
 
 
 # =============================================================================
@@ -58,6 +59,14 @@ def run_scanner(universes, exec_cfg, force_daily=False, from_open=False) -> None
         "global": GLOBAL_UNIVERSE,
     }
 
+    # Honour the sticky regime so the scanner loads the same model as `score`.
+    sticky_regime = _get_sticky_regime(exec_cfg)
+    if sticky_regime:
+        logger.info(f"Regime: {sticky_regime} (from sticky file)")
+    else:
+        logger.warning("No sticky regime set — falling back to legacy model search. "
+                       "Run: shockarb set-regime <name>")
+
     any_ran = False
 
     for name in universes:
@@ -70,7 +79,7 @@ def run_scanner(universes, exec_cfg, force_daily=False, from_open=False) -> None
             logger.error(f"Unknown universe {name!r}. Known: {sorted(UNIVERSES)}")
             continue
 
-        model_path = pipeline.find_latest_model(name, exec_cfg)
+        model_path = pipeline.find_latest_model(name, exec_cfg, regime=sticky_regime)
         if not model_path:
             logger.error(f"No saved model for '{name}'. Run: python -m shockarb build --universe {name}")
             continue

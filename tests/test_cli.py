@@ -338,6 +338,8 @@ class TestCmdScore:
             model = None
             output = None
             top = 20
+            min_confidence = 0.001
+            min_r_squared = 0.30
             no_log = True
             use_prior_close = False
             from_open = False
@@ -363,6 +365,8 @@ class TestCmdScore:
             model = None
             output = output_path
             top = 20
+            min_confidence = 0.001
+            min_r_squared = 0.30
             no_log = True
             use_prior_close = False
             from_open = False
@@ -473,6 +477,8 @@ class TestCmdScoreSaveTape:
             model = None
             output = None
             top = 20
+            min_confidence = 0.001
+            min_r_squared = 0.30
             no_log = True
             save_tape = True
             use_prior_close = False
@@ -503,9 +509,11 @@ class TestCmdScoreSaveTape:
             model = None
             output = None
             top = 20
+            min_confidence = 0.001
+            min_r_squared = 0.30
             no_log = True
             save_tape = True
-  
+
 
 class TestCmdAddAsset:
     """Tests for the add-asset subcommand."""
