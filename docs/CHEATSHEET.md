@@ -20,7 +20,7 @@ python -m shockarb score
 python -m shockarb score --date 2022-03-01
 
 # Save results to CSV
-python -m shockarb score --output results.csv
+python -m shockarb score --out results.csv
 
 # Show model quality (add -v for full factor tables)
 python -m shockarb show
@@ -143,14 +143,14 @@ r_squared < 0.30                                   →  Discard signal (bad fit)
 
 ## Score Output Columns
 
-| Column | Quick meaning |
-|--------|--------------|
-| `actual_return` | What the stock did today |
-| `expected_rel` | What macro factors imply it should have done |
-| `delta_rel` | Gap (positive = undersold = potential buy) |
-| `r_squared` | How well the model fits this stock |
-| `residual_vol` | Unexplained volatility → use for stop sizing |
-| `confidence_delta` | **delta × R² — the primary ranking signal** |
+| Column             | Quick meaning                                |
+| ------------------ | -------------------------------------------- |
+| `actual_return`    | What the stock did today                     |
+| `expected_rel`     | What macro factors imply it should have done |
+| `delta_rel`        | Gap (positive = undersold = potential buy)   |
+| `r_squared`        | How well the model fits this stock           |
+| `residual_vol`     | Unexplained volatility → use for stop sizing |
+| `confidence_delta` | **delta × R² — the primary ranking signal**  |
 
 ---
 
@@ -220,15 +220,15 @@ print(loadings)  # Factor_1, Factor_2, ... betas
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---------|-------------|-----|
-| All `r_squared` < 0.30 | Too few ETFs or wrong sector mix | Add more ETFs covering the relevant sectors |
-| `cumulative_variance` < 0.50 | Factors don't span the crisis | Increase `n_components` or widen ETF selection |
-| Many signals but all similar stocks | Sector concentration | Inspect `etf_basis` — one factor may dominate |
-| Many "ETF / Unknown" industries in reports | Ticker cache stubs not upgraded from reference CSVs | Run `python utils/maintain_ticker_cache.py --fix-stubs --sort` |
-| Synthetic data warning | yfinance network failure | Check internet; check if tickers are still listed |
-| "No model found" on score | Forgot to run `build` | Run `python -m shockarb build` (or `set-regime` first if no sticky regime is set) |
-| `Index mismatch` on `FactorModel()` | ETF and stock return dates don't align | `pipeline.build()` handles alignment automatically |
+| Symptom                                    | Likely cause                                        | Fix                                                                               |
+| ------------------------------------------ | --------------------------------------------------- | --------------------------------------------------------------------------------- |
+| All `r_squared` < 0.30                     | Too few ETFs or wrong sector mix                    | Add more ETFs covering the relevant sectors                                       |
+| `cumulative_variance` < 0.50               | Factors don't span the crisis                       | Increase `n_components` or widen ETF selection                                    |
+| Many signals but all similar stocks        | Sector concentration                                | Inspect `etf_basis` — one factor may dominate                                     |
+| Many "ETF / Unknown" industries in reports | Ticker cache stubs not upgraded from reference CSVs | Run `python utils/maintain_ticker_cache.py --fix-stubs --sort`                    |
+| Synthetic data warning                     | yfinance network failure                            | Check internet; check if tickers are still listed                                 |
+| "No model found" on score                  | Forgot to run `build`                               | Run `python -m shockarb build` (or `set-regime` first if no sticky regime is set) |
+| `Index mismatch` on `FactorModel()`        | ETF and stock return dates don't align              | `pipeline.build()` handles alignment automatically                                |
 
 ---
 
@@ -250,10 +250,12 @@ data/
 ```
 
 **Ticker cache maintenance:**
+
 ```bash
 # Fix "Unknown" industries in markdown reports (update cache from reference CSVs)
 python utils/maintain_ticker_cache.py --fix-stubs --sort
 ```
+
 See [UTILS.md § maintain_ticker_cache.py](./UTILS.md#maintain_ticker_cachepy) for details.
 
 ---
@@ -286,6 +288,7 @@ REGIME_REGISTRY["taiwan_strait_crisis"] = TAIWAN_STRAIT_CRISIS
 ```
 
 Then:
+
 ```bash
 python -m shockarb set-regime taiwan_strait_crisis
 python -m shockarb build

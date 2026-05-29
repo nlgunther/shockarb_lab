@@ -237,7 +237,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("csv_file",
         help="Path to the ShockArb score CSV")
-    parser.add_argument("--out", default=None,
+    parser.add_argument("--out", "-o", default=None,
         help="Output .md path (default: same name/dir as CSV with .md extension)")
     parser.add_argument("--no-names", action="store_true",
         help="Skip company name and industry resolution")

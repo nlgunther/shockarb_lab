@@ -49,7 +49,7 @@ from shockarb.cli import _get_sticky_regime
 # Scanner
 # =============================================================================
 
-def run_scanner(universes, exec_cfg, force_daily=False, from_open=False) -> None:
+def run_scanner(universes, exec_cfg, force_daily=False, from_open=False, out_dir=None) -> None:
     """Score and export one or more universes."""
     # Universe registry — maps CLI name to UniverseConfig.
     # Add new universes here as they are built and saved.
@@ -99,14 +99,15 @@ def run_scanner(universes, exec_cfg, force_daily=False, from_open=False) -> None
         print(f"\n{prov.summary()}\n")
 
         # Save scores CSV
-        output_path = os.path.join(exec_cfg.data_dir, f"live_alpha_{name}.csv")
+        _out_dir = out_dir or exec_cfg.data_dir
+        output_path = os.path.join(_out_dir, f"live_alpha_{name}.csv")
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
         scores.to_csv(output_path)
         logger.success(f"Alpha sheet saved: {output_path}")
 
         # Save provenance sidecar
         import json
-        prov_path = os.path.join(exec_cfg.data_dir, f"live_alpha_{name}_provenance.json")
+        prov_path = os.path.join(_out_dir, f"live_alpha_{name}_provenance.json")
         with open(prov_path, "w") as f:
             json.dump(prov.to_dict(), f, indent=2)
         logger.success(f"Provenance saved: {prov_path}")
@@ -142,6 +143,8 @@ def main() -> None:
         help="Override data directory (default: ./data or $SHOCK_ARB_DATA_DIR)",
     )
 
+    parser.add_argument("--out", "-o", default=None, metavar="DIR",
+                        help="Output directory for CSV files (default: data_dir)")
     parser.add_argument("--from-open", "-O", action="store_true",
                     help="Use today's session open as denominator (pure intraday)")
     
@@ -153,7 +156,8 @@ def main() -> None:
     exec_cfg = ExecutionConfig(data_dir=args.data_dir, log_to_file=False)
     run_scanner(args.universe, exec_cfg,
             force_daily=args.use_prior_close,
-            from_open=args.from_open)
+            from_open=args.from_open,
+            out_dir=args.out)
 
 
 if __name__ == "__main__":

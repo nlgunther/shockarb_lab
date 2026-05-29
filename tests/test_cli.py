@@ -70,6 +70,7 @@ from shockarb.cli import (
     main,
 )
 from shockarb.config import ExecutionConfig
+from shockarb.regimes import get_regime
 from shockarb.report import print_scores
 
 
@@ -255,7 +256,7 @@ class TestCmdShow:
 
     def test_compact_output(self, fitted_model, temp_dir, capsys):
         cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
-        pipeline.save_model(fitted_model, "us", cfg)
+        pipeline.save_model(fitted_model, "us", cfg, regime=get_regime("ukraine_shock"))
 
         class Args:
             universe = "us"
@@ -271,7 +272,7 @@ class TestCmdShow:
 
     def test_verbose_output(self, fitted_model, temp_dir, capsys):
         cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
-        pipeline.save_model(fitted_model, "us", cfg)
+        pipeline.save_model(fitted_model, "us", cfg, regime=get_regime("ukraine_shock"))
 
         class Args:
             universe = "us"
@@ -305,7 +306,7 @@ class TestCmdExport:
 
     def test_creates_csv_files(self, fitted_model, temp_dir, capsys):
         cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
-        pipeline.save_model(fitted_model, "us", cfg)
+        pipeline.save_model(fitted_model, "us", cfg, regime=get_regime("ukraine_shock"))
 
         class Args:
             universe = "us"
@@ -329,14 +330,14 @@ class TestCmdScore:
     @patch("shockarb.pipeline.score_universe", return_value=_mock_score_universe_return())
     def test_live_score_prints_table(self, mock_score, fitted_model, temp_dir, capsys):
         cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
-        pipeline.save_model(fitted_model, "us", cfg)
+        pipeline.save_model(fitted_model, "us", cfg, regime=get_regime("ukraine_shock"))
 
         class Args:
             universe = "us"
             data_dir = temp_dir
             date = None
             model = None
-            output = None
+            out = None
             top = 20
             min_confidence = 0.001
             min_r_squared = 0.30
@@ -355,7 +356,7 @@ class TestCmdScore:
     @patch("shockarb.pipeline.score_universe", return_value=_mock_score_universe_return())
     def test_output_csv_saved(self, mock_score, fitted_model, temp_dir):
         cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
-        pipeline.save_model(fitted_model, "us", cfg)
+        pipeline.save_model(fitted_model, "us", cfg, regime=get_regime("ukraine_shock"))
         output_path = os.path.join(temp_dir, "results.csv")
 
         class Args:
@@ -363,7 +364,7 @@ class TestCmdScore:
             data_dir = temp_dir
             date = None
             model = None
-            output = output_path
+            out = output_path
             top = 20
             min_confidence = 0.001
             min_r_squared = 0.30
@@ -460,7 +461,7 @@ class TestCmdScoreSaveTape:
         self, mock_tape, mock_score, mock_model, temp_dir, capsys
     ):
         cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
-        pipeline.save_model(mock_model, "us", cfg)
+        pipeline.save_model(mock_model, "us", cfg, regime=get_regime("ukraine_shock"))
 
         mock_tape.return_value = pd.DataFrame(
             {("Close", "VOO"): [100.0, 101.0]},
@@ -475,7 +476,7 @@ class TestCmdScoreSaveTape:
             data_dir = temp_dir
             date = None
             model = None
-            output = None
+            out = None
             top = 20
             min_confidence = 0.001
             min_r_squared = 0.30
@@ -498,7 +499,7 @@ class TestCmdScoreSaveTape:
         self, mock_tape, mock_score, mock_model, temp_dir
     ):
         cfg = ExecutionConfig(data_dir=temp_dir, log_to_file=False)
-        pipeline.save_model(mock_model, "us", cfg)
+        pipeline.save_model(mock_model, "us", cfg, regime=get_regime("ukraine_shock"))
 
         mock_tape.return_value = None   # simulate failure — score should still proceed
 
@@ -507,7 +508,7 @@ class TestCmdScoreSaveTape:
             data_dir = temp_dir
             date = None
             model = None
-            output = None
+            out = None
             top = 20
             min_confidence = 0.001
             min_r_squared = 0.30
