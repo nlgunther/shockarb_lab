@@ -215,8 +215,19 @@ class DataCoordinator:
                 continue
 
             cached_start, cached_end = coverage
-            cached_end_ts = pd.Timestamp(cached_end)
-            req_end_ts    = pd.Timestamp(req.end)
+            cached_start_ts = pd.Timestamp(cached_start)
+            cached_end_ts   = pd.Timestamp(cached_end)
+            req_start_ts    = pd.Timestamp(req.start)
+            req_end_ts      = pd.Timestamp(req.end)
+
+            # Head miss — cache starts after the requested window begins
+            if cached_start_ts > req_start_ts:
+                logger.debug(
+                    f"[GapAnalyse] HEAD  {ticker}: "
+                    f"{req.start} -> {req.end} (cache starts {cached_start})"
+                )
+                gaps[ticker] = (req.start, req.end)
+                continue
 
             if cached_end_ts >= req_end_ts:
                 logger.debug(f"[GapAnalyse] HIT   {ticker}: covered through {cached_end}")

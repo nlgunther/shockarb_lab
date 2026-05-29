@@ -14,6 +14,10 @@ Usage examples
     python utils/portfolio_sizer.py \
         --csv data/live_alpha_us.csv data/live_alpha_global.csv \
         --capital 50000 --top 8
+
+    # Exclude specific tickers and save to file
+    python utils/portfolio_sizer.py --csv data/live_alpha_us.csv --capital 100000 \
+        --exclude SNPS BSX --out data/ticket.csv
 """
 
 from __future__ import annotations
@@ -30,6 +34,8 @@ def generate_orders(
     csv_paths: list[str],
     capital: float,
     top_n: int = 5,
+    exclude: list[str] | None = None,
+    out: str | None = None,
 ) -> None:
     """
     Print a trade ticket for the top-N conviction signals.
@@ -42,7 +48,12 @@ def generate_orders(
         Total dollar capital to allocate.
     top_n : int
         Number of positions to take.
+    exclude : list of str, optional
+        Tickers to exclude before ranking (e.g. catalyst-driven traps).
+    out : str, optional
+        If provided, save the ticket as a CSV to this path.
     """
+    exclude = [t.upper() for t in (exclude or [])]
     dfs = []
     for path in csv_paths:
         if not os.path.exists(path):
@@ -68,6 +79,9 @@ def generate_orders(
         logger.error(f"CSV is missing required columns: {missing}")
         logger.error(f"  Available columns: {list(master.columns)}")
         return
+
+    if exclude:
+        master = master[~master["Ticker"].str.upper().isin(exclude)]
 
     buys = (
         master[master["confidence_delta"] > 0]
@@ -104,24 +118,40 @@ def generate_orders(
     print(f"  {'TICKER':<8}  {'WEIGHT':>8}  {'ALLOCATION':>14}  {'CURRENT':>10}  {'TARGET':>10}  SHARES")
     print("-" * 100)
 
+    rows = []
     for _, row in buys.iterrows():
         ticker = row["Ticker"]
         if ticker not in current.index or pd.isna(current[ticker]):
             logger.warning(f"No live price for {ticker} — skipping row.")
             continue
 
-        price       = float(current[ticker])
-        target      = price * (1 + row["delta_rel"])
-        shares      = int(row["Dollar_Alloc"] / price)
+        price  = float(current[ticker])
+        target = price * (1 + row["delta_rel"])
+        shares = int(row["Dollar_Alloc"] / price)
 
         print(
             f"  {ticker:<8}  {row['Weight']:>7.1%}  ${row['Dollar_Alloc']:>13,.2f}"
             f"  ${price:>9.2f}  ${target:>9.2f}  {shares}"
         )
+        rows.append({
+            "Ticker":       ticker,
+            "Weight":       round(row["Weight"], 4),
+            "Dollar_Alloc": round(row["Dollar_Alloc"], 2),
+            "Current":      round(price, 2),
+            "Target":       round(target, 2),
+            "Shares":       shares,
+            "confidence_delta": round(row["confidence_delta"], 6),
+            "r_squared":    round(row.get("r_squared", float("nan")), 4),
+        })
 
     print("=" * 100)
     print("  EXIT: Place GTC sell-limit orders at the Target price.")
     print()
+
+    if out and rows:
+        os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+        pd.DataFrame(rows).to_csv(out, index=False)
+        logger.success(f"Ticket saved: {out}")
 
 
 # =============================================================================
@@ -146,5 +176,13 @@ if __name__ == "__main__":
         "--top", type=int, default=5,
         help="Number of top positions (default: 5)",
     )
+    parser.add_argument(
+        "--exclude", "-e", nargs="+", default=[],
+        help="Tickers to exclude before ranking (e.g. --exclude SNPS BSX)",
+    )
+    parser.add_argument(
+        "--out", "-o", default=None,
+        help="Save ticket to CSV at this path",
+    )
     args = parser.parse_args()
-    generate_orders(args.csv, args.capital, args.top)
+    generate_orders(args.csv, args.capital, args.top, args.exclude, args.out)

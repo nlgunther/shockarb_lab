@@ -87,8 +87,8 @@ class TestListRegimes:
         assert "global_ukraine_shock" in names
 
     def test_regime_count(self):
-        """Registry contains exactly 4 regimes."""
-        assert len(list_regimes()) == 4
+        """Registry contains exactly 5 regimes."""
+        assert len(list_regimes()) == 5
 
     def test_sorted(self):
         """Names are sorted alphabetically."""

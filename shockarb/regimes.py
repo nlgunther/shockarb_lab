@@ -358,6 +358,47 @@ GLOBAL_UKRAINE_SHOCK = HistoricFactorModel(
     supersedes=None,
 )
 
+# Post-COVID reopening -- vaccine announcement to pre-taper tantrum (Nov 2020 - Feb 2021)
+# The cleanest risk-on regime of the last decade: VIX collapsed, cyclicals/energy surged,
+# bonds sold off, defensives lagged. Use to score days where macro tailwinds drive
+# rotation INTO risk assets and previously-unloved cyclicals/growth names.
+COVID_REOPENING = HistoricFactorModel(
+    name="covid_reopening",
+    description="Post-COVID reopening risk-on surge (Nov 2020 - Feb 2021)",
+    narrative=(
+        "The Pfizer vaccine announcement (November 9, 2020) triggered the sharpest"
+        " risk-on rotation in modern market history. VIX collapsed from 40 to 20 in"
+        " six weeks. Energy, financials, airlines, and cyclicals surged as the market"
+        " priced in economic normalization. Growth/tech names underperformed as capital"
+        " rotated out of pandemic winners. Bonds sold off sharply (10Y yield rose from"
+        " 0.8% to 1.6% by Feb 2021). This is the mirror regime to ukraine_shock:"
+        " where ukraine_shock captures stocks punished by fear, covid_reopening captures"
+        " stocks left behind during euphoric risk-on rotation. High-R² stocks that"
+        " underperformed during this window are candidates for mean-reversion on any"
+        " subsequent risk-on catalyst (peace deals, inflation relief, policy clarity)."
+        " Calibrate on this window when today's macro driver is unambiguously risk-on."
+    ),
+    universe=UniverseConfig(
+        name="us_reopening",
+        market_etfs=_US_MACRO_ETFS,
+        individual_stocks=_US_STOCKS,
+        n_components=3,
+        start_date="2020-11-09",
+        end_date="2021-02-28",
+    ),
+    expected_dynamics={
+        "energy": "violent rally (XOM, CVX, OXY +50-80% in window)",
+        "airlines": "surge on reopening hope (DAL, UAL +40-60%)",
+        "financials": "rally on steepening yield curve (BLK, V, MA +20-30%)",
+        "tech": "mild underperformance vs broad market (rotation out)",
+        "defense": "flat to mild underperformance (risk-off premium unwinds)",
+        "staples": "laggard (defensive premium sold off)",
+        "healthcare": "mixed (vaccine winners rally, defensive names lag)",
+    },
+    tags=("risk_on", "recovery", "reopening", "rotation", "cyclical"),
+    supersedes=None,
+)
+
 # =============================================================================
 # Regime registry
 # =============================================================================
@@ -367,6 +408,7 @@ REGIME_REGISTRY: Dict[str, HistoricFactorModel] = {
     "gulf_war_recovery":        GULF_WAR_RECOVERY,
     "liberation_day_recovery":  LIBERATION_DAY_RECOVERY,
     "global_ukraine_shock":     GLOBAL_UKRAINE_SHOCK,
+    "covid_reopening":          COVID_REOPENING,
 }
 
 
