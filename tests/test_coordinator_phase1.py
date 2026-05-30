@@ -525,3 +525,73 @@ class TestCoordinatorIntraday:
             cache      = False,
         )
         assert req.cache is False
+
+
+# =============================================================================
+# Gap analysis — head-miss regression
+# =============================================================================
+
+class TestGapAnalyseHeadMiss:
+    """
+    Regression tests for the head-miss bug fixed in coordinator.py.
+
+    Before the fix, a cache holding 2022+ data was incorrectly treated as
+    covering a 2020 request because _gap_analyse() only checked for tail
+    misses.  The fix adds a check: if cached_start > req_start, trigger a
+    full download.
+    """
+
+    def _make_provider(self, start: str, end: str, tickers: list[str]):
+        """FakeProvider that records calls and returns synthetic data."""
+
+        class RecordingProvider:
+            def __init__(self):
+                self.calls: list[dict] = []
+
+            def fetch(self, tickers, start, end, frequency):
+                self.calls.append({"tickers": tickers, "start": start, "end": end})
+                idx = pd.bdate_range(start=start, end=end)
+                if idx.empty:
+                    return pd.DataFrame()
+                cols = pd.MultiIndex.from_product([["adj_close"], tickers])
+                return pd.DataFrame(100.0, index=idx, columns=cols)
+
+        return RecordingProvider()
+
+    def test_cache_ahead_of_request_triggers_download(self):
+        """
+        Cache holds 2022 data; request asks for 2020.
+        The coordinator must detect the head miss and call the provider.
+        """
+        store = FakeStore()
+        # Seed the store with 2022 data — simulates the bug scenario
+        store.seed_tickers(["TXN"], start="2022-02-10", end="2022-03-31")
+
+        provider = self._make_provider("2020-11-09", "2021-02-28", ["TXN"])
+        c = DataCoordinator(store, provider=provider)
+        c.register(_daily_req(["TXN"], requester="covid.build",
+                               start="2020-11-09", end="2021-02-28"))
+        c.fulfill()
+
+        # Provider must have been called — the 2022 cache does not cover 2020
+        assert len(provider.calls) == 1, (
+            "Expected one provider call for the head-miss gap; got none. "
+            "The 2022 cache should not satisfy a 2020 request."
+        )
+
+    def test_cache_covering_request_window_no_download(self):
+        """
+        Cache already covers the full requested window → no provider call.
+        """
+        store = FakeStore()
+        store.seed_tickers(["VOO"], start="2022-01-01", end="2022-12-31")
+
+        provider = self._make_provider("2022-02-10", "2022-03-31", ["VOO"])
+        c = DataCoordinator(store, provider=provider)
+        c.register(_daily_req(["VOO"], requester="ukraine.score",
+                               start="2022-02-10", end="2022-03-31"))
+        c.fulfill()
+
+        assert len(provider.calls) == 0, (
+            "Cache fully covers the request window — provider should not be called."
+        )

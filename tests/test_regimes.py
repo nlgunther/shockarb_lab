@@ -5,6 +5,7 @@ Tests for shockarb.regimes module.
 import pytest
 
 from shockarb.regimes import (
+    COVID_REOPENING,
     GLOBAL_UKRAINE_SHOCK,
     GULF_WAR_RECOVERY,
     LIBERATION_DAY_RECOVERY,
@@ -85,6 +86,7 @@ class TestListRegimes:
         assert "gulf_war_recovery" in names
         assert "liberation_day_recovery" in names
         assert "global_ukraine_shock" in names
+        assert "covid_reopening" in names
 
     def test_regime_count(self):
         """Registry contains exactly 5 regimes."""
@@ -244,3 +246,58 @@ class TestGlobalUkraineShock:
         assert "european_energy" in keys
         assert "emerging_markets" in keys
         assert "commodities" in keys
+
+
+class TestCovidReopening:
+    """Focused tests for the COVID_REOPENING regime."""
+
+    def test_regime_is_registered(self):
+        """COVID_REOPENING is reachable via get_regime."""
+        assert get_regime("covid_reopening") is COVID_REOPENING
+
+    def test_dates(self):
+        """Covid reopening uses the Pfizer announcement window."""
+        assert COVID_REOPENING.universe.start_date == "2020-11-09"
+        assert COVID_REOPENING.universe.end_date == "2021-02-28"
+
+    def test_n_components(self):
+        """Covid reopening uses 3 factors."""
+        assert COVID_REOPENING.universe.n_components == 3
+
+    def test_universe_name(self):
+        """Universe is named 'us_reopening'."""
+        assert COVID_REOPENING.universe.name == "us_reopening"
+
+    def test_recovery_tag(self):
+        """'recovery' tag is present."""
+        assert "recovery" in COVID_REOPENING.tags
+
+    def test_risk_on_tag(self):
+        """'risk_on' tag is present."""
+        assert "risk_on" in COVID_REOPENING.tags
+
+    def test_no_supersedes(self):
+        """Covid reopening does not supersede any other regime."""
+        assert COVID_REOPENING.supersedes is None
+
+    def test_distinct_from_ukraine_shock(self):
+        """Different object with different dates from ukraine_shock."""
+        assert COVID_REOPENING is not UKRAINE_SHOCK
+        assert COVID_REOPENING.universe.start_date != UKRAINE_SHOCK.universe.start_date
+
+    def test_expected_dynamics_keys(self):
+        """Expected dynamics documents key sector rotations."""
+        keys = set(COVID_REOPENING.expected_dynamics.keys())
+        assert "energy" in keys
+        assert "airlines" in keys
+        assert "financials" in keys
+
+    def test_find_by_recovery_tag(self):
+        """find_by_tag('recovery') includes covid_reopening."""
+        results = find_by_tag("recovery")
+        assert COVID_REOPENING in results
+
+    def test_find_by_risk_on_tag(self):
+        """find_by_tag('risk_on') includes covid_reopening."""
+        results = find_by_tag("risk_on")
+        assert COVID_REOPENING in results
