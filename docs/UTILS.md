@@ -60,6 +60,7 @@ python utils\daily_scanner.py --data-dir /path/to/data
 |----------|---------|-------------|
 | `--regime` / `-r` | `ukraine_shock global_ukraine_shock` | One or more regime names to scan. Must match a saved model. |
 | `--data-dir` | `./data` | Override data directory. Also accepts `$SHOCK_ARB_DATA_DIR`. |
+| `--out` / `-o` | *(data-dir)* | Output directory for `live_alpha_*.csv` and provenance files. Defaults to `data-dir`. |
 
 **Notes**
 

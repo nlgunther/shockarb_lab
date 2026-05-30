@@ -197,16 +197,12 @@ def cmd_score(args) -> None:
     regime = _resolve_regime(args, exec_cfg, require=True)
     universe = regime.universe
     
-    if hasattr(args, "regime") and args.regime:
-        model_path = args.model or pipeline.find_latest_model(universe.name, exec_cfg, regime=regime.name)
-    else:
-        model_path = args.model or pipeline.find_latest_model(universe.name, exec_cfg)
-    
+    model_path = args.model or pipeline.find_latest_model(universe.name, exec_cfg, regime=regime.name)
     if not model_path:
         print(f"❌ No model found for regime '{regime.name}' / universe '{universe.name}'.")
         print("   Run 'build' first.")
         sys.exit(1)
-    
+
     model = pipeline.load_model(model_path)
     etf_tickers   = list(model.etf_returns.columns) or list(universe.market_etfs)
     stock_tickers = list(model.stock_returns.columns) or list(universe.individual_stocks)
@@ -237,9 +233,9 @@ def cmd_score(args) -> None:
     print_scores(scores, title, top_n=args.top,
                  min_confidence=args.min_confidence,
                  min_r_squared=args.min_r_squared)
-    if args.output:
-        scores.to_csv(args.output)
-        print(f"\n📁 Saved to: {args.output}")
+    if args.out:
+        scores.to_csv(args.out)
+        print(f"\n📁 Saved to: {args.out}")
 
 
 def cmd_export(args) -> None:
@@ -248,11 +244,7 @@ def cmd_export(args) -> None:
     regime = _resolve_regime(args, exec_cfg, require=True)
     universe = regime.universe
     
-    if hasattr(args, "regime") and args.regime:
-        model_path = pipeline.find_latest_model(universe.name, exec_cfg, regime=regime.name)
-    else:
-        model_path = pipeline.find_latest_model(universe.name, exec_cfg)
-    
+    model_path = pipeline.find_latest_model(universe.name, exec_cfg, regime=regime.name)
     if not model_path:
         print(f"❌ No model found for regime '{regime.name}'")
         sys.exit(1)
@@ -271,11 +263,7 @@ def cmd_show(args) -> None:
     regime = _resolve_regime(args, exec_cfg, require=True)
     universe = regime.universe
     
-    if hasattr(args, "regime") and args.regime:
-        model_path = pipeline.find_latest_model(universe.name, exec_cfg, regime=regime.name)
-    else:
-        model_path = pipeline.find_latest_model(universe.name, exec_cfg)
-    
+    model_path = pipeline.find_latest_model(universe.name, exec_cfg, regime=regime.name)
     if not model_path:
         print(f"❌ No model found for regime '{regime.name}'")
         sys.exit(1)
@@ -357,8 +345,7 @@ def cmd_add_asset(args) -> None:
     regime = _resolve_regime(args, exec_cfg, require=True)
     universe = regime.universe
 
-    model_path = args.model or pipeline.find_latest_model(universe.name, exec_cfg, regime=regime.name) if hasattr(args, "regime") and args.regime else pipeline.find_latest_model(universe.name, exec_cfg)
-    
+    model_path = args.model or pipeline.find_latest_model(universe.name, exec_cfg, regime=regime.name)
     if not model_path:
         print(f"❌ No model found for regime '{regime.name}'.\n   Run 'build' first.")
         sys.exit(1)
@@ -398,8 +385,7 @@ def cmd_remove_asset(args) -> None:
     regime = _resolve_regime(args, exec_cfg, require=True)
     universe = regime.universe
 
-    model_path = args.model or pipeline.find_latest_model(universe.name, exec_cfg, regime=regime.name) if hasattr(args, "regime") and args.regime else pipeline.find_latest_model(universe.name, exec_cfg)
-    
+    model_path = args.model or pipeline.find_latest_model(universe.name, exec_cfg, regime=regime.name)
     if not model_path:
         print(f"❌ No model found for regime '{regime.name}'.\n   Run 'build' first.")
         sys.exit(1)
@@ -581,7 +567,7 @@ Examples:
     p.add_argument("--use-prior-close", "-p", action="store_true", help="Force daily close-to-close returns")
     p.add_argument("--date",   "-d", help="Historical date YYYY-MM-DD")
     p.add_argument("--model",  "-m", help="Specific model .json to load")
-    p.add_argument("--output", "-o", help="Save score results to CSV")
+    p.add_argument("--out", "-o", help="Save score results to CSV")
     p.add_argument("--top",           "-n", type=int,   default=20,    help="Show top N results")
     p.add_argument("--min-confidence",      type=float, default=0.001, help="Min confidence_delta to show (default 0.1%%)")
     p.add_argument("--min-r-squared",       type=float, default=0.30,  help="Min R² to show (default 0.30)")

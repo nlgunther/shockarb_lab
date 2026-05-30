@@ -332,7 +332,7 @@ class FactorModel:
         self._require_fitted()
 
         # Project today's ETF returns into factor space using stored means
-        r_e = today_etf_returns.reindex(self._etf_mean.index).fillna(0) - self._etf_mean
+        r_e = today_etf_returns.reindex(self._etf_mean.index).fillna(self._etf_mean) - self._etf_mean
         f_today = self._Vt @ r_e.values                     # (k,)
 
         # Factor-implied returns (relative: no drift; absolute: + daily drift)

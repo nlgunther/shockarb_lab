@@ -260,7 +260,7 @@ python -m shockarb [--data-dir DIR] COMMAND [OPTIONS]
 | Command | Key Options | Description |
 |---------|-------------|-------------|
 | `build` | `--regime <name>` | Fetch data, fit model, save JSON |
-| `score` | `--regime <name>`, `--date YYYY-MM-DD`, `--top N`, `--output file.csv` | Score returns |
+| `score` | `--regime <name>`, `--date YYYY-MM-DD`, `--top N`, `--out file.csv` | Score returns |
 | `export` | `--regime <name>` | Write ETF basis + stock loadings to CSV |
 | `show` | `--regime <name>`, `--verbose / -v` | Display model diagnostics |
 | `add-asset` | `<tickers>`, `--regime <name>`, `--save` | Add new tickers to an existing model without refitting |
