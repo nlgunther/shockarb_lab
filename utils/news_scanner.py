@@ -33,6 +33,8 @@ import pandas as pd
 import yfinance as yf
 from loguru import logger
 
+from fundamental_scanner import fetch_fundamentals, print_fundamentals
+
 
 # =============================================================================
 # Article parsing
@@ -178,6 +180,13 @@ def scan_news(
             print(f"   > Error fetching news: {exc}")
 
         print("-" * 95)
+
+    # ------------------------------------------------------------------
+    # Fundamental summary table
+    # ------------------------------------------------------------------
+    all_tickers = [item["ticker"] for item in targets]
+    if all_tickers:
+        print_fundamentals(fetch_fundamentals(all_tickers))
 
 
 # =============================================================================

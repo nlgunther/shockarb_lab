@@ -3,7 +3,7 @@
 *Updated after each session. Captures decisions and context not derivable from reading the code.  
 For API details see API.md; for quick commands see CHEATSHEET.md.*
 
-> Last updated: 2026-05-29 | Trigger: manual (\ukt) | Staleness: Drifting
+> Last updated: 2026-05-29T18:00 | Trigger: manual (\ukt) | Staleness: Fresh
 
 ---
 
@@ -105,12 +105,15 @@ A regime is a `HistoricFactorModel`: a `UniverseConfig` (tickers + calibration w
 | `global_ukraine_shock` | `global` | 14 | 15 | 3 | 2022-02-10 → 2022-03-31 |
 | `gulf_war_recovery` | `us_recovery` | 5 | 27 | 4 | 1991-03-01 → 1991-06-28 |
 | `liberation_day_recovery` | `us_lib_day` | 19 | 66 | 3 | 2025-04-01 → 2025-07-31 |
+| `covid_reopening` | `us_reopening` | 10 | 98 | 3 | 2020-11-09 → 2021-02-28 |
 
 **US universe now has 98 stocks** (was 66) after bulk `add-asset` of 26 Morningstar wide-moat USD names in this session. Tickers added: NKE, FICO, LPLA, GWRE, BR, EFX, APH, OTIS, A, MKC (removed — low R²), MCD, META, BKNG, BSY, MELI, BAC, ALLE, ANET, ABNB, BMY, MDLZ, ECL, MSI, MAS, ADSK, PTC, AVGO, GOOGL. MKTX, BF-B, JKHY, DPZ, MKC removed for R² < 0.27.
 
 **ETF basis for `ukraine_shock`:** VOO, VYM, VEU, VDE, VNQ, TLT, GLD, USO, ITA, HYG (10 ETFs, 3 factors). ITA is the defense ETF.
 
-**Adding a new regime:** define a `HistoricFactorModel` in `regimes.py`, add it to `REGIME_REGISTRY`. No other files change.
+**Adding a new regime:** define a `HistoricFactorModel` in `regimes.py`, add it to `REGIME_REGISTRY`. No other files change. Registry now has 6 regimes; `test_regimes.py` count assertion is `== 6`.
+
+**`covid_reopening` gotcha:** first build attempt produced T=0 (empty calibration). Root cause was a head-miss bug in `DataCoordinator._gap_analyse()` — the cache held 2022+ data and was incorrectly considered "covering" the 2020 window. Fixed by adding a `cached_start_ts > req_start_ts` head-miss check. Always verify build output shows `T > 0` before scoring.
 
 ---
 
@@ -183,9 +186,10 @@ Key fixture hierarchy in `conftest.py`:
 
 ```
 utils/
-├── daily_scanner.py     — EOD scanner; honours sticky regime; outputs live_alpha_us/global.csv
-├── news_scanner.py      — headline fetcher for top signals
-├── portfolio_sizer.py   — conviction-weighted position sizing
+├── daily_scanner.py        — EOD scanner; honours sticky regime; outputs live_alpha_us/global.csv
+├── news_scanner.py         — headline fetcher for top signals; prints fundamentals table at end
+├── fundamental_scanner.py  — yfinance fundamentals table: Price, Fwd P/E, TTM/Fwd EPS, Next Earnings, Ex-Div, Analyst Target
+├── portfolio_sizer.py      — conviction-weighted position sizing; --exclude/-e and --out/-o flags
 ├── csv_to_md.py         — converts alpha CSV to markdown report
 ├── score_viz.py         — confidence_delta bubble chart + factor heatmap (ShockArb-only)
 ├── value_score_viz.py   — value screener × ShockArb 3-figure suite + combined CSV
@@ -211,7 +215,7 @@ python verify_install.py --regenerate
 
 ## Known Design Debt / Limitations
 
-- **6 test failures in test_cli.py** — mock Args classes may be missing `min_confidence`/`min_r_squared`. Verify and fix on local machine.
+- ~~**6 test failures in test_cli.py**~~ — Fixed. Root causes: `save_model` called without `regime=` (fixed), and `Args.output` renamed to `Args.out` (fixed). All tests passing.
 - **`gulf_war_recovery` tickers are placeholders.** Not validated against real data yet.
 - **Small calibration window (~35 trading days).** Single-event contamination risk. Inspect R² before trusting signals.
 - **No position sizing built into core.** `portfolio_sizer.py` handles this as a utility.
@@ -231,3 +235,4 @@ python verify_install.py --regenerate
 | 2026-05-27 | Fixed pervasive `hasattr(args, "regime")` bug — all 5 CLI commands now always pass regime to `find_latest_model`; fixed `daily_scanner.py` sticky regime; added `--min-confidence`/`--min-r-squared` to `score` |
 | 2026-05-28 | Bulk `add-asset` of 26 wide-moat USD names from value screener; removed 6 low-R² names; US universe now 98 stocks |
 | 2026-05-29 | Built value screener integration: `value_analyzer.py` (repaired), `utils/value_score_viz.py` (3-figure viz + combined CSV with signed frontier distance, membership flags, company names); efficient frontier geometry corrected to non-dominated region only |
+| 2026-05-29 | Added `covid_reopening` regime; fixed head-miss bug in `DataCoordinator._gap_analyse()`; unified `--out/-o` flag across all utilities + `shockarb score`; fixed all 6 `test_cli.py` failures; added `fundamental_scanner.py` + wired into `news_scanner.py`; renamed morningstar → value throughout |
