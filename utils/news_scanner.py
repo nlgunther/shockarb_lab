@@ -21,6 +21,9 @@ Usage examples
 
     # Merge multiple universes
     python utils/news_scanner.py --csv data/live_alpha_us.csv data/live_alpha_global.csv --top 10
+
+    # Headlines only, skip the fundamentals table
+    python utils/news_scanner.py --no-fundamentals
 """
 
 from __future__ import annotations
@@ -33,7 +36,7 @@ import pandas as pd
 import yfinance as yf
 from loguru import logger
 
-from fundamental_scanner import fetch_fundamentals, print_fundamentals
+from fundamental_scanner import fetch_fundamentals, load_cached_fundamentals, print_fundamentals
 
 
 # =============================================================================
@@ -83,6 +86,7 @@ def scan_news(
     top_n: int = 10,
     explicit_tickers: list[str] | None = None,
     sort_col: str = "confidence_delta",
+    fundamentals: bool = True,
 ) -> None:
     """
     Print recent headlines for the top arbitrage targets.
@@ -186,7 +190,12 @@ def scan_news(
     # ------------------------------------------------------------------
     all_tickers = [item["ticker"] for item in targets]
     if all_tickers:
-        print_fundamentals(fetch_fundamentals(all_tickers))
+        if fundamentals:
+            print_fundamentals(fetch_fundamentals(all_tickers))
+        else:
+            rows = load_cached_fundamentals(all_tickers)
+            if any(r.get("_cached_at") for r in rows):
+                print_fundamentals(rows)
 
 
 # =============================================================================
@@ -215,10 +224,15 @@ if __name__ == "__main__":
         "--sort", default="confidence_delta",
         help="CSV column to sort by (default: confidence_delta)",
     )
+    parser.add_argument(
+        "--no-fundamentals", action="store_true",
+        help="Skip the fundamentals table (faster; headlines only)",
+    )
     args = parser.parse_args()
 
     # Default CSV if nothing else provided
     if not args.tickers and not args.csv:
         args.csv = ["./data/live_alpha_us.csv"]
 
-    scan_news(args.csv, args.top, args.tickers, args.sort)
+    scan_news(args.csv, args.top, args.tickers, args.sort,
+              fundamentals=not args.no_fundamentals)

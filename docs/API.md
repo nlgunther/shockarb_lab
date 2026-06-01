@@ -680,3 +680,133 @@ Columns returned by `model.score()` and written to CSV by `pipeline.export_csvs(
 | `Factor_1` … `Factor_k` | OLS beta on each macro factor |
 | `R_squared` | Calibration fit quality |
 | `Residual_Vol` | Annualised unexplained return volatility |
+
+---
+
+## `shockarb.score_history`
+
+Rolling daily score archive that accumulates scoring output for regime health
+monitoring and alpha validation (Steps 2–4 of the regime-effectiveness roadmap).
+One parquet file per scoring run under `data/recent_scores/`, named `YYYY-MM-DD_HHMMSS.parquet`. Multiple runs on the same day are preserved; `load_window` and `available_days` use the latest file per date.
+
+---
+
+### Constants
+
+| Name | Value | Purpose |
+|------|-------|---------|
+| `RECENT_SCORES_RETENTION_DAYS` | `90` | Default purge window in `purge_stale()` |
+| `MIN_WINDOW_DAYS` | `5` | Minimum days before regime health output is shown |
+
+---
+
+### `ScoreArchive`
+
+Manages the rolling archive. Auto-creates `data_dir/recent_scores/` on construction.
+
+```python
+from shockarb.score_history import ScoreArchive
+archive = ScoreArchive("data")
+```
+
+#### `__init__(data_dir: str | Path) → None`
+
+**Parameters:**
+- `data_dir` (str | Path): Root data directory (same as `ExecutionConfig.data_dir`). Archive files go into `data_dir/recent_scores/`.
+
+Creates `recent_scores/` if it does not exist. Idempotent — safe to call repeatedly.
+
+---
+
+#### `save_row(score_date, scores_df, regime_name, model_file) → Path`
+
+Persist one day of scores to a parquet file and backfill the previous day's `next_day_actual` column.
+
+**Parameters:**
+- `score_date` (datetime.date): The trading date being archived (typically `date.today()`).
+- `scores_df` (pd.DataFrame): Raw engine output — index is ticker symbols, columns include `actual_return`, `expected_rel`, `delta_rel`, `r_squared`, `confidence_delta`. Extra columns are silently ignored.
+- `regime_name` (str): Name of the active regime (e.g. `"ukraine_shock"`).
+- `model_file` (str): Path or basename of the model JSON. Only the basename is stored.
+
+**Returns:** `Path` — path of the file written (`YYYY-MM-DD_HHMMSS.parquet`).
+
+**Side effect:** Finds the most-recent prior archive file (not strictly yesterday — handles weekends and gaps) and writes today's `actual_return` values into its `next_day_actual` column. This backfill is required for the Spearman alpha test (Step 4). It is the only write-twice pattern in the archive.
+
+**Example:**
+```python
+from datetime import date
+archive = ScoreArchive("data")
+archive.save_row(
+    score_date=date.today(),
+    scores_df=scores,           # from model.score()
+    regime_name=regime.name,
+    model_file=model_path,
+)
+```
+
+---
+
+#### `load_window(days: int = 30) → pd.DataFrame`
+
+Return archived rows for the last `days` distinct data-days.
+
+`days` is a **count of trading days present in the archive**, not a calendar span. If fewer than `days` data-days exist, all available data is returned. When multiple files share the same date, the latest timestamp wins.
+
+**Parameters:**
+- `days` (int): Number of most-recent data-days to return. Default: 30.
+
+**Returns:** `pd.DataFrame` with columns `date, ticker, actual, expected, delta, r2, conf_delta, regime, model_file, next_day_actual`. Returns an empty DataFrame (correct columns, zero rows) when the archive is empty.
+
+**Example:**
+```python
+df = archive.load_window(days=30)
+print(df.groupby("date")["ticker"].count())   # rows per day
+```
+
+---
+
+#### `purge_stale(retention_days: int = RECENT_SCORES_RETENTION_DAYS) → int`
+
+Delete archive files older than `retention_days`. Files with non-date stems are ignored.
+
+**Parameters:**
+- `retention_days` (int): Files older than this many days are deleted. Default: `RECENT_SCORES_RETENTION_DAYS` (90).
+
+**Returns:** `int` — number of files removed.
+
+**Example:**
+```python
+removed = archive.purge_stale()    # uses 90-day default
+removed = archive.purge_stale(retention_days=30)
+```
+
+---
+
+#### `available_days() → int`
+
+Count of distinct trading days currently in the archive. Ignores files whose stem is not a valid ISO date.
+
+**Returns:** `int`
+
+**Example:**
+```python
+if archive.available_days() < MIN_WINDOW_DAYS:
+    print("Accumulating data — check back in a few days.")
+```
+
+---
+
+### Archive column reference
+
+| Column | Source | Notes |
+|--------|--------|-------|
+| `date` | `score_date` arg | ISO string `YYYY-MM-DD` |
+| `ticker` | `scores_df.index` | |
+| `actual` | `scores_df.actual_return` | Observed return |
+| `expected` | `scores_df.expected_rel` | Factor-implied return (no drift) |
+| `delta` | `scores_df.delta_rel` | `expected − actual` |
+| `r2` | `scores_df.r_squared` | Calibration fit quality |
+| `conf_delta` | `scores_df.confidence_delta` | Primary ranking signal |
+| `regime` | `regime_name` arg | |
+| `model_file` | `model_file` arg (basename) | |
+| `next_day_actual` | Backfilled by next `save_row()` | NaN until tomorrow's run |

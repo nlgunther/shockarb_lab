@@ -185,6 +185,34 @@ def cmd_build(args) -> None:
     print(f"   Stocks:            {model.diagnostics.n_stocks}")
 
 
+def _print_regime_health(results: list, n_days: int) -> None:
+    """Print the REGIME HEALTH table appended to score output."""
+    from datetime import date as _date
+    from shockarb.score_history import SNR_GOOD_THRESHOLD, SNR_WARN_THRESHOLD
+
+    today = _date.today().isoformat()
+    print(f"\n  REGIME HEALTH \u2014 {today} ({n_days}-day window)")
+    print("  " + "\u2500" * 56)
+
+    for r in results:
+        name = r['regime'].ljust(28)
+        if r['r2'] is None:
+            print(f"  {name}  \u2014\u2014  NO DATA")
+            continue
+        r2_str  = f"R²={r['r2']:.2f}"
+        snr_str = f"SNR={r['snr']:.2f}"
+        if r['status'] in ('BEST FIT', 'ACTIVE'):
+            icon, label = '✅', r['status']
+        elif r['status'] == 'DEGRADED':
+            icon, label = '⚠️', 'DEGRADED'
+        else:
+            icon, label = '❌', 'POOR'
+        print(f"  {name}  {r2_str}  {snr_str}  {icon}  {label}")
+
+    best = next((r for r in results if r['r2'] is not None), None)
+    if best:
+        print(f"\n  \u2192 Recommendation: {best['regime']} is currently most explanatory")
+
 def cmd_score(args) -> None:
     """Score returns against a fitted model."""
     from datetime import date as _date
@@ -236,6 +264,28 @@ def cmd_score(args) -> None:
     if args.out:
         scores.to_csv(args.out)
         print(f"\n📁 Saved to: {args.out}")
+
+    if getattr(args, "save_recent", False) and not args.date:
+        from datetime import date as _today
+        from shockarb.score_history import ScoreArchive, RECENT_SCORES_RETENTION_DAYS
+        archive = ScoreArchive(exec_cfg.data_dir)
+        saved = archive.save_row(
+            score_date=_today.today(),
+            scores_df=scores,
+            regime_name=regime.name,
+            model_file=model_path,
+        )
+        purged = archive.purge_stale(RECENT_SCORES_RETENTION_DAYS)
+        purge_note = f"  ({purged} stale file(s) removed)" if purged else ""
+        print(f"\n📊 Archive: {saved.name} — {len(scores)} rows saved{purge_note}")
+
+        from shockarb.score_history import MIN_WINDOW_DAYS
+        n_days = archive.available_days()
+        if n_days >= MIN_WINDOW_DAYS:
+            results = archive.regime_competition(days=30)
+            _print_regime_health(results, n_days)
+        else:
+            print(f"   Regime health: accumulating ({n_days}/{MIN_WINDOW_DAYS} days min)")
 
 
 def cmd_export(args) -> None:
@@ -468,8 +518,13 @@ def cmd_backtest(args) -> None:
     if static_model:
         returns = returns.tail(args.trailing_window)
     
-    historical_etf_returns = returns[regime.universe.market_etfs]
-    historical_stock_returns = returns[regime.universe.individual_stocks]
+    available_etfs   = [t for t in regime.universe.market_etfs       if t in returns.columns]
+    available_stocks = [t for t in regime.universe.individual_stocks if t in returns.columns]
+    dropped = set(regime.universe.market_etfs + regime.universe.individual_stocks) - set(returns.columns)
+    if dropped:
+        logger.warning(f"Backtest: {len(dropped)} ticker(s) missing from price data (dropped): {sorted(dropped)}")
+    historical_etf_returns   = returns[available_etfs]
+    historical_stock_returns = returns[available_stocks]
     
     logger.info("Executing cohort-tracking backtest engine...")
     runner = Backtest(
@@ -490,6 +545,23 @@ def cmd_backtest(args) -> None:
     print(f"{'='*80}")
     print(results.summary.to_string())
     print(f"{'='*80}")
+
+
+
+def cmd_regime_health(args) -> None:
+    """Display SNR-based regime health table from the rolling score archive."""
+    from shockarb.score_history import ScoreArchive, MIN_WINDOW_DAYS
+
+    exec_cfg = ExecutionConfig(data_dir=args.data_dir)
+    archive = ScoreArchive(exec_cfg.data_dir)
+
+    n_days = archive.available_days()
+    if n_days == 0:
+        print("No score archive found. Run 'shockarb score --save-recent' to start accumulating data.")
+        sys.exit(1)
+
+    results = archive.regime_competition(days=args.days)
+    _print_regime_health(results, n_days)
 
 
 # =============================================================================
@@ -572,6 +644,8 @@ Examples:
     p.add_argument("--min-confidence",      type=float, default=0.001, help="Min confidence_delta to show (default 0.1%%)")
     p.add_argument("--min-r-squared",       type=float, default=0.30,  help="Min R² to show (default 0.30)")
     p.add_argument("--save-tape", action="store_true", help="Save raw daily OHLCV before scoring.")
+    p.add_argument("--save-recent", action="store_true",
+                   help="Append today's scores to rolling parquet archive (data/recent_scores/).")
     p.add_argument("--no-log", action="store_true")
     p.set_defaults(func=cmd_score)
 
@@ -627,6 +701,11 @@ Examples:
     p.add_argument("--min-r-squared", type=float, default=0.50, help="Minimum model fit quality")
     p.set_defaults(func=cmd_backtest)
 
+    # regime-health
+    p = sub.add_parser("regime-health", help="Show SNR-based regime health from rolling archive")
+    p.add_argument("--days", type=int, default=30, help="Rolling window in calendar days (default 30)")
+    p.set_defaults(func=cmd_regime_health)
+
     return parser
 
 
@@ -640,7 +719,7 @@ def main() -> None:
     try:
         args.func(args)
     except KeyboardInterrupt:
-        print("\n\u23f9\ufe0f  Interrupted")
+        print("\n⏹️  Interrupted")
         sys.exit(130)
     except Exception as exc:
         logger.exception(f"Error: {exc}")

@@ -3,7 +3,7 @@
 *Updated after each session. Captures decisions and context not derivable from reading the code.  
 For API details see API.md; for quick commands see CHEATSHEET.md.*
 
-> Last updated: 2026-05-29T18:00 | Trigger: manual (\ukt) | Staleness: Fresh
+> Last updated: 2026-05-30T00:00 | Trigger: manual | Staleness: Fresh
 
 ---
 
@@ -26,7 +26,8 @@ regimes.py   — regime catalogue. Adding a regime is adding a named dataclass �
 config.py    — UniverseConfig (what), ExecutionConfig (how).
 cache.py     — parquet-based OHLCV caching via CacheManager.
 report.py    — terminal display. print_scores, print_model_state, print_live_alpha.
-store.py     — ShockArbStore: parquet file management for the datamgr coordinator.
+store.py          — ShockArbStore: parquet file management for the datamgr coordinator.
+score_history.py  — ScoreArchive: rolling daily parquet archive for regime health + alpha validation.
 names.py     — ticker → company name resolution (wraps ticker_reference_cache.json).
 ```
 
@@ -170,9 +171,9 @@ Run: `python utils/value_score_viz.py --regime ukraine_shock --out data/viz`
 
 ## Test Suite
 
-272 tests passing, 6 failing (all in `test_cli.py`). Run with `pytest tests/ -q`.
+383 tests passing, 0 failing. Run with `pytest tests/ -q`.
 
-**Failing tests (as of 2026-05-29):** `TestCmdExport::test_creates_csv_files`, `TestCmdScore::test_live_score_prints_table`, `TestCmdScore::test_output_csv_saved`, `TestCmdScoreSaveTape::test_save_tape_flag_calls_save_live_tape`. These failures are believed to stem from mock `Args` classes missing `min_confidence` / `min_r_squared` attributes added when those flags were introduced. Source fix was applied but sandbox `.pyc` interference may have masked it — verify on local machine.
+
 
 Key fixture hierarchy in `conftest.py`:
 - `sample_etf_returns` → 36 days × 5 ETFs, synthetic crisis structure
@@ -236,3 +237,5 @@ python verify_install.py --regenerate
 | 2026-05-28 | Bulk `add-asset` of 26 wide-moat USD names from value screener; removed 6 low-R² names; US universe now 98 stocks |
 | 2026-05-29 | Built value screener integration: `value_analyzer.py` (repaired), `utils/value_score_viz.py` (3-figure viz + combined CSV with signed frontier distance, membership flags, company names); efficient frontier geometry corrected to non-dominated region only |
 | 2026-05-29 | Added `covid_reopening` regime; fixed head-miss bug in `DataCoordinator._gap_analyse()`; unified `--out/-o` flag across all utilities + `shockarb score`; fixed all 6 `test_cli.py` failures; added `fundamental_scanner.py` + wired into `news_scanner.py`; renamed morningstar → value throughout |
+| 2026-05-30 | Archive filename changed to `YYYY-MM-DD_HHMMSS.parquet`; `load_window(days)` now counts data-days (not calendar span); multiple runs per day preserved, latest wins; `regime-health` subcommand added; industry corrections to `us_score_053026.md`; `HIL_todo.md` + `skills/hil-followup/SKILL.md` created |
+| 2026-05-30 | Added `score_history.py` (`ScoreArchive`): rolling parquet archive, `save_row()`, `load_window()`, `purge_stale()`, `available_days()`, yesterday backfill; wired `--save-recent` flag into `score` subcommand; 25 new tests (`test_score_history.py`); updated API.md, CHEATSHEET.md, KT.md |

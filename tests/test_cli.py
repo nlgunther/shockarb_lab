@@ -801,3 +801,99 @@ class TestRemoveAssetCLI:
         assert args.tickers == ["RTX"]
         assert args.regime == "global_ukraine_shock"
         assert args.save is True
+
+
+# =============================================================================
+# TestRegimeHealthCommand
+# =============================================================================
+
+class TestRegimeHealthCommand:
+    """Tests for the regime-health CLI subcommand."""
+
+    def test_parser_registered(self):
+        """regime-health subcommand must be registered."""
+        from shockarb.cli import _build_parser
+        parser = _build_parser()
+        args = parser.parse_args(["regime-health"])
+        assert args.days == 30
+
+    def test_parser_days_flag(self):
+        """--days flag must override default."""
+        from shockarb.cli import _build_parser
+        parser = _build_parser()
+        args = parser.parse_args(["regime-health", "--days", "14"])
+        assert args.days == 14
+
+    def test_empty_archive_exits_1(self, temp_dir, capsys):
+        """Empty archive should print helpful message and exit 1."""
+        import argparse
+        from shockarb.cli import cmd_regime_health
+        args = argparse.Namespace(data_dir=temp_dir, days=30)
+        with pytest.raises(SystemExit) as exc_info:
+            cmd_regime_health(args)
+        assert exc_info.value.code == 1
+        out = capsys.readouterr().out
+        assert "save-recent" in out.lower() or "no score archive" in out.lower()
+
+    def test_prints_health_table(self, temp_dir, capsys):
+        """With archive data, regime-health prints the health table."""
+        import argparse
+        from datetime import date
+        import numpy as np
+        import pandas as pd
+        from shockarb.cli import cmd_regime_health
+        from shockarb.score_history import ScoreArchive
+
+        # Populate archive with minimal data
+        archive = ScoreArchive(temp_dir)
+        np.random.seed(0)
+        n = 10
+        idx = pd.Index([f"T{i}" for i in range(n)], name="ticker")
+        scores_df = pd.DataFrame({
+            "actual_return":    np.random.randn(n) * 0.01,
+            "expected_rel":     np.random.randn(n) * 0.008,
+            "delta_rel":        np.random.randn(n) * 0.005,
+            "r_squared":        np.random.uniform(0.3, 0.8, n),
+            "confidence_delta": np.random.randn(n) * 0.003,
+        }, index=idx)
+        archive.save_row(date(2026, 5, 28), scores_df, "ukraine_shock", "model.json")
+        archive.save_row(date(2026, 5, 29), scores_df, "ukraine_shock", "model.json")
+        archive.save_row(date(2026, 5, 30), scores_df, "ukraine_shock", "model.json")
+
+        args = argparse.Namespace(data_dir=temp_dir, days=30)
+        cmd_regime_health(args)
+
+        out = capsys.readouterr().out
+        assert "REGIME HEALTH" in out
+        assert "ukraine_shock" in out
+
+    def test_days_arg_passed_to_competition(self, temp_dir, capsys):
+        """--days arg is forwarded to regime_competition()."""
+        import argparse
+        from datetime import date
+        import numpy as np
+        import pandas as pd
+        from shockarb.cli import cmd_regime_health
+        from shockarb.score_history import ScoreArchive
+        from unittest.mock import patch
+
+        archive = ScoreArchive(temp_dir)
+        np.random.seed(1)
+        n = 5
+        idx = pd.Index([f"T{i}" for i in range(n)], name="ticker")
+        scores_df = pd.DataFrame({
+            "actual_return":    np.random.randn(n) * 0.01,
+            "expected_rel":     np.random.randn(n) * 0.01,
+            "delta_rel":        np.random.randn(n) * 0.01,
+            "r_squared":        [0.5] * n,
+            "confidence_delta": [0.01] * n,
+        }, index=idx)
+        archive.save_row(date(2026, 5, 30), scores_df, "ukraine_shock", "m.json")
+
+        args = argparse.Namespace(data_dir=temp_dir, days=10)
+        with patch.object(archive, "regime_competition", wraps=archive.regime_competition) as mock_rc, \
+             patch("shockarb.score_history.ScoreArchive", return_value=archive):
+            cmd_regime_health(args)
+
+        out = capsys.readouterr().out
+        assert "REGIME HEALTH" in out
