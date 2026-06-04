@@ -33,6 +33,10 @@ def _make_snapshot(
     vix_chg: float = 0.0,
     tlt_chg: float = 0.0,
     sector_chgs: dict | None = None,
+    baseline_date: str = "2026-06-03",
+    mode: str = "daily",
+    fetched_at_local: str | None = None,
+    fetched_at_utc: str | None = None,
     overseas_chgs: list[float] | None = None,
 ) -> dict:
     """Build a minimal synthetic market snapshot dict."""
@@ -69,9 +73,11 @@ def _make_snapshot(
                 "close": 1000.0, "prev": 1000.0, "chg_pct": chg, "status": "ok",
             })
     return {
-        "fetched_at": "2026-06-03T21:00:00+00:00",
-        "fetched_at_local": "2026-06-03 17:00",
-        "tickers": tickers,
+        "fetched_at":       fetched_at_utc or "2026-06-03T21:00:00+00:00",
+        "fetched_at_local": fetched_at_local or "2026-06-03 17:00",
+        "baseline_date":    baseline_date,
+        "mode":             mode,
+        "tickers":          tickers,
     }
 
 
@@ -309,3 +315,208 @@ class TestReportBuild:
     def test_source_noted_in_footer(self):
         md = self._build()
         assert "rules" in md
+
+
+# =============================================================================
+# TestReportBaseline — baseline date + mode display in header
+# =============================================================================
+
+class TestReportBaseline:
+    """report.build() surfaces baseline_date and mode correctly in the header."""
+
+    def _build(self, **kwargs) -> str:
+        snap  = _make_snapshot(**kwargs)
+        feats = features.extract(snap)
+        v     = rules.evaluate(feats)
+        return report.build(snap, v)
+
+    def test_daily_after_hours_shows_baseline_date(self):
+        """After-hours daily: baseline date appears in header, no warnings."""
+        md = self._build(baseline_date="2026-06-03", mode="daily",
+                         fetched_at_local="2026-06-03 17:00")
+        assert "2026-06-03" in md
+        assert "Daily close" in md
+
+    def test_intraday_mode_shows_intraday_label(self):
+        """--intraday run: header says Intraday explicitly."""
+        md = self._build(baseline_date="2026-06-03", mode="intraday",
+                         fetched_at_local="2026-06-04 10:30")
+        assert "Intraday" in md
+        assert "2026-06-03" in md
+
+    def test_daily_during_market_hours_shows_warning(self):
+        """Daily mode fetched at 11:00 ET (market open): show open-market warning."""
+        md = self._build(baseline_date="2026-06-03", mode="daily",
+                         fetched_at_utc="2026-06-04T15:00:00+00:00")
+        assert "Market open" in md
+        assert "--intraday" in md
+
+    def test_daily_at_market_open_boundary(self):
+        """09:30 ET is market open — warning should fire."""
+        md = self._build(mode="daily", fetched_at_utc="2026-06-04T13:30:00+00:00")
+        assert "Market open" in md
+
+    def test_daily_before_open_no_warning(self):
+        """08:00 ET — premarket, no open-market warning."""
+        md = self._build(mode="daily", fetched_at_utc="2026-06-04T12:00:00+00:00")
+        assert "Market open" not in md
+
+    def test_daily_at_close_boundary_no_warning(self):
+        """16:00 ET exactly — market closed, no warning."""
+        md = self._build(mode="daily", fetched_at_utc="2026-06-04T20:00:00+00:00")
+        assert "Market open" not in md
+
+    def test_baseline_date_in_footer(self):
+        """baseline_date appears in report footer."""
+        md = self._build(baseline_date="2026-05-30")
+        assert "2026-05-30" in md
+
+    def test_mode_in_footer(self):
+        """mode appears in report footer."""
+        md = self._build(mode="intraday")
+        assert "intraday" in md
+
+    def test_missing_baseline_date_does_not_crash(self):
+        """Snapshots without baseline_date (old format) still render."""
+        snap = _make_snapshot()
+        del snap["baseline_date"]
+        feats = features.extract(snap)
+        v = rules.evaluate(feats)
+        md = report.build(snap, v)
+        assert "Overall Fit" in md
+
+
+# =============================================================================
+# TestCliResolveOut — _resolve_out() filename logic
+# =============================================================================
+
+class TestCliResolveOut:
+    """marketfit.cli._resolve_out() picks the right default output filename."""
+
+    def setup_method(self):
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "utils"))
+        from marketfit.cli import _resolve_out, _DEFAULT_OUT_DAILY, _DEFAULT_OUT_INTRA
+        self._resolve_out     = _resolve_out
+        self._default_daily   = _DEFAULT_OUT_DAILY
+        self._default_intraday = _DEFAULT_OUT_INTRA
+
+    def test_daily_snapshot_uses_daily_default(self):
+        snap = {"mode": "daily"}
+        assert self._resolve_out(self._default_daily, snap) == self._default_daily
+
+    def test_intraday_snapshot_uses_intraday_default(self):
+        snap = {"mode": "intraday"}
+        assert self._resolve_out(self._default_daily, snap) == self._default_intraday
+
+    def test_explicit_out_always_honoured(self):
+        """User-supplied --out overrides mode-based default."""
+        snap = {"mode": "intraday"}
+        assert self._resolve_out("/tmp/custom.md", snap) == "/tmp/custom.md"
+
+    def test_missing_mode_falls_back_to_daily(self):
+        """Old snapshots without 'mode' field use the daily default."""
+        snap = {}
+        assert self._resolve_out(self._default_daily, snap) == self._default_daily
+
+
+# =============================================================================
+# TestCliTimestamp — _resolve_out timestamp routing
+# =============================================================================
+
+class TestCliTimestamp:
+    """_resolve_out() with timestamp=True produces timestamped filenames."""
+
+    def setup_method(self):
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "utils"))
+        from marketfit.cli import _resolve_out, _DEFAULT_OUT_DAILY
+        self._resolve_out   = _resolve_out
+        self._default_daily = _DEFAULT_OUT_DAILY
+
+    def _snap(self, mode="daily", fetched_at_local="2026-06-04 14:55"):
+        return {"mode": mode, "fetched_at_local": fetched_at_local}
+
+    def test_timestamp_daily_includes_datestamp(self):
+        out = self._resolve_out(self._default_daily, self._snap(), timestamp=True)
+        assert "market_report_" in out
+        assert "2026-06-04" in out
+        assert out.endswith(".md")
+
+    def test_timestamp_intraday_includes_intraday_in_name(self):
+        out = self._resolve_out(self._default_daily, self._snap(mode="intraday"), timestamp=True)
+        assert "market_report_intraday_" in out
+
+    def test_timestamp_colons_stripped_from_time(self):
+        """14:55 → 1455 in filename (colons invalid on Windows paths)."""
+        out = self._resolve_out(self._default_daily, self._snap(fetched_at_local="2026-06-04 14:55"), timestamp=True)
+        assert "14:55" not in out
+        assert "1455" in out
+
+    def test_explicit_out_ignores_timestamp(self):
+        """User-supplied --out is always honoured, even with --timestamp."""
+        out = self._resolve_out("/tmp/my_report.md", self._snap(), timestamp=True)
+        assert out == "/tmp/my_report.md"
+
+    def test_no_timestamp_returns_default(self):
+        out = self._resolve_out(self._default_daily, self._snap(), timestamp=False)
+        assert out == self._default_daily
+
+
+# =============================================================================
+# TestReportEnhanced — build_enhanced() structure
+# =============================================================================
+
+class TestReportEnhanced:
+    """build_enhanced() produces correct <!-- LEARN --> structure."""
+
+    def _build(self, narratives=None, **snap_kwargs):
+        snap  = _make_snapshot(**snap_kwargs)
+        feats = features.extract(snap)
+        v     = rules.evaluate(feats)
+        return report.build_enhanced(snap, v, narratives or {})
+
+    def test_contains_learn_tags(self):
+        md = self._build()
+        assert "<!-- LEARN " in md
+        assert "<!-- /LEARN -->" in md
+
+    def test_executive_summary_tag_present(self):
+        md = self._build()
+        assert 'section="executive_summary"' in md
+
+    def test_all_core_sections_present(self):
+        md = self._build()
+        for section in ["broad_market_interpretation", "sector_rotation_story",
+                        "bond_signal_interpretation", "overseas_read",
+                        "risk_gauge_read", "shockarb_fit_analysis"]:
+            assert f'section="{section}"' in md, f"missing section: {section}"
+
+    def test_narrative_text_injected(self):
+        """When narratives dict is populated, the text appears in the output."""
+        narr = {"executive_summary": "Markets surged on strong jobs data."}
+        md = self._build(narratives=narr)
+        assert "Markets surged on strong jobs data." in md
+
+    def test_fallback_placeholder_when_no_narratives(self):
+        """Empty narratives dict produces placeholder text, not a crash."""
+        md = self._build(narratives={})
+        assert "*(narrative not generated)*" in md
+
+    def test_inputs_attribute_populated(self):
+        """inputs= attributes are not empty strings."""
+        md = self._build()
+        import re
+        inputs_matches = re.findall(r'inputs="([^"]+)"', md)
+        assert len(inputs_matches) > 0
+        assert all(len(v) > 0 for v in inputs_matches)
+
+    def test_llm_noted_in_footer(self):
+        md = self._build()
+        assert "LLM: enabled" in md
+
+    def test_does_not_crash_with_shock_scenario(self):
+        """Shock conditions produce a valid enhanced report."""
+        md = self._build(spy_chg=-2.0, vix_level=22.0, vix_chg=15.0, tlt_chg=0.8)
+        assert "<!-- LEARN " in md
+        assert "GOOD" in md

@@ -22,6 +22,7 @@ class UniverseConfig:
 ```
 
 **Validation** (raises `ValueError` on construction):
+
 - `market_etfs` must be non-empty
 - `individual_stocks` must be non-empty
 - `n_components` must be ≥ 1
@@ -30,10 +31,10 @@ class UniverseConfig:
 
 **Legacy pre-built constants** (use regimes instead):
 
-| Constant | `name` | ETFs | Stocks | n_components | Window |
-|----------|--------|------|--------|-------------|--------|
-| `US_UNIVERSE` | `"us"` | 20 | 60+ | 3 | 2022-02-10 → 2022-03-31 |
-| `GLOBAL_UNIVERSE` | `"global"` | 20 | ~25 | 3 | 2022-02-10 → 2022-03-31 |
+| Constant          | `name`     | ETFs | Stocks | n_components | Window                  |
+| ----------------- | ---------- | ---- | ------ | ------------ | ----------------------- |
+| `US_UNIVERSE`     | `"us"`     | 20   | 60+    | 3            | 2022-02-10 → 2022-03-31 |
+| `GLOBAL_UNIVERSE` | `"global"` | 20   | ~25    | 3            | 2022-02-10 → 2022-03-31 |
 
 ---
 
@@ -87,12 +88,12 @@ class HistoricFactorModel:
 
 **Pre-built regimes:**
 
-| Constant | Name | Description | Period | Universe |
-|----------|------|-------------|--------|----------|
-| `UKRAINE_SHOCK` | `ukraine_shock` | Russia-Ukraine invasion (US) | Feb-Mar 2022 | 80+ US stocks |
-| `GLOBAL_UKRAINE_SHOCK` | `global_ukraine_shock` | Russia-Ukraine invasion (Global) | Feb-Mar 2022 | 15 global ADRs |
-| `GULF_WAR_RECOVERY` | `gulf_war_recovery` | Gulf War ceasefire recovery | Mar-Jun 1991 | 33 US stocks |
-| `LIBERATION_DAY_RECOVERY` | `liberation_day_recovery` | Post-Liberation Day tariff recovery | Apr-Jul 2025 | US |
+| Constant                  | Name                      | Description                         | Period       | Universe       |
+| ------------------------- | ------------------------- | ----------------------------------- | ------------ | -------------- |
+| `UKRAINE_SHOCK`           | `ukraine_shock`           | Russia-Ukraine invasion (US)        | Feb-Mar 2022 | 80+ US stocks  |
+| `GLOBAL_UKRAINE_SHOCK`    | `global_ukraine_shock`    | Russia-Ukraine invasion (Global)    | Feb-Mar 2022 | 15 global ADRs |
+| `GULF_WAR_RECOVERY`       | `gulf_war_recovery`       | Gulf War ceasefire recovery         | Mar-Jun 1991 | 33 US stocks   |
+| `LIBERATION_DAY_RECOVERY` | `liberation_day_recovery` | Post-Liberation Day tariff recovery | Apr-Jul 2025 | US             |
 
 ---
 
@@ -162,11 +163,11 @@ Return a compact multi-line string suitable for printing.
 
 **Quality thresholds:**
 
-| Metric | Threshold | Meaning |
-|--------|-----------|---------|
-| `cumulative_variance` | > 0.70 | Model captures most ETF co-movement |
-| `stock_r_squared` | > 0.50 | Factor model explains the stock well |
-| `stock_r_squared` | < 0.30 | Low fit — discount signals from this stock |
+| Metric                | Threshold | Meaning                                    |
+| --------------------- | --------- | ------------------------------------------ |
+| `cumulative_variance` | > 0.70    | Model captures most ETF co-movement        |
+| `stock_r_squared`     | > 0.50    | Factor model explains the stock well       |
+| `stock_r_squared`     | < 0.30    | Low fit — discount signals from this stock |
 
 ---
 
@@ -179,6 +180,7 @@ model = FactorModel(etf_returns, stock_returns)
 ```
 
 **Parameters:**
+
 - `etf_returns: pd.DataFrame` — shape (T, N_etf), DatetimeIndex
 - `stock_returns: pd.DataFrame` — shape (T, N_stock), must share the same index
 
@@ -195,16 +197,17 @@ model = FactorModel(etf_returns, stock_returns).fit(n_components=3)
 ```
 
 **Raises:**
+
 - `ValueError` if `n_components ≥ min(T, N_etf)`
 
 **After calling `fit()`**, the following attributes are available:
 
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| `loadings` | `pd.DataFrame` (N_stock × k) | OLS beta of each stock on each factor |
-| `diagnostics` | `FactorDiagnostics` | Fit quality metrics |
-| `etf_basis` *(property)* | `pd.DataFrame` (N_etf × k) | Factor direction vectors per ETF |
-| `factor_returns` *(property)* | `pd.DataFrame` (T × k) | Historical factor return time series |
+| Attribute                     | Type                         | Description                           |
+| ----------------------------- | ---------------------------- | ------------------------------------- |
+| `loadings`                    | `pd.DataFrame` (N_stock × k) | OLS beta of each stock on each factor |
+| `diagnostics`                 | `FactorDiagnostics`          | Fit quality metrics                   |
+| `etf_basis` *(property)*      | `pd.DataFrame` (N_etf × k)   | Factor direction vectors per ETF      |
+| `factor_returns` *(property)* | `pd.DataFrame` (T × k)       | Historical factor return time series  |
 
 ---
 
@@ -220,21 +223,22 @@ scores = model.score(
 ```
 
 **Parameters:**
+
 - `today_etf_returns: pd.Series` — indexed by ticker; missing tickers filled with 0
 - `today_stock_returns: pd.Series` — only tickers present in both this Series and `loadings` are scored
 
 **Returns:** `pd.DataFrame` sorted descending by `confidence_delta`
 
-| Column | Dtype | Description |
-|--------|-------|-------------|
-| `actual_return` | float | Observed return |
-| `expected_rel` | float | Factor-implied return (no drift) |
-| `expected_abs` | float | Factor-implied return + calibration drift |
-| `delta_rel` | float | `expected_rel − actual` (positive = undersold) |
-| `delta_abs` | float | `expected_abs − actual` (drift-adjusted) |
-| `r_squared` | float | Calibration fit quality [0, 1] |
-| `residual_vol` | float | Annualised unexplained volatility |
-| `confidence_delta` | float | `delta_rel × r_squared` — **primary signal** |
+| Column             | Dtype | Description                                    |
+| ------------------ | ----- | ---------------------------------------------- |
+| `actual_return`    | float | Observed return                                |
+| `expected_rel`     | float | Factor-implied return (no drift)               |
+| `expected_abs`     | float | Factor-implied return + calibration drift      |
+| `delta_rel`        | float | `expected_rel − actual` (positive = undersold) |
+| `delta_abs`        | float | `expected_abs − actual` (drift-adjusted)       |
+| `r_squared`        | float | Calibration fit quality [0, 1]                 |
+| `residual_vol`     | float | Annualised unexplained volatility              |
+| `confidence_delta` | float | `delta_rel × r_squared` — **primary signal**   |
 
 **Raises:** `RuntimeError` if model is not fitted.
 
@@ -250,6 +254,7 @@ loadings = model.project_security("SHOP", shop_returns)
 ```
 
 **Parameters:**
+
 - `ticker: str` — display name for the security
 - `returns: pd.Series` — daily returns with a DatetimeIndex
 - `min_overlap: float` — minimum fraction of calibration dates with data (default 0.8)
@@ -280,6 +285,7 @@ model.remove_asset("RTX")
 Project a new asset onto the fitted factor basis and add it to the scoring universe **in-place**. Unlike `project_security()`, the ticker is immediately available in subsequent `score()` calls. Use `pipeline.add_assets()` rather than calling this directly — it handles data fetching and factor-return reconstruction.
 
 **Parameters:**
+
 - `ticker: str` — display name for the security
 - `returns: pd.Series` — daily returns with a DatetimeIndex; only dates present in `factor_returns` are used
 - `factor_returns: pd.DataFrame` — pre-computed calibration-window factor return series, shape (T × k); produced by `pipeline.add_assets()`
@@ -288,6 +294,7 @@ Project a new asset onto the fitted factor basis and add it to the scoring unive
 **Returns:** `dict` with keys `loadings` (Series), `r_squared` (float), `residual_vol` (float)
 
 **Raises:**
+
 - `ValueError` if `ticker` is already in the model or coverage is below `min_overlap`
 
 ---
@@ -331,6 +338,7 @@ model = pipeline.build(regime.universe)
 ```
 
 **Parameters:**
+
 - `universe: UniverseConfig`
 - `exec_config: ExecutionConfig` — optional; uses process default if omitted
 
@@ -350,6 +358,7 @@ prices = pipeline.fetch_prices(
 ```
 
 **Parameters:**
+
 - `tickers: List[str]`
 - `start, end: str` — YYYY-MM-DD; `end` is exclusive
 - `cache_name: str` — logical cache key; each unique name gets its own parquet file
@@ -370,6 +379,7 @@ returns = pipeline.prices_to_returns(prices, min_coverage=0.8)
 ```
 
 **Three-step NaN strategy:**
+
 1. Drop tickers with fewer than `min_coverage` non-NaN rows
 2. Forward-fill remaining gaps (foreign holiday misalignment)
 3. Fill isolated post-pct_change NaNs with 0.0
@@ -456,6 +466,7 @@ pipeline.save_model(model, "us")   # new tickers persisted
 ```
 
 **Parameters:**
+
 - `tickers: List[str]` — new ticker symbols to add; tickers already in the model are skipped with a warning
 - `model: FactorModel` — a fitted model from `build()` or `load_model()`
 - `universe: UniverseConfig` — defines the calibration window and ETF basket
@@ -505,6 +516,7 @@ ohlcv = mgr.fetch_ohlcv(["VOO", "TLT"], "2022-02-10", "2022-03-31", "us_etf")
 ```
 
 **Cache update logic (priority order):**
+
 1. If no cache exists → download everything
 2. If new tickers requested → download and merge them into existing date range
 3. If date range extends into the recent past (<30 days ago) → download and append new dates
@@ -545,6 +557,7 @@ print_scores(scores, "US | 2022-03-01", top_n=15, min_confidence=0.005)
 ```
 
 **Parameters:**
+
 - `scores: pd.DataFrame` — output of `model.score()`
 - `title: str` — header label
 - `top_n: int` — maximum actionable signals to display
@@ -600,13 +613,13 @@ python -m shockarb remove-asset RTX --regime global_ukraine_shock --save
 
 **Arguments:**
 
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `tickers` (positional) | *(required)* | One or more ticker symbols to remove |
-| `--regime / -r` | sticky regime | Regime name (overrides sticky) |
-| `--model / -m` | *(latest)* | Explicit model `.json` path |
-| `--save / -s` | False | Save the updated model after removing |
-| `--no-log` | False | Suppress log file output |
+| Argument               | Default       | Description                           |
+| ---------------------- | ------------- | ------------------------------------- |
+| `tickers` (positional) | *(required)*  | One or more ticker symbols to remove  |
+| `--regime / -r`        | sticky regime | Regime name (overrides sticky)        |
+| `--model / -m`         | *(latest)*    | Explicit model `.json` path           |
+| `--save / -s`          | False         | Save the updated model after removing |
+| `--no-log`             | False         | Suppress log file output              |
 
 Tickers not found in the model are skipped with a warning rather than raising an error.
 
@@ -622,13 +635,13 @@ python -m shockarb add-asset SHOP COIN --regime ukraine_shock --save
 
 **Arguments:**
 
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `tickers` (positional) | *(required)* | One or more ticker symbols to add |
-| `--regime / -r` | sticky regime | Regime name (overrides sticky) |
-| `--model / -m` | *(latest)* | Explicit model `.json` path |
-| `--save / -s` | False | Save the updated model after adding |
-| `--no-log` | False | Suppress log file output |
+| Argument               | Default       | Description                         |
+| ---------------------- | ------------- | ----------------------------------- |
+| `tickers` (positional) | *(required)*  | One or more ticker symbols to add   |
+| `--regime / -r`        | sticky regime | Regime name (overrides sticky)      |
+| `--model / -m`         | *(latest)*    | Explicit model `.json` path         |
+| `--save / -s`          | False         | Save the updated model after adding |
+| `--no-log`             | False         | Suppress log file output            |
 
 ---
 
@@ -662,24 +675,24 @@ Columns returned by `model.score()` and written to CSV by `pipeline.export_csvs(
 
 ### Score output columns
 
-| Column | Unit | Primary use |
-|--------|------|-------------|
-| `actual_return` | decimal (e.g. -0.02) | Reference |
-| `expected_rel` | decimal | Ranking; no drift contamination |
-| `expected_abs` | decimal | Position sizing when drift matters |
-| `delta_rel` | decimal | Raw mispricing magnitude |
-| `delta_abs` | decimal | Drift-adjusted mispricing |
-| `r_squared` | [0, 1] | Signal quality gate |
-| `residual_vol` | annualised decimal | Stop-loss width, position sizing |
-| `confidence_delta` | decimal | **Primary sort and filter key** |
+| Column             | Unit                 | Primary use                        |
+| ------------------ | -------------------- | ---------------------------------- |
+| `actual_return`    | decimal (e.g. -0.02) | Reference                          |
+| `expected_rel`     | decimal              | Ranking; no drift contamination    |
+| `expected_abs`     | decimal              | Position sizing when drift matters |
+| `delta_rel`        | decimal              | Raw mispricing magnitude           |
+| `delta_abs`        | decimal              | Drift-adjusted mispricing          |
+| `r_squared`        | [0, 1]               | Signal quality gate                |
+| `residual_vol`     | annualised decimal   | Stop-loss width, position sizing   |
+| `confidence_delta` | decimal              | **Primary sort and filter key**    |
 
 ### Loadings CSV columns
 
-| Column | Description |
-|--------|-------------|
-| `Factor_1` … `Factor_k` | OLS beta on each macro factor |
-| `R_squared` | Calibration fit quality |
-| `Residual_Vol` | Annualised unexplained return volatility |
+| Column                  | Description                              |
+| ----------------------- | ---------------------------------------- |
+| `Factor_1` … `Factor_k` | OLS beta on each macro factor            |
+| `R_squared`             | Calibration fit quality                  |
+| `Residual_Vol`          | Annualised unexplained return volatility |
 
 ---
 
@@ -693,10 +706,10 @@ One parquet file per scoring run under `data/recent_scores/`, named `YYYY-MM-DD_
 
 ### Constants
 
-| Name | Value | Purpose |
-|------|-------|---------|
-| `RECENT_SCORES_RETENTION_DAYS` | `90` | Default purge window in `purge_stale()` |
-| `MIN_WINDOW_DAYS` | `5` | Minimum days before regime health output is shown |
+| Name                           | Value | Purpose                                           |
+| ------------------------------ | ----- | ------------------------------------------------- |
+| `RECENT_SCORES_RETENTION_DAYS` | `90`  | Default purge window in `purge_stale()`           |
+| `MIN_WINDOW_DAYS`              | `5`   | Minimum days before regime health output is shown |
 
 ---
 
@@ -712,6 +725,7 @@ archive = ScoreArchive("data")
 #### `__init__(data_dir: str | Path) → None`
 
 **Parameters:**
+
 - `data_dir` (str | Path): Root data directory (same as `ExecutionConfig.data_dir`). Archive files go into `data_dir/recent_scores/`.
 
 Creates `recent_scores/` if it does not exist. Idempotent — safe to call repeatedly.
@@ -723,6 +737,7 @@ Creates `recent_scores/` if it does not exist. Idempotent — safe to call repea
 Persist one day of scores to a parquet file and backfill the previous day's `next_day_actual` column.
 
 **Parameters:**
+
 - `score_date` (datetime.date): The trading date being archived (typically `date.today()`).
 - `scores_df` (pd.DataFrame): Raw engine output — index is ticker symbols, columns include `actual_return`, `expected_rel`, `delta_rel`, `r_squared`, `confidence_delta`. Extra columns are silently ignored.
 - `regime_name` (str): Name of the active regime (e.g. `"ukraine_shock"`).
@@ -733,6 +748,7 @@ Persist one day of scores to a parquet file and backfill the previous day's `nex
 **Side effect:** Finds the most-recent prior archive file (not strictly yesterday — handles weekends and gaps) and writes today's `actual_return` values into its `next_day_actual` column. This backfill is required for the Spearman alpha test (Step 4). It is the only write-twice pattern in the archive.
 
 **Example:**
+
 ```python
 from datetime import date
 archive = ScoreArchive("data")
@@ -753,11 +769,13 @@ Return archived rows for the last `days` distinct data-days.
 `days` is a **count of trading days present in the archive**, not a calendar span. If fewer than `days` data-days exist, all available data is returned. When multiple files share the same date, the latest timestamp wins.
 
 **Parameters:**
+
 - `days` (int): Number of most-recent data-days to return. Default: 30.
 
 **Returns:** `pd.DataFrame` with columns `date, ticker, actual, expected, delta, r2, conf_delta, regime, model_file, next_day_actual`. Returns an empty DataFrame (correct columns, zero rows) when the archive is empty.
 
 **Example:**
+
 ```python
 df = archive.load_window(days=30)
 print(df.groupby("date")["ticker"].count())   # rows per day
@@ -770,11 +788,13 @@ print(df.groupby("date")["ticker"].count())   # rows per day
 Delete archive files older than `retention_days`. Files with non-date stems are ignored.
 
 **Parameters:**
+
 - `retention_days` (int): Files older than this many days are deleted. Default: `RECENT_SCORES_RETENTION_DAYS` (90).
 
 **Returns:** `int` — number of files removed.
 
 **Example:**
+
 ```python
 removed = archive.purge_stale()    # uses 90-day default
 removed = archive.purge_stale(retention_days=30)
@@ -789,6 +809,7 @@ Count of distinct trading days currently in the archive. Ignores files whose ste
 **Returns:** `int`
 
 **Example:**
+
 ```python
 if archive.available_days() < MIN_WINDOW_DAYS:
     print("Accumulating data — check back in a few days.")
@@ -798,15 +819,15 @@ if archive.available_days() < MIN_WINDOW_DAYS:
 
 ### Archive column reference
 
-| Column | Source | Notes |
-|--------|--------|-------|
-| `date` | `score_date` arg | ISO string `YYYY-MM-DD` |
-| `ticker` | `scores_df.index` | |
-| `actual` | `scores_df.actual_return` | Observed return |
-| `expected` | `scores_df.expected_rel` | Factor-implied return (no drift) |
-| `delta` | `scores_df.delta_rel` | `expected − actual` |
-| `r2` | `scores_df.r_squared` | Calibration fit quality |
-| `conf_delta` | `scores_df.confidence_delta` | Primary ranking signal |
-| `regime` | `regime_name` arg | |
-| `model_file` | `model_file` arg (basename) | |
-| `next_day_actual` | Backfilled by next `save_row()` | NaN until tomorrow's run |
+| Column            | Source                          | Notes                            |
+| ----------------- | ------------------------------- | -------------------------------- |
+| `date`            | `score_date` arg                | ISO string `YYYY-MM-DD`          |
+| `ticker`          | `scores_df.index`               |                                  |
+| `actual`          | `scores_df.actual_return`       | Observed return                  |
+| `expected`        | `scores_df.expected_rel`        | Factor-implied return (no drift) |
+| `delta`           | `scores_df.delta_rel`           | `expected − actual`              |
+| `r2`              | `scores_df.r_squared`           | Calibration fit quality          |
+| `conf_delta`      | `scores_df.confidence_delta`    | Primary ranking signal           |
+| `regime`          | `regime_name` arg               |                                  |
+| `model_file`      | `model_file` arg (basename)     |                                  |
+| `next_day_actual` | Backfilled by next `save_row()` | NaN until tomorrow's run         |

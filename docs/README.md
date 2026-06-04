@@ -35,12 +35,12 @@ python -m shockarb build --regime global_ukraine_shock
 
 ### Available Regimes
 
-| Regime Name | Description | Period | Universe |
-|-------------|-------------|--------|----------|
-| `ukraine_shock` | Russia-Ukraine invasion shock | Feb-Mar 2022 | US (80+ stocks) |
-| `global_ukraine_shock` | Russia-Ukraine invasion shock | Feb-Mar 2022 | Global (15 ADRs) |
-| `gulf_war_recovery` | Gulf War ceasefire recovery | Mar-Jun 1991 | US (33 stocks) |
-| `liberation_day_recovery` | Post-Liberation Day tariff recovery | Apr-Jul 2025 | US |
+| Regime Name               | Description                         | Period       | Universe         |
+| ------------------------- | ----------------------------------- | ------------ | ---------------- |
+| `ukraine_shock`           | Russia-Ukraine invasion shock       | Feb-Mar 2022 | US (80+ stocks)  |
+| `global_ukraine_shock`    | Russia-Ukraine invasion shock       | Feb-Mar 2022 | Global (15 ADRs) |
+| `gulf_war_recovery`       | Gulf War ceasefire recovery         | Mar-Jun 1991 | US (33 stocks)   |
+| `liberation_day_recovery` | Post-Liberation Day tariff recovery | Apr-Jul 2025 | US               |
 
 ```bash
 # List all available regimes
@@ -68,13 +68,13 @@ python -m shockarb build --universe us
 
 ### Dependencies
 
-| Package | Version | Purpose |
-|---------|---------|---------|
-| numpy | >=1.20 | SVD, OLS (lstsq) |
-| pandas | >=1.3 | Return DataFrames, DatetimeIndex |
-| yfinance | >=0.2 | Market data download |
-| loguru | >=0.6 | Structured logging |
-| pyarrow | >=8.0 | Parquet cache storage |
+| Package  | Version | Purpose                          |
+| -------- | ------- | -------------------------------- |
+| numpy    | >=1.20  | SVD, OLS (lstsq)                 |
+| pandas   | >=1.3   | Return DataFrames, DatetimeIndex |
+| yfinance | >=0.2   | Market data download             |
+| loguru   | >=0.6   | Structured logging               |
+| pyarrow  | >=8.0   | Parquet cache storage            |
 
 ---
 
@@ -144,6 +144,7 @@ F = R_E @ Vᵀ[:k]ᵀ  →  shape (T × k)
 ```
 
 **Typical factor interpretation during a geopolitical crisis:**
+
 - **Factor 1:** Broad market direction (risk-on / risk-off)
 - **Factor 2:** Energy vs. defensive assets (geopolitical shock axis)
 - **Factor 3:** Growth vs. value rotation
@@ -179,24 +180,24 @@ It down-weights stocks where the factor model has low explanatory power.
 
 `model.score()` returns a DataFrame sorted descending by `confidence_delta`:
 
-| Column | Meaning |
-|--------|---------|
-| `actual_return` | Observed return on the scoring day |
-| `expected_rel` | Factor-implied return (no drift — pure structural signal) |
-| `expected_abs` | Factor-implied return + calibration-window daily drift |
-| `delta_rel` | `expected_rel − actual` — positive means undersold |
-| `delta_abs` | `expected_abs − actual` — drift-adjusted version |
-| `r_squared` | Calibration R² — how well factors explain this stock |
-| `residual_vol` | Annualised unexplained volatility — use for position sizing |
-| `confidence_delta` | `delta_rel × r_squared` — **primary ranking signal** |
+| Column             | Meaning                                                     |
+| ------------------ | ----------------------------------------------------------- |
+| `actual_return`    | Observed return on the scoring day                          |
+| `expected_rel`     | Factor-implied return (no drift — pure structural signal)   |
+| `expected_abs`     | Factor-implied return + calibration-window daily drift      |
+| `delta_rel`        | `expected_rel − actual` — positive means undersold          |
+| `delta_abs`        | `expected_abs − actual` — drift-adjusted version            |
+| `r_squared`        | Calibration R² — how well factors explain this stock        |
+| `residual_vol`     | Annualised unexplained volatility — use for position sizing |
+| `confidence_delta` | `delta_rel × r_squared` — **primary ranking signal**        |
 
 ### Decision Rules
 
-| Signal | Criteria | Interpretation |
-|--------|----------|----------------|
-| **Strong buy** | `confidence_delta > 0.005` AND `r_squared > 0.50` | Model fits well, stock oversold vs. macro |
-| **Weak signal** | Large delta BUT `r_squared < 0.30` | Model doesn't explain this stock — treat with skepticism |
-| **Avoid / short** | Negative `confidence_delta` | Stock outperformed what macro predicts — not a bargain |
+| Signal            | Criteria                                          | Interpretation                                           |
+| ----------------- | ------------------------------------------------- | -------------------------------------------------------- |
+| **Strong buy**    | `confidence_delta > 0.005` AND `r_squared > 0.50` | Model fits well, stock oversold vs. macro                |
+| **Weak signal**   | Large delta BUT `r_squared < 0.30`                | Model doesn't explain this stock — treat with skepticism |
+| **Avoid / short** | Negative `confidence_delta`                       | Stock outperformed what macro predicts — not a bargain   |
 
 ---
 
@@ -218,6 +219,7 @@ custom = UniverseConfig(
 ```
 
 **n_components guidance:**
+
 - `2` — market + one sector axis (fast, less nuanced)
 - `3` — market + sector + shock (recommended default)
 - `4+` — risks overfitting on short (~35-day) windows
@@ -244,10 +246,10 @@ python -m shockarb build
 
 ### Pre-built Universes
 
-| Constant | ETFs | Stocks | Focus |
-|----------|------|--------|-------|
-| `US_UNIVERSE` | 20 | 60+ | US large-cap crisis mispricing |
-| `GLOBAL_UNIVERSE` | 20 | ~25 | Cross-border and European exposure |
+| Constant          | ETFs | Stocks | Focus                              |
+| ----------------- | ---- | ------ | ---------------------------------- |
+| `US_UNIVERSE`     | 20   | 60+    | US large-cap crisis mispricing     |
+| `GLOBAL_UNIVERSE` | 20   | ~25    | Cross-border and European exposure |
 
 ---
 
@@ -257,17 +259,17 @@ python -m shockarb build
 python -m shockarb [--data-dir DIR] COMMAND [OPTIONS]
 ```
 
-| Command | Key Options | Description |
-|---------|-------------|-------------|
-| `build` | `--regime <name>` | Fetch data, fit model, save JSON |
-| `score` | `--regime <name>`, `--date YYYY-MM-DD`, `--top N`, `--out file.csv` | Score returns |
-| `export` | `--regime <name>` | Write ETF basis + stock loadings to CSV |
-| `show` | `--regime <name>`, `--verbose / -v` | Display model diagnostics |
-| `add-asset` | `<tickers>`, `--regime <name>`, `--save` | Add new tickers to an existing model without refitting |
-| `remove-asset` | `<tickers>`, `--regime <name>`, `--save` | Remove tickers from an existing model without refitting |
-| `set-regime` | `<name>` | Set sticky default regime (persists across sessions) |
-| `show-regime` | — | Display current sticky regime |
-| `list-regimes` | — | List all available regimes |
+| Command        | Key Options                                                         | Description                                             |
+| -------------- | ------------------------------------------------------------------- | ------------------------------------------------------- |
+| `build`        | `--regime <name>`                                                   | Fetch data, fit model, save JSON                        |
+| `score`        | `--regime <name>`, `--date YYYY-MM-DD`, `--top N`, `--out file.csv` | Score returns                                           |
+| `export`       | `--regime <name>`                                                   | Write ETF basis + stock loadings to CSV                 |
+| `show`         | `--regime <name>`, `--verbose / -v`                                 | Display model diagnostics                               |
+| `add-asset`    | `<tickers>`, `--regime <name>`, `--save`                            | Add new tickers to an existing model without refitting  |
+| `remove-asset` | `<tickers>`, `--regime <name>`, `--save`                            | Remove tickers from an existing model without refitting |
+| `set-regime`   | `<name>`                                                            | Set sticky default regime (persists across sessions)    |
+| `show-regime`  | —                                                                   | Display current sticky regime                           |
+| `list-regimes` | —                                                                   | List all available regimes                              |
 
 **Legacy (deprecated):** `--universe us|global` still works but emits a deprecation warning. Use `--regime` instead.
 
@@ -277,16 +279,16 @@ python -m shockarb [--data-dir DIR] COMMAND [OPTIONS]
 
 All output goes to `data_dir` (default `./data`):
 
-| File | Contents |
-|------|----------|
-| `{name}_{timestamp}.json` | Serialised model (scoring-ready) |
-| `cache/{name}_etf_ohlcv.parquet` | Cached ETF OHLCV data |
-| `cache/{name}_stock_ohlcv.parquet` | Cached stock OHLCV data |
-| `cache/cache_metadata.json` | Cache inventory (tickers, date ranges) |
-| `backups/` | Pre-mutation parquet backups (7-day retention) |
-| `{name}_etf_basis.csv` | Factor directions per ETF |
-| `{name}_stock_loadings.csv` | Stock loadings + R² + residual vol |
-| `shockarb.log` | Rotating execution log |
+| File                               | Contents                                       |
+| ---------------------------------- | ---------------------------------------------- |
+| `{name}_{timestamp}.json`          | Serialised model (scoring-ready)               |
+| `cache/{name}_etf_ohlcv.parquet`   | Cached ETF OHLCV data                          |
+| `cache/{name}_stock_ohlcv.parquet` | Cached stock OHLCV data                        |
+| `cache/cache_metadata.json`        | Cache inventory (tickers, date ranges)         |
+| `backups/`                         | Pre-mutation parquet backups (7-day retention) |
+| `{name}_etf_basis.csv`             | Factor directions per ETF                      |
+| `{name}_stock_loadings.csv`        | Stock loadings + R² + residual vol             |
+| `shockarb.log`                     | Rotating execution log                         |
 
 ---
 
@@ -340,11 +342,11 @@ Priority order from the original knowledge transfer document:
 
 ## Version History
 
-| Version | Changes |
-|---------|---------|
-| 3.0.0 | Pipeline converted from class to module of functions. to_dict() stripped of raw return matrices. report.py integrated. _print_scores column name bug fixed. Tiered test structure (unit / integration). |
-| 2.1.0 | CacheManager implementation. Tiered NaN strategy. FactorDiagnostics dataclass. |
-| 2.0.0 | Original knowledge transfer implementation. |
+| Version | Changes                                                                                                                                                                                                 |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 3.0.0   | Pipeline converted from class to module of functions. to_dict() stripped of raw return matrices. report.py integrated. _print_scores column name bug fixed. Tiered test structure (unit / integration). |
+| 2.1.0   | CacheManager implementation. Tiered NaN strategy. FactorDiagnostics dataclass.                                                                                                                          |
+| 2.0.0   | Original knowledge transfer implementation.                                                                                                                                                             |
 
 ---
 
