@@ -261,9 +261,11 @@ def cmd_score(args) -> None:
     print_scores(scores, title, top_n=args.top,
                  min_confidence=args.min_confidence,
                  min_r_squared=args.min_r_squared)
-    if args.out:
-        scores.to_csv(args.out)
-        print(f"\n📁 Saved to: {args.out}")
+    _out = None if getattr(args, "no_out", False) else args.out
+    if _out:
+        os.makedirs(os.path.dirname(os.path.abspath(_out)), exist_ok=True)
+        scores.to_csv(_out)
+        print(f"\n📁 Saved to: {_out}")
 
     if getattr(args, "save_recent", False) and not args.date:
         from datetime import date as _today
@@ -639,7 +641,10 @@ Examples:
     p.add_argument("--use-prior-close", "-p", action="store_true", help="Force daily close-to-close returns")
     p.add_argument("--date",   "-d", help="Historical date YYYY-MM-DD")
     p.add_argument("--model",  "-m", help="Specific model .json to load")
-    p.add_argument("--out", "-o", help="Save score results to CSV")
+    p.add_argument("--out", "-o", default="./data/live_alpha_us.csv",
+                   help="Save score results to CSV (default: data/live_alpha_us.csv)")
+    p.add_argument("--no-out", "-sout", action="store_true",
+                   help="Suppress CSV output (do not write a file)")
     p.add_argument("--top",           "-n", type=int,   default=20,    help="Show top N results")
     p.add_argument("--min-confidence",      type=float, default=0.001, help="Min confidence_delta to show (default 0.1%%)")
     p.add_argument("--min-r-squared",       type=float, default=0.30,  help="Min R² to show (default 0.30)")

@@ -24,6 +24,7 @@ from fundamental_scanner import (
     _next_dividend,
     _next_earnings,
     _safe_get,
+    _validated_pe,
     fetch_fundamentals,
     print_fundamentals,
 )
@@ -87,6 +88,62 @@ class TestNextDividend:
         ex_str, amt_str = _next_dividend({})
         assert ex_str == "—"
         assert amt_str == "—"
+
+    def test_stale_ex_date_suppressed(self):
+        """Ex-div dates older than 2 years are shown as '—'."""
+        # 2008-01-06 is ~18 years old — should be suppressed
+        ts = int(datetime(2008, 1, 6).timestamp())
+        ex_str, _ = _next_dividend({"exDividendDate": ts, "dividendRate": 1.0})
+        assert ex_str == "—"
+
+    def test_recent_ex_date_shown(self):
+        """Ex-div dates within 2 years are displayed normally."""
+        from datetime import timedelta
+        recent = datetime.now() - timedelta(days=30)
+        ts = int(recent.timestamp())
+        ex_str, _ = _next_dividend({"exDividendDate": ts, "dividendRate": 1.0})
+        assert ex_str != "—"
+
+
+# =============================================================================
+# _validated_pe
+# =============================================================================
+
+class TestValidatedPE:
+    """_validated_pe returns a clean value or flags inconsistent yfinance data."""
+
+    def test_consistent_pe_returned_clean(self):
+        """When reported PE matches price/eps, no flag is added."""
+        info = {"forwardPE": 25.0, "currentPrice": 500.0, "forwardEps": 20.0}
+        result = _validated_pe(info)
+        assert result == "25.0"
+        assert "?" not in result
+
+    def test_inconsistent_pe_flagged(self):
+        """When reported PE diverges >25% from price/eps, a '?' is appended."""
+        # price=322, eps=27.34 → computed PE ≈ 11.77
+        # reported PE = 11.8 — actually consistent; use a clearly wrong one
+        info = {"forwardPE": 11.8, "currentPrice": 322.0, "forwardEps": 2.0}
+        # computed = 322/2 = 161 vs reported 11.8 → huge divergence
+        result = _validated_pe(info)
+        assert result.endswith("?"), f"Expected '?' suffix, got {result!r}"
+
+    def test_missing_pe_returns_dash(self):
+        result = _validated_pe({})
+        assert result == "—"
+
+    def test_missing_price_no_flag(self):
+        """Without price/eps to cross-check, reported PE is accepted as-is."""
+        info = {"forwardPE": 20.0}
+        result = _validated_pe(info)
+        assert result == "20.0"
+        assert "?" not in result
+
+    def test_zero_eps_no_crash(self):
+        """Zero forwardEps skips the cross-check gracefully."""
+        info = {"forwardPE": 15.0, "currentPrice": 100.0, "forwardEps": 0.0}
+        result = _validated_pe(info)
+        assert result == "15.0"
 
 
 # =============================================================================
@@ -241,40 +298,30 @@ class TestFetchFundamentals:
 class TestPrintFundamentals:
     """print_fundamentals produces a readable fixed-width table."""
 
-    def _capture(self, rows):
-        buf = io.StringIO()
-        with patch("builtins.print", lambda *a, **kw: buf.write(" ".join(str(x) for x in a) + "\n")):
-            print_fundamentals(rows)
-        return buf.getvalue()
+    _ROW = {
+        "Ticker": "BLK", "Price": "800.00", "Fwd P/E": "20.0",
+        "TTM EPS": "40.00", "Fwd EPS": "42.00",
+        "Next Earnings": "2026-09-01", "Est. EPS": "$10.00",
+        "Ex-Div": "2026-07-01", "Div Amt": "$5.00", "Analyst Tgt": "900.00",
+    }
 
-    def test_empty_rows_prints_nothing(self):
-        out = self._capture([])
-        assert out == ""
+    def test_empty_rows_prints_nothing(self, capsys):
+        print_fundamentals([])
+        assert capsys.readouterr().out == ""
 
-    def test_header_present(self):
-        row = {
-            "Ticker": "BLK", "Price": "800.00", "Fwd P/E": "20.0",
-            "TTM EPS": "40.00", "Fwd EPS": "42.00",
-            "Next Earnings": "2026-09-01", "Est. EPS": "$10.00",
-            "Ex-Div": "2026-07-01", "Div Amt": "$5.00", "Analyst Tgt": "900.00",
-        }
-        out = self._capture([row])
+    def test_header_present(self, capsys):
+        print_fundamentals([self._ROW])
+        out = capsys.readouterr().out
         assert "Ticker" in out
         assert "Fwd P/E" in out
         assert "Analyst Tgt" in out
 
-    def test_ticker_appears_in_output(self):
-        row = {
-            "Ticker": "TXN", "Price": "150.00", "Fwd P/E": "18.0",
-            "TTM EPS": "8.00", "Fwd EPS": "9.00",
-            "Next Earnings": "2026-10-15", "Est. EPS": "$9.00",
-            "Ex-Div": "—", "Div Amt": "—", "Analyst Tgt": "175.00",
-        }
-        out = self._capture([row])
-        assert "TXN" in out
+    def test_ticker_appears_in_output(self, capsys):
+        row = {**self._ROW, "Ticker": "TXN"}
+        print_fundamentals([row])
+        assert "TXN" in capsys.readouterr().out
 
-    def test_missing_field_shows_dash(self):
+    def test_missing_field_shows_dash(self, capsys):
         """Row missing a key still renders without error, showing '—'."""
-        row = {"Ticker": "X"}   # all other keys absent
-        out = self._capture([row])
-        assert "—" in out
+        print_fundamentals([{"Ticker": "X"}])
+        assert "—" in capsys.readouterr().out

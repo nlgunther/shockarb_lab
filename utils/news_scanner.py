@@ -1,8 +1,10 @@
 """
 ShockArb News / Catalyst Scanner.
 
-Fetches recent Yahoo Finance headlines for top arbitrage targets.  Targets can
-be supplied in three ways (in priority order):
+Fetches recent Yahoo Finance headlines for top arbitrage targets and prints
+a fundamentals summary table. Output is saved to data/ by default.
+
+Targets can be supplied in three ways (in priority order):
 
   1. --tickers AAPL MSFT ROK      explicit list (ignores CSV)
   2. --csv path/to/alpha.csv      top-N by confidence_delta from a score CSV
@@ -10,7 +12,7 @@ be supplied in three ways (in priority order):
 
 Usage examples
 --------------
-    # Top 10 from the default US alpha sheet
+    # Top 10 from the default US alpha sheet (saves to data/)
     python utils/news_scanner.py
 
     # Top 5 from a specific CSV
@@ -22,8 +24,11 @@ Usage examples
     # Merge multiple universes
     python utils/news_scanner.py --csv data/live_alpha_us.csv data/live_alpha_global.csv --top 10
 
-    # Headlines only, skip the fundamentals table
-    python utils/news_scanner.py --no-fundamentals
+    # Custom output directory
+    python utils/news_scanner.py --out reports/
+
+    # Suppress file output
+    python utils/news_scanner.py --no-out
 """
 
 from __future__ import annotations
@@ -36,7 +41,10 @@ import pandas as pd
 import yfinance as yf
 from loguru import logger
 
-from fundamental_scanner import fetch_fundamentals, load_cached_fundamentals, print_fundamentals
+from fundamental_scanner import fetch_fundamentals, print_fundamentals
+
+
+_DEFAULT_OUT_DIR = "./data"
 
 
 # =============================================================================
@@ -60,7 +68,7 @@ def _extract_article(article: dict) -> tuple[str, str, int | None]:
 
     # Format 2: nested content dict (introduced ~2023)
     if "content" in article and isinstance(article["content"], dict):
-        content = article["content"]
+        content   = article["content"]
         title     = content.get("title", "Unknown Title")
         publisher = content.get("provider", {}).get("displayName", "Unknown Publisher")
         pub_time  = content.get("pubDate")
@@ -86,23 +94,26 @@ def scan_news(
     top_n: int = 10,
     explicit_tickers: list[str] | None = None,
     sort_col: str = "confidence_delta",
-    fundamentals: bool = True,
+    out_dir: str | None = _DEFAULT_OUT_DIR,
 ) -> None:
     """
-    Print recent headlines for the top arbitrage targets.
+    Print recent headlines and a fundamentals table for the top arbitrage targets.
 
     Parameters
     ----------
     csv_paths : list of str, optional
-        Paths to ShockArb score CSV files.  Used when explicit_tickers is None.
+        Paths to ShockArb score CSV files. Used when explicit_tickers is None.
     top_n : int
-        Number of targets to pull from the CSV (ignored when explicit_tickers
-        is provided).
+        Number of targets to pull from the CSV.
     explicit_tickers : list of str, optional
         If supplied, skip CSV loading entirely and scan exactly these tickers.
     sort_col : str
         Column to sort by when selecting top-N from CSV.
-        Default "confidence_delta"; falls back to "delta" if absent.
+    out_dir : str or None
+        Directory to write output files. Two files are written:
+            {out_dir}/news.txt        — full headlines output
+            {out_dir}/fundamentals.csv — fundamentals table as CSV
+        Pass None to suppress file output.
     """
     print(f"\n{'='*95}")
     print("📰  SHOCKARB CATALYST SCANNER")
@@ -141,7 +152,6 @@ def scan_news(
 
         master = pd.concat(dfs, ignore_index=True)
 
-        # Resolve sort column with fallback
         if sort_col not in master.columns:
             fallback = "delta" if "delta" in master.columns else master.columns[-1]
             logger.warning(f"Column '{sort_col}' not found; sorting by '{fallback}'.")
@@ -160,16 +170,22 @@ def scan_news(
             })
 
     # ------------------------------------------------------------------
-    # Fetch and print headlines for each target
+    # Fetch and print headlines; capture for file output
     # ------------------------------------------------------------------
+    headlines_lines: list[str] = []
+
+    def _emit(line: str = "") -> None:
+        print(line)
+        headlines_lines.append(line)
+
     for item in targets:
         ticker = item["ticker"]
-        print(f"[{ticker:<6}]  signal: {item['signal']}")
+        _emit(f"[{ticker:<6}]  signal: {item['signal']}")
 
         try:
             news = yf.Ticker(ticker).news
             if not news:
-                print("   > No recent news on Yahoo Finance.")
+                _emit("   > No recent news on Yahoo Finance.")
             else:
                 for article in news[:3]:
                     title, publisher, ts = _extract_article(article)
@@ -178,24 +194,39 @@ def scan_news(
                         if isinstance(ts, (int, float))
                         else "Unknown date"
                     )
-                    print(f"   > {date_str}  |  {publisher}")
-                    print(f"     {title}")
+                    _emit(f"   > {date_str}  |  {publisher}")
+                    _emit(f"     {title}")
         except Exception as exc:
-            print(f"   > Error fetching news: {exc}")
+            _emit(f"   > Error fetching news: {exc}")
 
-        print("-" * 95)
+        _emit("-" * 95)
 
     # ------------------------------------------------------------------
-    # Fundamental summary table
+    # Fundamentals table
     # ------------------------------------------------------------------
     all_tickers = [item["ticker"] for item in targets]
+    fund_rows: list[dict] = []
     if all_tickers:
-        if fundamentals:
-            print_fundamentals(fetch_fundamentals(all_tickers))
-        else:
-            rows = load_cached_fundamentals(all_tickers)
-            if any(r.get("_cached_at") for r in rows):
-                print_fundamentals(rows)
+        fund_rows = fetch_fundamentals(all_tickers)
+        print_fundamentals(fund_rows)
+
+    # ------------------------------------------------------------------
+    # File output
+    # ------------------------------------------------------------------
+    if out_dir and (headlines_lines or fund_rows):
+        os.makedirs(out_dir, exist_ok=True)
+
+        news_path = os.path.join(out_dir, "news.txt")
+        with open(news_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(headlines_lines) + "\n")
+        logger.success(f"Headlines saved: {news_path}")
+
+        if fund_rows:
+            fund_path = os.path.join(out_dir, "fundamentals.csv")
+            # Drop internal _cached_at key before saving
+            clean = [{k: v for k, v in r.items() if k != "_cached_at"} for r in fund_rows]
+            pd.DataFrame(clean).to_csv(fund_path, index=False)
+            logger.success(f"Fundamentals saved: {fund_path}")
 
 
 # =============================================================================
@@ -225,8 +256,12 @@ if __name__ == "__main__":
         help="CSV column to sort by (default: confidence_delta)",
     )
     parser.add_argument(
-        "--no-fundamentals", action="store_true",
-        help="Skip the fundamentals table (faster; headlines only)",
+        "--out", "-o", default=_DEFAULT_OUT_DIR, metavar="DIR",
+        help=f"Output directory for news.txt and fundamentals.csv (default: {_DEFAULT_OUT_DIR})",
+    )
+    parser.add_argument(
+        "--no-out", "-sout", action="store_true",
+        help="Suppress file output entirely",
     )
     args = parser.parse_args()
 
@@ -234,5 +269,6 @@ if __name__ == "__main__":
     if not args.tickers and not args.csv:
         args.csv = ["./data/live_alpha_us.csv"]
 
-    scan_news(args.csv, args.top, args.tickers, args.sort,
-              fundamentals=not args.no_fundamentals)
+    out_dir = None if args.no_out else args.out
+
+    scan_news(args.csv, args.top, args.tickers, args.sort, out_dir)

@@ -1,14 +1,16 @@
 # ShockArb Utils Reference
 
-Five command-line scripts that form the post-scoring workflow. Each runs standalone from the project root after `pip install -e .`
+Command-line scripts that form the post-scoring workflow. Each runs standalone from the project root after `pip install -e .`
 
 ```
 utils/
-├── daily_scanner.py     Score today's tape → export CSVs         (start here each day)
-├── news_scanner.py      Fetch headlines for top targets
-├── portfolio_sizer.py   Size a conviction-weighted trade ticket
-├── csv_to_md.py         Convert a score CSV to a Markdown report
-└── score_history.py     Score any historical date (backtesting)
+├── daily_scanner.py        Score today's tape → export CSVs         (start here each day)
+├── news_scanner.py         Fetch headlines + fundamentals for top targets
+├── fundamental_scanner.py  Fetch yfinance fundamentals table (imported by news_scanner)
+├── portfolio_sizer.py      Size a conviction-weighted trade ticket
+├── eval_picks.py           Evaluate pick performance vs entry prices
+├── csv_to_md.py            Convert a score CSV to a Markdown report
+└── score_history.py        Score any historical date (backtesting)
 ```
 
 All scripts accept `--help` for a full argument listing.
@@ -18,10 +20,11 @@ All scripts accept `--help` for a full argument listing.
 ## Typical Daily Workflow
 
 ```
-4:00 pm  python utils/daily_scanner.py              # score the close → data/live_alpha_*.csv
-4:05 pm  python utils/news_scanner.py               # scan headlines for top signals
-4:15 pm  python utils/portfolio_sizer.py            # size a trade ticket
-         python utils/csv_to_md.py data/live_alpha_us.csv  # optional: shareable report
+4:00 pm  python -m shockarb score                   # score → data/live_alpha_us.csv (default)
+     OR  python utils/daily_scanner.py              # score both US + Global universes
+4:05 pm  python utils/news_scanner.py               # headlines + fundamentals → data/news.txt, data/fundamentals.csv
+4:15 pm  python utils/portfolio_sizer.py            # trade ticket → data/portfolio_sizer.csv (default)
+         python utils/csv_to_md.py data/live_alpha_us.csv  # optional: shareable markdown report
 ```
 
 ---
@@ -102,6 +105,13 @@ python utils/news_scanner.py \
 python utils/news_scanner.py --csv data/live_alpha_us.csv --sort delta_rel
 ```
 
+**Output files** (written to `--out` directory, default `data/`)
+
+| File | Contents |
+|------|----------|
+| `news.txt` | Full headlines output as printed to the terminal |
+| `fundamentals.csv` | Fundamentals table: Price, Fwd P/E, TTM/Fwd EPS, Next Earnings, Ex-Div, Analyst Target |
+
 **Arguments**
 
 | Argument | Default | Description |
@@ -110,11 +120,15 @@ python utils/news_scanner.py --csv data/live_alpha_us.csv --sort delta_rel
 | `--top` | `10` | Number of targets to pull from CSV. Ignored when `--tickers` is used. |
 | `--tickers` | — | Explicit ticker list. Overrides `--csv` entirely. |
 | `--sort` | `confidence_delta` | CSV column to rank by. Falls back to `delta` if the specified column is absent. |
+| `--out` / `-o` | `./data` | Output directory for `news.txt` and `fundamentals.csv`. |
+| `--no-out` / `-sout` | — | Suppress all file output. |
 
 **Notes**
 
 - Handles both the legacy flat yfinance news format and the newer nested-content format introduced around 2023. If a third, unrecognised format appears, the raw dict keys are printed for debugging.
 - Network errors per ticker are caught and printed without aborting the scan.
+- Fwd P/E values are cross-checked against `price / forwardEps`; values that diverge >25% are flagged with `?` to indicate a likely yfinance split-adjustment artifact.
+- Ex-dividend dates older than 2 years are suppressed as `—` to avoid stale data for non-dividend payers.
 
 ---
 
@@ -144,6 +158,9 @@ python utils/portfolio_sizer.py \
 | `--csv` | `./data/live_alpha_us.csv` | Path(s) to score CSVs. Merged before ranking. |
 | `--capital` | `100000` | Total dollar capital to allocate. |
 | `--top` | `5` | Number of positions. |
+| `--exclude` / `-e` | — | Tickers to exclude before ranking (e.g. `--exclude SNPS BSX`). Case-insensitive. |
+| `--out` / `-o` | `./data/portfolio_sizer.csv` | Save ticket to CSV at this path. |
+| `--no-out` / `-sout` | — | Suppress CSV output. |
 
 **Output columns**
 

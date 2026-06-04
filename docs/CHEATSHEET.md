@@ -13,7 +13,7 @@ python -m shockarb set-regime ukraine_shock
 # 1. Build (run once per event, or daily for live use)
 python -m shockarb build
 
-# 2. Score today's tape
+# 2. Score today's tape (saves to data/live_alpha_us.csv by default)
 python -m shockarb score
 
 # Score and archive to rolling history (run daily to accumulate data)
@@ -22,8 +22,11 @@ python -m shockarb score --save-recent
 # 3. Score a historical date
 python -m shockarb score --date 2022-03-01
 
-# Save results to CSV
+# Save to a custom path
 python -m shockarb score --out results.csv
+
+# Suppress CSV output
+python -m shockarb score --no-out
 
 # Show model quality (add -v for full factor tables)
 python -m shockarb show

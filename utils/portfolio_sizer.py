@@ -5,6 +5,8 @@ Reads one or more ShockArb score CSVs, selects the top-N positive signals
 by conviction (confidence_delta), and prints a dollar-denominated trade
 ticket with allocation weights and take-profit limit prices.
 
+Output is saved to data/portfolio_sizer.csv by default. Suppress with --no-out.
+
 Usage examples
 --------------
     # Size $100k across the top 5 US signals
@@ -15,9 +17,16 @@ Usage examples
         --csv data/live_alpha_us.csv data/live_alpha_global.csv \
         --capital 50000 --top 8
 
-    # Exclude specific tickers and save to file
+    # Exclude specific tickers (output still saved to data/portfolio_sizer.csv by default)
     python utils/portfolio_sizer.py --csv data/live_alpha_us.csv --capital 100000 \
-        --exclude SNPS BSX --out data/ticket.csv
+        --exclude SNPS BSX
+
+    # Suppress file output entirely
+    python utils/portfolio_sizer.py --csv data/live_alpha_us.csv --capital 100000 --no-out
+
+    # Save to a custom path
+    python utils/portfolio_sizer.py --csv data/live_alpha_us.csv --capital 100000 \
+        --out data/ticket.csv
 """
 
 from __future__ import annotations
@@ -30,12 +39,15 @@ import yfinance as yf
 from loguru import logger
 
 
+_DEFAULT_OUT = "./data/portfolio_sizer.csv"
+
+
 def generate_orders(
     csv_paths: list[str],
     capital: float,
     top_n: int = 5,
     exclude: list[str] | None = None,
-    out: str | None = None,
+    out: str | None = _DEFAULT_OUT,
 ) -> None:
     """
     Print a trade ticket for the top-N conviction signals.
@@ -51,7 +63,8 @@ def generate_orders(
     exclude : list of str, optional
         Tickers to exclude before ranking (e.g. catalyst-driven traps).
     out : str, optional
-        If provided, save the ticket as a CSV to this path.
+        Path to save the ticket CSV.  Defaults to data/portfolio_sizer.csv.
+        Pass None to suppress file output.
     """
     exclude = [t.upper() for t in (exclude or [])]
     dfs = []
@@ -134,14 +147,14 @@ def generate_orders(
             f"  ${price:>9.2f}  ${target:>9.2f}  {shares}"
         )
         rows.append({
-            "Ticker":       ticker,
-            "Weight":       round(row["Weight"], 4),
-            "Dollar_Alloc": round(row["Dollar_Alloc"], 2),
-            "Current":      round(price, 2),
-            "Target":       round(target, 2),
-            "Shares":       shares,
+            "Ticker":           ticker,
+            "Weight":           round(row["Weight"], 4),
+            "Dollar_Alloc":     round(row["Dollar_Alloc"], 2),
+            "Current":          round(price, 2),
+            "Target":           round(target, 2),
+            "Shares":           shares,
             "confidence_delta": round(row["confidence_delta"], 6),
-            "r_squared":    round(row.get("r_squared", float("nan")), 4),
+            "r_squared":        round(row.get("r_squared", float("nan")), 4),
         })
 
     print("=" * 100)
@@ -181,8 +194,13 @@ if __name__ == "__main__":
         help="Tickers to exclude before ranking (e.g. --exclude SNPS BSX)",
     )
     parser.add_argument(
-        "--out", "-o", default=None,
-        help="Save ticket to CSV at this path",
+        "--out", "-o", default=_DEFAULT_OUT,
+        help=f"Save ticket to CSV (default: {_DEFAULT_OUT})",
+    )
+    parser.add_argument(
+        "--no-out", "-sout", action="store_true",
+        help="Suppress CSV output (do not write a file)",
     )
     args = parser.parse_args()
-    generate_orders(args.csv, args.capital, args.top, args.exclude, args.out)
+    out = None if args.no_out else args.out
+    generate_orders(args.csv, args.capital, args.top, args.exclude, out)

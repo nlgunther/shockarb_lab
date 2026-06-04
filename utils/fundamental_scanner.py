@@ -14,12 +14,12 @@ Public API
 Data pulled per ticker
 ----------------------
     Price           Last closing price
-    Fwd P/E         Forward price/earnings ratio
+    Fwd P/E         Forward price/earnings ratio (flagged with '?' if inconsistent)
     TTM EPS         Trailing twelve-month EPS (GAAP)
     Fwd EPS         Forward EPS consensus estimate
     Next Earnings   Expected earnings announcement date
     Est. EPS        Consensus EPS estimate for next quarter
-    Ex-Div          Next ex-dividend date
+    Ex-Div          Next ex-dividend date (suppressed if > 2 years old)
     Div Amt         Next dividend amount
     Target          Mean analyst 12-month price target
 """
@@ -28,15 +28,22 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
 import yfinance as yf
 from loguru import logger
 
+# Suppress noisy per-ticker debug lines — callers see INFO and above only.
+logger.disable("fundamental_scanner")
+
 # Default cache location — mirrors the project's data directory convention
 _DEFAULT_CACHE = Path(os.environ.get("SHOCK_ARB_DATA_DIR", "./data")) / "fundamentals_cache.json"
+
+# Ex-dividend dates older than this many days are almost certainly stale yfinance
+# artifacts (e.g. pre-suspension data for companies that no longer pay dividends).
+_MAX_EX_DIV_AGE_DAYS = 730
 
 # Fields pulled from yf.Ticker.info — mapped to display names
 _INFO_FIELDS: dict[str, str] = {
@@ -70,11 +77,9 @@ def _next_earnings(ticker_obj: yf.Ticker) -> tuple[str, str]:
         df = ticker_obj.earnings_dates
         if df is None or df.empty:
             return "—", "—"
-        # Future rows have no Reported EPS
         future = df[df["Reported EPS"].isna()]
         if future.empty:
             return "—", "—"
-        # earnings_dates index is timezone-aware — normalise for display
         next_date = future.index.max()
         date_str  = pd.Timestamp(next_date).strftime("%Y-%m-%d")
         est       = future.loc[next_date, "EPS Estimate"]
@@ -85,13 +90,51 @@ def _next_earnings(ticker_obj: yf.Ticker) -> tuple[str, str]:
 
 
 def _next_dividend(info: dict) -> tuple[str, str]:
-    """Return (ex_date_str, amount_str) from ticker info dict."""
+    """
+    Return (ex_date_str, amount_str) from ticker info dict.
+
+    Ex-dividend dates older than _MAX_EX_DIV_AGE_DAYS are suppressed as '—'
+    to avoid displaying stale yfinance artifacts for non-dividend payers.
+    """
     ex_ts = info.get("exDividendDate")
     amt   = info.get("dividendRate")
 
-    ex_str  = datetime.fromtimestamp(ex_ts).strftime("%Y-%m-%d") if ex_ts else "—"
+    if ex_ts:
+        ex_date  = datetime.fromtimestamp(ex_ts)
+        age_days = (datetime.now() - ex_date).days
+        ex_str   = "—" if age_days > _MAX_EX_DIV_AGE_DAYS else ex_date.strftime("%Y-%m-%d")
+    else:
+        ex_str = "—"
+
     amt_str = f"${amt:.2f}" if amt else "—"
     return ex_str, amt_str
+
+
+def _validated_pe(info: dict) -> str:
+    """
+    Return a display string for Forward P/E, flagged with '?' if the reported
+    value is inconsistent with price / forwardEps (>25% relative difference).
+
+    yfinance sometimes returns a forwardPE computed against an unadjusted EPS
+    while currentPrice is split-adjusted, producing absurdly low multiples.
+    The cross-check catches this without needing an external data source.
+    """
+    reported_pe = info.get("forwardPE")
+    price       = info.get("currentPrice")
+    fwd_eps     = info.get("forwardEps")
+
+    if reported_pe is None or reported_pe != reported_pe:
+        return "—"
+
+    if price and fwd_eps and fwd_eps != 0:
+        computed_pe = price / fwd_eps
+        if abs(computed_pe - reported_pe) / abs(computed_pe) > 0.25:
+            return f"{reported_pe:.1f}?"
+
+    try:
+        return format(reported_pe, ".1f")
+    except (ValueError, TypeError):
+        return str(reported_pe)
 
 
 def _load_cache(cache_path: Path) -> dict:
@@ -134,6 +177,11 @@ def fetch_fundamentals(
     -------
     list of dict
         One dict per ticker with keys matching the table columns.
+
+    Example
+    -------
+        rows = fetch_fundamentals(["BLK", "TXN"])
+        print_fundamentals(rows)
     """
     cache_path = Path(cache_path)
     cache = _load_cache(cache_path)
@@ -149,7 +197,7 @@ def fetch_fundamentals(
             row = {
                 "Ticker":        symbol,
                 "Price":         _safe_get(info, "currentPrice",    ".2f"),
-                "Fwd P/E":       _safe_get(info, "forwardPE",       ".1f"),
+                "Fwd P/E":       _validated_pe(info),
                 "TTM EPS":       _safe_get(info, "trailingEps",     ".2f"),
                 "Fwd EPS":       _safe_get(info, "forwardEps",      ".2f"),
                 "Next Earnings": earn_date,
@@ -194,8 +242,7 @@ def load_cached_fundamentals(
     rows = []
     for symbol in tickers:
         if symbol in cache:
-            row = dict(cache[symbol])   # includes _cached_at
-            rows.append(row)
+            rows.append(dict(cache[symbol]))
         else:
             rows.append({"Ticker": symbol, **{k: "—" for k in (
                 "Price", "Fwd P/E", "TTM EPS", "Fwd EPS",
@@ -220,7 +267,6 @@ def print_fundamentals(rows: list[dict]) -> None:
     if not rows:
         return
 
-    # Column widths
     cols = [
         ("Ticker",        6),
         ("Price",         8),
@@ -237,12 +283,8 @@ def print_fundamentals(rows: list[dict]) -> None:
     sep   = "  "
     width = sum(w for _, w in cols) + len(sep) * (len(cols) - 1)
 
-    # Show cache age if all rows came from cache (have _cached_at)
     cached_at_vals = [r.get("_cached_at") for r in rows if r.get("_cached_at")]
-    cache_note = ""
-    if cached_at_vals:
-        oldest = min(cached_at_vals)
-        cache_note = f"  [cached — oldest entry: {oldest}]"
+    cache_note = f"  [cached — oldest: {min(cached_at_vals)}]" if cached_at_vals else ""
 
     print(f"\n{'='*width}")
     print(f"  FUNDAMENTAL OVERVIEW{cache_note}")
