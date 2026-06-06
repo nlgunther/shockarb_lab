@@ -338,19 +338,19 @@ removed = archive.purge_stale(retention_days=90)
 
 ### Archive column quick reference
 
-| Column | Description |
-|--------|-------------|
-| `actual` | Observed return on the scoring date |
-| `expected` | Factor-implied return (no drift) |
-| `delta` | `expected − actual` — raw mispricing |
-| `r2` | Calibration R² — signal quality weight |
-| `conf_delta` | `delta × r2` — primary ranking signal |
+| Column            | Description                                                  |
+| ----------------- | ------------------------------------------------------------ |
+| `actual`          | Observed return on the scoring date                          |
+| `expected`        | Factor-implied return (no drift)                             |
+| `delta`           | `expected − actual` — raw mispricing                         |
+| `r2`              | Calibration R² — signal quality weight                       |
+| `conf_delta`      | `delta × r2` — primary ranking signal                        |
 | `next_day_actual` | Realized return the *following* day (backfilled by next run) |
 
 ### Gotchas
 
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| `next_day_actual` all NaN | Only one day in archive | Normal — backfilled by next `--save-recent` run |
-| Archive empty after scoring | `--save-recent` flag not passed | Re-run with `--save-recent` |
+| Symptom                       | Cause                            | Fix                                                             |
+| ----------------------------- | -------------------------------- | --------------------------------------------------------------- |
+| `next_day_actual` all NaN     | Only one day in archive          | Normal — backfilled by next `--save-recent` run                 |
+| Archive empty after scoring   | `--save-recent` flag not passed  | Re-run with `--save-recent`                                     |
 | `--save-recent` with `--date` | Historical runs are not archived | Flag is silently ignored on `--date` runs; archive is live-only |

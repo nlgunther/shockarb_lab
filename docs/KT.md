@@ -3,7 +3,7 @@
 *Updated after each session. Captures decisions and context not derivable from reading the code.  
 For API details see API.md; for quick commands see CHEATSHEET.md.*
 
-> Last updated: 2026-06-03 | Trigger: manual (\ukt) | Staleness: Fresh (session 2)
+> Last updated: 2026-06-06 | Trigger: manual (\ukt) | Staleness: Fresh (session 3)
 
 ---
 
@@ -90,7 +90,9 @@ data/
 ├── nyse_*.csv, nasdaq_*.csv                      ← reference data
 ├── live_alpha_us.csv / live_alpha_global.csv     ← daily scanner / shockarb score output
 ├── market_snapshot.json                          ← market_data.py output (refresh after 4pm)
-├── market_report.md                              ← market-report skill output
+├── market_report.md                              ← latest market-report (overwritten each run without --timestamp)
+├── market_report_YYYYMMDD_HHMM.md               ← timestamped training-corpus copies (--timestamp flag)
+├── market_report_intraday.md                     ← intraday variant
 ├── news.txt / fundamentals.csv                   ← news_scanner output
 ├── portfolio_sizer.csv                           ← portfolio_sizer default output
 ├── viz/                                          ← value_score_viz.py output PNGs + CSV
@@ -206,13 +208,14 @@ utils/
 ├── portfolio_sizer.py      — conviction-weighted position sizing; saves data/portfolio_sizer.csv by default; --no-out to suppress
 ├── eval_picks.py           — evaluates pick P&L vs entry prices from trades.csv or portfolio_sizer.csv
 ├── market_data.py          — fetches market snapshot to data/market_snapshot.json (~30s); run before \mktrep
-├── marketfit/              — local ShockArb-fit condition scorer (rules-based, ML stub)
+├── marketfit/              — local ShockArb-fit condition scorer (rules-based + LLM narrative)
 │   ├── features.py         — pure: snapshot dict → named feature vector (vix, breadth, dispersion, etc.)
 │   ├── rules.py            — pure: features → Verdict(overall, score, conditions, recommendation)
-│   ├── report.py           — pure: snapshot + Verdict → Markdown report string
+│   ├── report.py           — pure: snapshot + Verdict → Markdown report string; includes <!-- LEARN --> tags
+│   ├── llm.py              — Gemini API integration; generates narrative sections keyed on LEARN tags
 │   ├── model.py            — ML stub: is_usable()=False, train/predict raise NotImplementedError
 │   ├── labels.py           — ML stub: label-generation design documented, not yet implemented
-│   └── cli.py              — `python -m marketfit report [--snapshot] [--out]`
+│   └── cli.py              — `python -m marketfit report [--snapshot] [--out] [--llm] [--timestamp]`
 ├── csv_to_md.py         — converts alpha CSV to markdown report
 ├── score_viz.py         — confidence_delta bubble chart + factor heatmap (ShockArb-only)
 ├── value_score_viz.py   — value screener × ShockArb 3-figure suite + combined CSV
@@ -223,7 +226,115 @@ utils/
 └── score_history.py     — track signal history over time
 ```
 
+**marketfit `--llm` and `--timestamp` flags (added 2026-06-06):**
+
+- `--llm` calls `llm.py` (Gemini API) to generate narrative sections in the report. Without `--llm`, the report is rules-based only.
+- `--timestamp` appends `_YYYYMMDD_HHMM` to the output filename, producing e.g. `market_report_20260606_0342.md`. Without it, overwrites `market_report.md`.
+- Standard training-corpus run: `cd utils && python -m marketfit report --llm --timestamp && cd ..`
+- Standard daily-view run (no corpus accumulation): `cd utils && python -m marketfit report && cd ..`
+
+**`<!-- LEARN -->` markup scheme:**  
+Report sections are bracketed by HTML comments invisible in rendered Markdown:
+```
+<!-- LEARN section="X" difficulty="Y" inputs="k=v,k=v" -->
+...narrative text...
+<!-- /LEARN -->
+```
+Three difficulty levels: `template` (fill-in-the-blank), `analytic` (pattern interpretation), `judgment` (holistic synthesis). The `inputs=` attribute records the exact computed values that drove the text — this is the key training signal, enabling *"given these feature values, produce this text"* learning without reverse-engineering context from prose.
+
+Eight tagged sections in priority order: `recommendation`, `factor_signal_interpretation`, `risk_gauge_read`, `broad_market_interpretation`, `overseas_read`, `shockarb_fit_analysis`, `sector_rotation_story`, `picks_commentary`, `executive_summary`.
+
+**Multi-vendor data plan (FMP):**  
+`docs/PLAN_fmp_fundamentals.md` documents the full design for adding Financial Modeling Prep as a peer data vendor alongside yfinance. Key elements: `FundamentalsProvider` ABC in `datamgr/interfaces.py`; `datamgr/providers/fmp.py` (price) and `datamgr/providers/fmp_fundamentals.py` (fundamentals); `vendor: str = "yfinance"` in `ExecutionConfig`; env var `SHOCKARB_DATA_VENDOR` and CLI flag `--vendor fmp`. Not yet implemented — awaiting FMP API key tier decision (free=250 req/day; starter=$19/mo, 98-ticker build needs batching).
+
 **daily_scanner.py** was fixed this session to honour the sticky regime (calls `_get_sticky_regime()` from cli.py) so it loads the same model as `shockarb score`.
+
+---
+
+## Directory Structure — Current State and Proposed Cleanup
+
+The tree as of 2026-06-06 shows three categories of clutter. This section documents the proposed reorganisation; execute it whenever a clean session is available.
+
+### Root-level loose files (move or delete)
+
+| File | Action | Destination |
+|------|--------|-------------|
+| `check_1991.py` | Move | `msc/` |
+| `explain_score.py` | Move | `msc/` |
+| `load_tickers.py` | Move | `msc/` |
+| `peek_manifest.py` | Move | `msc/` |
+| `value_analyzer.py` | Move | `utils/` |
+| `test_cli_regime_additions.py` | Move | `tests/` |
+| `test_pipeline_regime_additions.py` | Move | `tests/` |
+| `score_us_052826.md` | Move | `reports/` |
+| `Names_deleted_052826.md` | Move | `docs/archive/` |
+| `Knowledge Transfer_ShockArb Factor Integration and Value Frontier.md` | Move | `docs/` (rename to `VALUE_FRONTIER.md`) |
+| `update06062026.md` | Move | `docs/archive/` after KT merge |
+| `tree20260606.txt` | Delete | (temp file) |
+| `morningstar051826.txt` | Move | `docs/archive/` |
+
+### `data/` — market report proliferation
+
+Multiple `market_report*.md` files accumulate at `data/` root. Create `data/reports/` and move all `market_report_*.md` timestamped files there. Keep `market_report.md` at `data/` as the "latest" symlink convention (overwritten without `--timestamp`). Update `marketfit/cli.py` `--out` default accordingly, or use `--out data/reports/market_report` as the corpus run target.
+
+### `utils/data/` — duplicate output location
+
+`utils/data/` holds `market_report.md` and `market_report060426.md` — these were produced before the `--out` flag was standardised. Now that `--out data/market_report.md` works from root, `utils/data/` should be deleted and any remaining files merged into `data/`.
+
+### `reports/` — inconsistent naming
+
+Eight alpha reports from March 2026 with ad-hoc names (`20260313o.md`, `20260313o1.md`, etc.). No action required urgently, but a naming standard going forward: `YYYYMMDD_description.md` (e.g. `20260313_us_close.md`). The existing files are useful as historical alpha records.
+
+### `skills/` — workspace eval scaffolding
+
+`skills/market-report-workspace/iteration-2/eval-*/` is development scaffolding for the market-report Cowork skill. This belongs in a separate dev/eval repo or a `skills/dev/` folder, not in the main project. Low priority; move when the skills iteration is complete.
+
+### Proposed final root structure (aspirational)
+
+```
+shockarb_lab/
+├── data/                   ← all runtime outputs and cache
+│   ├── reports/            ← timestamped market_report_*.md files
+│   └── (unchanged)
+├── datamgr/                ← unchanged
+├── docs/                   ← all documentation + plans + archive
+│   ├── archive/            ← completed update*.md, old named MDs
+│   └── (existing .md files)
+├── examples/               ← unchanged
+├── msc/                    ← diagnostic / one-off scripts
+├── reports/                ← alpha reports (scored stock lists)
+├── shockarb/               ← unchanged
+├── skills/                 ← Cowork skill definitions only (no workspace)
+├── tests/                  ← all test files (no root-level test_*.py)
+├── utils/                  ← all utility scripts + marketfit/
+├── scripts/                ← NEW: .bat / .sh command wrappers
+├── MANIFEST.txt
+├── verify_install.py
+└── (no loose .py or .md files)
+```
+
+---
+
+## Session Management — Context Window Warning
+
+**Problem:** Claude sessions terminate abruptly when context exceeds ~1M tokens with no prior warning, losing unsaved work (e.g. the 2026-06-06 session that produced `update06062026.md`).
+
+**Current mitigation — `update06062026.md` pattern:**  
+When a session ends abruptly, Claude's final responses are saved by the user to a dated update file. The next session opens by reading that file alongside KT.md to reconstruct state. This is the fallback, not the goal.
+
+**Proactive approach — checkpoint discipline:**  
+
+1. **Update KT.md at natural break points**, not just at session end. After each major feature is delivered and tested, run `\ukt` immediately. Don't wait for the end of a long session.
+2. **Context depth heuristic:** After ~15 major tool-call exchanges, Claude should proactively flag: *"We're deep into this session — good time to checkpoint KT.md before continuing."* This is a behavioural commitment, not automated tooling.
+3. **Avoid loading large files mid-session unnecessarily.** Each Read of a multi-KB file consumes tokens. Use `offset`/`limit` when only part of a file is needed.
+4. **High-risk operations last.** Schedule long research or multi-file rewrites earlier in a session, leaving KT updates and manifest generation for the end when context is tightest.
+
+**Recovery pattern (when the warning was missed):**  
+No manual copy-paste needed. Session transcripts are accessible programmatically:
+1. New session: call `list_sessions` — find the overflowed session by title (e.g. "ShockArb rules-based scorer").
+2. Call `read_transcript` on that session ID — returns the full conversation.
+3. Read `docs/KT.md` + transcript → run `\ukt` to merge directly.
+4. The `update_YYYYMMDD.md` file in root is the old fallback (manual copy); use `read_transcript` instead. If an update file exists, move it to `docs/archive/` after merging.
 
 ---
 
@@ -265,3 +376,4 @@ python verify_install.py --regenerate
 | 2026-06-03 | `shockarb score` now defaults to saving `data/live_alpha_us.csv` (--no-out to suppress); `news_scanner` saves `data/news.txt` + `data/fundamentals.csv` by default; `fundamental_scanner` suppresses debug logs, filters stale ex-div dates, flags suspect P/E with `?`; `portfolio_sizer` defaults to `data/portfolio_sizer.csv`; `eval_picks.py` added |
 | 2026-06-03 | Added `market-report` Cowork skill + `utils/market_data.py` fetcher; skill reads `data/market_snapshot.json` → produces `data/market_report.md` with US/overseas markets, sector sort, bonds, VIX, and ShockArb Fit Analysis; shortcuts `\mktrep` and `\market_report`; yfinance P/E cross-check and stale ex-div filter in `fundamental_scanner` |
 | 2026-06-03 | Implemented `utils/marketfit/` rules-based condition scorer: `features.py` (pure feature extraction), `rules.py` (Verdict with 6 conditions + score 0–11 + recommendation), `report.py` (Markdown builder), `model.py`/`labels.py` (ML stubs, failover always active), `cli.py` (`python -m marketfit report`); 35 tests in `tests/test_marketfit.py` all passing; end-to-end smoke test produces GOOD verdict (score 7/11) against today's snapshot |
+| 2026-06-06 | Added `--llm` flag to `marketfit report`: calls `utils/marketfit/llm.py` (Gemini API) to generate narrative sections; `--timestamp` flag appends `_YYYYMMDD_HHMM` to output filename for training corpus accumulation; first timestamped report `market_report_2026-06-06_0342.md` produced successfully; `<!-- LEARN section difficulty inputs -->` HTML-comment markup scheme designed for training data extraction; multi-vendor FMP plan documented in `docs/PLAN_fmp_fundamentals.md`; session ended with context overflow — state recovered from `update06062026.md`; session management / checkpoint discipline added to KT.md |
