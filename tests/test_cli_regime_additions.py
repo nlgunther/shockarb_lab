@@ -317,8 +317,10 @@ class TestScoreCommandWithRegime:
         args.top = 20
         args.use_prior_close = False
         args.from_open = False
-        args.save_tape = False
-        
+        args.save_tape   = False
+        args.save_recent = False   # guards ScoreArchive.save_row() in cmd_score
+        args.no_out      = True    # suppress CSV write
+
         mock_find.return_value = "/fake/ukraine_shock_us_20220101_120000.json"
         mock_model = MagicMock()
         mock_model.etf_returns.columns = ["VOO"]

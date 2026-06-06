@@ -103,7 +103,7 @@ def _load_fundamentals(path: str):
         return None
     try:
         import pandas as pd
-        return pd.read_csv(path)
+        return pd.read_csv(path, encoding="utf-8", encoding_errors="replace")
     except Exception as exc:
         logger.warning(f"Could not load fundamentals from {path}: {exc}")
         return None
@@ -117,7 +117,7 @@ def _load_news(path: str) -> dict[str, list[str]]:
     if not os.path.exists(path):
         return {}
     try:
-        content = Path(path).read_text(encoding="utf-8")
+        content = Path(path).read_text(encoding="utf-8", errors="replace")
         chunks  = content.split("---" * 29)   # 87-dash separator
         result  = {}
         for chunk in chunks:
@@ -141,7 +141,7 @@ def _load_news(path: str) -> dict[str, list[str]]:
 def cmd_report(args) -> None:
     """Generate a market report from a local snapshot."""
     if not os.path.exists(args.snapshot):
-        print(f"\n❌  Snapshot not found: {args.snapshot}")
+        print(f"\n\u274c  Snapshot not found: {args.snapshot}")
         print("    Run first:  python utils/market_data.py")
         sys.exit(1)
 
@@ -179,9 +179,9 @@ def cmd_report(args) -> None:
     print(md)
 
     if save_ok:
-        print(f"\n📁  Saved to: {out_path}")
+        print(f"\n\U0001f4c1  Saved to: {out_path}")
     else:
-        print(f"\n❌  Save failed — check path and permissions: {out_path}")
+        print(f"\n\u274c  Save failed — check path and permissions: {out_path}")
     print(f"    Snapshot:  {snapshot.get('fetched_at_local', 'unknown')}")
     print(f"    Baseline:  {snapshot.get('baseline_date', '(unknown — re-run market_data.py)')}")
     print(f"    Mode:      {snapshot.get('mode', 'daily')}")

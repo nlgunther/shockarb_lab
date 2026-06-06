@@ -1,7 +1,7 @@
 """
-Tests for utils/marketfit — features, rules, report.
+Tests for utils/marketfit — features, rules, report, cli.
 
-All tests use synthetic fixtures — no network calls, no file I/O.
+All tests use synthetic fixtures — no network calls, no real file I/O.
 
 Coverage
 --------
@@ -9,6 +9,12 @@ Coverage
   TestRulesEngine        — rules.evaluate() verdicts on known market scenarios
   TestRulesFailover      — model.is_usable() always False until ML implemented
   TestReportBuild        — report.build() produces correct Markdown structure
+  TestReportBaseline     — baseline_date and mode display in header
+  TestCliResolveOut      — _resolve_out() default filename logic
+  TestCliTimestamp       — _resolve_out() with timestamp=True
+  TestReportEnhanced     — build_enhanced() LEARN tag structure
+  TestCliLoaders         — _load_news(), _load_picks(), _load_fundamentals(),
+                           _is_stale() parse and fail gracefully
 """
 
 from __future__ import annotations
@@ -520,3 +526,101 @@ class TestReportEnhanced:
         md = self._build(spy_chg=-2.0, vix_level=22.0, vix_chg=15.0, tlt_chg=0.8)
         assert "<!-- LEARN " in md
         assert "GOOD" in md
+
+
+# =============================================================================
+# TestCliLoaders — _load_news, _load_picks, _load_fundamentals, _is_stale
+# =============================================================================
+
+class TestCliLoaders:
+    """CLI loader functions parse files correctly and fail gracefully."""
+
+    def setup_method(self):
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "utils"))
+        from marketfit.cli import _load_news, _load_picks, _load_fundamentals, _is_stale
+        self._load_news         = _load_news
+        self._load_picks        = _load_picks
+        self._load_fundamentals = _load_fundamentals
+        self._is_stale          = _is_stale
+
+    # -- _load_news --
+
+    def test_load_news_returns_dict_keyed_by_ticker(self, tmp_path):
+        sep = "-" * 87
+        news_txt = (
+            "[ETN  ]  signal: +2.83%\n"
+            "   > 2026-06-05 08:15  |  Zacks\n"
+            "     Data Center Power Demands Push ETN to All Time Highs\n"
+            f"{sep}\n"
+            "[ADI  ]  signal: +3.03%\n"
+            "   > 2026-06-05 09:42  |  Insider Monkey\n"
+            "     JPMorgan Raises its Price Target on Analog Devices (ADI)\n"
+        )
+        path = tmp_path / "news.txt"
+        path.write_text(news_txt)
+        result = self._load_news(str(path))
+        assert "ETN" in result
+        assert "ADI" in result
+        assert any("Data Center" in h for h in result["ETN"])
+        assert any("JPMorgan" in h for h in result["ADI"])
+
+    def test_load_news_missing_file_returns_empty(self, tmp_path):
+        result = self._load_news(str(tmp_path / "missing.txt"))
+        assert result == {}
+
+    # -- _load_picks --
+
+    def test_load_picks_returns_dataframe(self, tmp_path):
+        csv = tmp_path / "scores.csv"
+        csv.write_text(
+            ",actual_return,r_squared,confidence_delta\n"
+            "ETN,-0.05,0.693,0.028\n"
+        )
+        df = self._load_picks(str(csv))
+        assert df is not None
+        assert len(df) == 1
+
+    def test_load_picks_normalises_ticker_column(self, tmp_path):
+        """Column named 'ticker' (lowercase) is renamed to 'Ticker'."""
+        csv = tmp_path / "scores.csv"
+        csv.write_text("ticker,r_squared,confidence_delta\nETN,0.693,0.028\n")
+        df = self._load_picks(str(csv))
+        assert "Ticker" in df.columns
+
+    def test_load_picks_missing_file_returns_none(self, tmp_path):
+        result = self._load_picks(str(tmp_path / "missing.csv"))
+        assert result is None
+
+    # -- _load_fundamentals --
+
+    def test_load_fundamentals_returns_dataframe(self, tmp_path):
+        csv = tmp_path / "fundamentals.csv"
+        csv.write_text(
+            "Ticker,Price,Fwd P/E,TTM EPS,Fwd EPS,Next Earnings,Est. EPS,Ex-Div,Div Amt,Analyst Tgt\n"
+            "ETN,395.94,25.2,10.22,15.72,—,—,2026-05-07,$4.40,451.73\n",
+            encoding="utf-8",
+        )
+        df = self._load_fundamentals(str(csv))
+        assert df is not None
+        assert len(df) == 1
+        assert "Ticker" in df.columns
+
+    def test_load_fundamentals_missing_file_returns_none(self, tmp_path):
+        result = self._load_fundamentals(str(tmp_path / "missing.csv"))
+        assert result is None
+
+    # -- _is_stale --
+
+    def test_fresh_snapshot_not_stale(self):
+        from datetime import datetime, timezone, timedelta
+        recent = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        snap = {"fetched_at": recent}
+        assert self._is_stale(snap) is False
+
+    def test_old_snapshot_is_stale(self):
+        snap = {"fetched_at": "2020-01-01T12:00:00+00:00"}
+        assert self._is_stale(snap) is True
+
+    def test_missing_fetched_at_is_stale(self):
+        assert self._is_stale({}) is True
