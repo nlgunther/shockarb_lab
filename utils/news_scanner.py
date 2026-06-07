@@ -42,9 +42,10 @@ import yfinance as yf
 from loguru import logger
 
 from fundamental_scanner import fetch_fundamentals, print_fundamentals
+from paths import FUNDAMENTALS as _FUNDAMENTALS_PATH
 
 
-_DEFAULT_OUT_DIR = "./data"
+_DEFAULT_OUT_DIR = str(_FUNDAMENTALS_PATH.parent)
 
 
 # =============================================================================

@@ -52,7 +52,8 @@ from datamgr.requests import DataRequest, Frequency      # noqa: E402
 from datamgr.stores.parquet import ParquetStore          # noqa: E402
 
 
-_DEFAULT_OUT = os.path.join(_PROJECT_ROOT, "data", "market_snapshot.json")
+from paths import MARKET_SNAPSHOT as _MARKET_SNAPSHOT_PATH  # noqa: E402
+_DEFAULT_OUT = str(_MARKET_SNAPSHOT_PATH)
 
 # Days of history to request — enough to survive long weekends / holidays.
 _HISTORY_DAYS = 10

@@ -10,7 +10,7 @@ Feature spec (single source of truth — rules.py and report.py both consume thi
   r_squared         float — R² of the factor model fit (0–1)
   confidence_delta  float — primary ShockArb signal (delta_rel × r²)
   delta_rel         float — return unexplained by macro factors
-  actual_return     float — stock's raw return over the window
+  actual_return     float — stock’s raw return over the window
   expected_rel      float — model-predicted return (relative)
   residual_vol      float — volatility of the residual series (noise floor)
   price             float | None — last close price
@@ -30,8 +30,13 @@ Feature spec (single source of truth — rules.py and report.py both consume thi
 from __future__ import annotations
 
 import csv
+import os
+import sys
 from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from paths import LIVE_ALPHA_US, FUNDAMENTALS, NEWS  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -144,9 +149,9 @@ def _load_news(path: str) -> dict[str, list[str]]:
 # ---------------------------------------------------------------------------
 
 def extract_all(
-    scores_path:       str = "../data/live_alpha_us.csv",
-    fundamentals_path: str = "../data/fundamentals.csv",
-    news_path:         str = "../data/news.txt",
+    scores_path:       str = str(LIVE_ALPHA_US),
+    fundamentals_path: str = str(FUNDAMENTALS),
+    news_path:         str = str(NEWS),
 ) -> list[dict[str, Any]]:
     """
     Extract per-ticker feature dicts from the three pipeline output files.

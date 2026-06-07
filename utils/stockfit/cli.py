@@ -44,12 +44,14 @@ from loguru import logger
 
 from stockfit import features, rules, report
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from paths import LIVE_ALPHA_US, FUNDAMENTALS, NEWS, STOCK_REPORT  # noqa: E402
 
 _DATA_DIR             = "../data"
-_DEFAULT_SCORES       = "../data/live_alpha_us.csv"
-_DEFAULT_FUNDAMENTALS = "../data/fundamentals.csv"
-_DEFAULT_NEWS         = "../data/news.txt"
-_DEFAULT_OUT          = "../data/stock_report.md"
+_DEFAULT_SCORES       = str(LIVE_ALPHA_US)
+_DEFAULT_FUNDAMENTALS = str(FUNDAMENTALS)
+_DEFAULT_NEWS         = str(NEWS)
+_DEFAULT_OUT          = str(STOCK_REPORT)
 
 
 def _resolve_out(args_out: str, timestamp: bool) -> str:
@@ -74,7 +76,7 @@ def _resolve_out(args_out: str, timestamp: bool) -> str:
 def _check_inputs(scores: str, fundamentals: str, news: str) -> None:
     """Warn on missing input files; exit if scores (primary input) is missing."""
     if not os.path.exists(scores):
-        print(f"\n❌  Scores file not found: {scores}")
+        print(f"\n\u274c  Scores file not found: {scores}")
         print("    Run first:  shockarb score")
         sys.exit(1)
     for path, label in [(fundamentals, "fundamentals.csv"), (news, "news.txt")]:
@@ -127,17 +129,17 @@ def cmd_report(args) -> None:
     exclude_n = sum(1 for v in verdicts if v.tier == "EXCLUDE")
 
     if save_ok:
-        print(f"\n📁  Saved to: {out_path}")
+        print(f"\n\U0001f4c1  Saved to: {out_path}")
     else:
-        print(f"\n❌  Save failed — check path and permissions: {out_path}")
+        print(f"\n\u274c  Save failed — check path and permissions: {out_path}")
 
     llm_note = " | LLM: enabled" if args.llm else ""
     print(
         f"    Tickers: {include_n} INCLUDE | {watch_n} WATCH | {exclude_n} EXCLUDE{llm_note}"
     )
     print(
-        f"    Thresholds: r²≥{args.min_r2:.2f} | conf.Δ≥{args.min_confidence:.3f} "
-        f"| upside≥{args.min_upside * 100:.0f}%"
+        f"    Thresholds: r2>={args.min_r2:.2f} | conf.D>={args.min_confidence:.3f} "
+        f"| upside>={args.min_upside * 100:.0f}%"
     )
 
 
@@ -192,7 +194,7 @@ def main() -> None:
     p.add_argument("--timestamp", action="store_true",
                    help="Save as stock_report_YYYYMMDD_HHMM.md — never overwrites")
     p.add_argument("--min-r2", type=float, default=0.65,
-                   help="Minimum r² threshold (default: 0.65)")
+                   help="Minimum r2 threshold (default: 0.65)")
     p.add_argument("--min-confidence", type=float, default=0.020,
                    help="Minimum confidence_delta threshold (default: 0.020)")
     p.add_argument("--min-upside", type=float, default=0.05,

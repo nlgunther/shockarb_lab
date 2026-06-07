@@ -36,11 +36,21 @@ from loguru import logger
 
 from marketfit import features, rules, report
 
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(__file__)))
+from paths import (  # noqa: E402
+    MARKET_SNAPSHOT,
+    LIVE_ALPHA_US,
+    FUNDAMENTALS,
+    NEWS,
+    MARKET_REPORT,
+    MARKET_REPORT_INTRADAY,
+)
 
 _DATA_DIR           = "../data"
-_DEFAULT_SNAPSHOT   = "../data/market_snapshot.json"
-_DEFAULT_OUT_DAILY  = "../data/market_report.md"
-_DEFAULT_OUT_INTRA  = "../data/market_report_intraday.md"
+_DEFAULT_SNAPSHOT   = str(MARKET_SNAPSHOT)
+_DEFAULT_OUT_DAILY  = str(MARKET_REPORT)
+_DEFAULT_OUT_INTRA  = str(MARKET_REPORT_INTRADAY)
 _STALE_HOURS        = 6
 
 
@@ -203,9 +213,9 @@ def _build_with_llm(snapshot: dict, verdict, stale: bool) -> str:
         logger.info("Falling back to basic report (no LLM).")
         return report.build(snapshot, verdict, stale=stale)
 
-    picks_df        = _load_picks(_DATA_DIR + "/live_alpha_us.csv")
-    fundamentals_df = _load_fundamentals(_DATA_DIR + "/fundamentals.csv")
-    news_dict       = _load_news(_DATA_DIR + "/news.txt")
+    picks_df        = _load_picks(str(LIVE_ALPHA_US))
+    fundamentals_df = _load_fundamentals(str(FUNDAMENTALS))
+    news_dict       = _load_news(str(NEWS))
 
     if picks_df is not None:
         logger.info(f"Loaded {len(picks_df)} picks from live_alpha_us.csv")
