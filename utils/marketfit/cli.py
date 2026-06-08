@@ -37,11 +37,25 @@ from loguru import logger
 
 from marketfit import features, rules, report
 
+# All paths centralised in paths.py. See docs/PATHS.md for design rationale.
+from paths import MARKET_SNAPSHOT, LIVE_ALPHA_US, FUNDAMENTALS, NEWS, REPORTS_DIR
 
-_DATA_DIR             = "../data"
-_DEFAULT_SNAPSHOT     = "../data/market_snapshot.json"
-_DEFAULT_REPORTS_DIR  = "../reports"
-_STALE_HOURS          = 6
+_STALE_HOURS = 6
+
+
+def _check_cwd() -> None:
+    """Exit with a clear error if not run from the utils/ directory."""
+    if not Path("../data").is_dir():
+        print(
+            "\n❌  This command must be run from the utils/ directory.\n"
+            "\n"
+            "    Correct usage:\n"
+            "        cd <project_root>/utils\n"
+            "        python -m marketfit report\n"
+            "\n"
+            f"    Current directory: {Path.cwd()}\n"
+        )
+        sys.exit(1)
 
 
 def _is_stale(snapshot: dict) -> bool:
@@ -58,7 +72,7 @@ def _is_stale(snapshot: dict) -> bool:
         return True
 
 
-def _resolve_out(args_out: str | None, reports_dir: str, snapshot: dict, timestamp: bool = False) -> str:
+def _resolve_out(args_out: str | None, reports_dir: Path, snapshot: dict, timestamp: bool = False) -> Path:
     """
     Resolve output path.
 
@@ -69,17 +83,17 @@ def _resolve_out(args_out: str | None, reports_dir: str, snapshot: dict, timesta
     --reports-dir changes the output folder (default: ../reports).
     """
     if args_out is not None:
-        return args_out   # explicit path always wins
+        return Path(args_out)   # explicit path always wins
 
     mode = snapshot.get("mode", "daily")
     base = "market_report_intraday" if mode == "intraday" else "market_report"
 
     if timestamp:
         ts = snapshot.get("fetched_at_local", "").replace(" ", "_").replace(":", "")
-        return f"{reports_dir}/{base}_{ts}.md"
+        return reports_dir / f"{base}_{ts}.md"
 
     suffix = "_intraday" if mode == "intraday" else ""
-    return f"{reports_dir}/market_report{suffix}.md"
+    return reports_dir / f"market_report{suffix}.md"
 
 
 def _load_picks(path: str):
@@ -205,9 +219,9 @@ def _build_with_llm(snapshot: dict, verdict, stale: bool) -> str:
         logger.info("Falling back to basic report (no LLM).")
         return report.build(snapshot, verdict, stale=stale)
 
-    picks_df        = _load_picks(_DATA_DIR + "/live_alpha_us.csv")
-    fundamentals_df = _load_fundamentals(_DATA_DIR + "/fundamentals.csv")
-    news_dict       = _load_news(_DATA_DIR + "/news.txt")
+    picks_df        = _load_picks(str(LIVE_ALPHA_US))
+    fundamentals_df = _load_fundamentals(str(FUNDAMENTALS))
+    news_dict       = _load_news(str(NEWS))
 
     if picks_df is not None:
         logger.info(f"Loaded {len(picks_df)} picks from live_alpha_us.csv")
@@ -237,6 +251,7 @@ def _build_with_llm(snapshot: dict, verdict, stale: bool) -> str:
 
 
 def main() -> None:
+    _check_cwd()
     parser = argparse.ArgumentParser(
         prog="marketfit",
         description="Local ShockArb market report.",
@@ -246,10 +261,10 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("report", help="Generate market report from local snapshot")
-    p.add_argument("--snapshot", "-s", default=_DEFAULT_SNAPSHOT,
-                   help=f"Path to market_snapshot.json (default: {_DEFAULT_SNAPSHOT})")
-    p.add_argument("--reports-dir", default=_DEFAULT_REPORTS_DIR,
-                   help=f"Directory for report output (default: {_DEFAULT_REPORTS_DIR})")
+    p.add_argument("--snapshot", "-s", default=MARKET_SNAPSHOT,
+                   help=f"Path to market_snapshot.json (default: {MARKET_SNAPSHOT})")
+    p.add_argument("--reports-dir", default=REPORTS_DIR,
+                   help=f"Directory for report output (default: {REPORTS_DIR})")
     p.add_argument("--out", "-o", default=None,
                    help="Exact output .md path; overrides --reports-dir (default: auto)")
     p.add_argument("--llm", action="store_true",
@@ -264,3 +279,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+     

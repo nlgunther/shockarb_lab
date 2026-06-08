@@ -47,15 +47,26 @@ from loguru import logger
 
 from stockfit import features, rules, report
 
-
-_DATA_DIR             = "../data"
-_DEFAULT_SCORES       = "../data/live_alpha_us.csv"
-_DEFAULT_FUNDAMENTALS = "../data/fundamentals.csv"
-_DEFAULT_NEWS         = "../data/news.txt"
-_DEFAULT_REPORTS_DIR  = "../reports"
+# All paths centralised in paths.py. See docs/PATHS.md for design rationale.
+from paths import LIVE_ALPHA_US, FUNDAMENTALS, NEWS, REPORTS_DIR
 
 
-def _resolve_out(args_out: str | None, reports_dir: str, timestamp: bool) -> str:
+def _check_cwd() -> None:
+    """Exit with a clear error if not run from the utils/ directory."""
+    if not Path("../data").is_dir():
+        print(
+            "\n❌  This command must be run from the utils/ directory.\n"
+            "\n"
+            "    Correct usage:\n"
+            "        cd <project_root>/utils\n"
+            "        python -m stockfit report\n"
+            "\n"
+            f"    Current directory: {Path.cwd()}\n"
+        )
+        sys.exit(1)
+
+
+def _resolve_out(args_out: str | None, reports_dir: Path, timestamp: bool) -> Path:
     """
     Resolve output path.
 
@@ -65,20 +76,20 @@ def _resolve_out(args_out: str | None, reports_dir: str, timestamp: bool) -> str
     --reports-dir changes the output folder (default: ../reports).
     """
     if args_out is not None:
-        return args_out
+        return Path(args_out)
 
     if timestamp:
         now = datetime.now(timezone.utc)
         ts  = now.strftime("%Y%m%d_%H%M")
-        return f"{reports_dir}/stock_report_{ts}.md"
+        return reports_dir / f"stock_report_{ts}.md"
 
-    return f"{reports_dir}/stock_report.md"
+    return reports_dir / "stock_report.md"
 
 
 def _check_inputs(scores: str, fundamentals: str, news: str) -> None:
     """Warn on missing input files; exit if scores (primary input) is missing."""
     if not os.path.exists(scores):
-        print(f"\n❌  Scores file not found: {scores}")
+        print(f"\n\u274c  Scores file not found: {scores}")
         print("    Run first:  shockarb score")
         sys.exit(1)
     for path, label in [(fundamentals, "fundamentals.csv"), (news, "news.txt")]:
@@ -132,17 +143,17 @@ def cmd_report(args) -> None:
     exclude_n = sum(1 for v in verdicts if v.tier == "EXCLUDE")
 
     if save_ok:
-        print(f"\n📁  Saved to: {out_path}")
+        print(f"\n\U0001f4c1  Saved to: {out_path}")
     else:
-        print(f"\n❌  Save failed — check path and permissions: {out_path}")
+        print(f"\n\u274c  Save failed — check path and permissions: {out_path}")
 
     llm_note = " | LLM: enabled" if args.llm else ""
     print(
         f"    Tickers: {include_n} INCLUDE | {watch_n} WATCH | {exclude_n} EXCLUDE{llm_note}"
     )
     print(
-        f"    Thresholds: r²≥{args.min_r2:.2f} | conf.Δ≥{args.min_confidence:.3f} "
-        f"| upside≥{args.min_upside * 100:.0f}%"
+        f"    Thresholds: r2>={args.min_r2:.2f} | conf.D>={args.min_confidence:.3f} "
+        f"| upside>={args.min_upside * 100:.0f}%"
     )
 
 
@@ -175,6 +186,7 @@ def _build_with_llm(
 
 
 def main() -> None:
+    _check_cwd()
     parser = argparse.ArgumentParser(
         prog="stockfit",
         description="ShockArb stock opportunity report.",
@@ -184,14 +196,14 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("report", help="Generate stock report from pipeline outputs")
-    p.add_argument("--scores", default=_DEFAULT_SCORES,
-                   help=f"Path to live_alpha_us.csv (default: {_DEFAULT_SCORES})")
-    p.add_argument("--fundamentals", default=_DEFAULT_FUNDAMENTALS,
-                   help=f"Path to fundamentals.csv (default: {_DEFAULT_FUNDAMENTALS})")
-    p.add_argument("--news", default=_DEFAULT_NEWS,
-                   help=f"Path to news.txt (default: {_DEFAULT_NEWS})")
-    p.add_argument("--reports-dir", default=_DEFAULT_REPORTS_DIR,
-                   help=f"Directory for report output (default: {_DEFAULT_REPORTS_DIR})")
+    p.add_argument("--scores", default=LIVE_ALPHA_US,
+                   help=f"Path to live_alpha_us.csv (default: {LIVE_ALPHA_US})")
+    p.add_argument("--fundamentals", default=FUNDAMENTALS,
+                   help=f"Path to fundamentals.csv (default: {FUNDAMENTALS})")
+    p.add_argument("--news", default=NEWS,
+                   help=f"Path to news.txt (default: {NEWS})")
+    p.add_argument("--reports-dir", default=REPORTS_DIR,
+                   help=f"Directory for report output (default: {REPORTS_DIR})")
     p.add_argument("--out", "-o", default=None,
                    help="Exact output .md path; overrides --reports-dir (default: auto)")
     p.add_argument("--llm", action="store_true",
@@ -201,7 +213,7 @@ def main() -> None:
     p.add_argument("--earnings-window", type=int, default=14,
                    help="Days ahead to treat earnings as imminent and exclude (default: 14)")
     p.add_argument("--min-r2", type=float, default=0.65,
-                   help="Minimum r² threshold (default: 0.65)")
+                   help="Minimum r2 threshold (default: 0.65)")
     p.add_argument("--min-confidence", type=float, default=0.020,
                    help="Minimum confidence_delta threshold (default: 0.020)")
     p.add_argument("--min-upside", type=float, default=0.05,
@@ -216,3 +228,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    

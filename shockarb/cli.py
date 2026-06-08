@@ -42,6 +42,8 @@ import yfinance as yf
 from loguru import logger
 
 import shockarb.pipeline as pipeline
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "utils"))
+from paths import LIVE_ALPHA_US as _LIVE_ALPHA_US_PATH  # noqa: E402
 from shockarb.config import (
     GLOBAL_UNIVERSE,
     US_UNIVERSE,
@@ -641,7 +643,7 @@ Examples:
     p.add_argument("--use-prior-close", "-p", action="store_true", help="Force daily close-to-close returns")
     p.add_argument("--date",   "-d", help="Historical date YYYY-MM-DD")
     p.add_argument("--model",  "-m", help="Specific model .json to load")
-    p.add_argument("--out", "-o", default="./data/live_alpha_us.csv",
+    p.add_argument("--out", "-o", default=str(_LIVE_ALPHA_US_PATH),
                    help="Save score results to CSV (default: data/live_alpha_us.csv)")
     p.add_argument("--no-out", "-sout", action="store_true",
                    help="Suppress CSV output (do not write a file)")
