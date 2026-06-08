@@ -43,7 +43,7 @@ def _fmt_pct(v: float | None, decimals: int = 1) -> str:
 def _fmt_price(v: float | None) -> str:
     if v is None:
         return "—"
-    return f"${v:,.2f}"
+    return f"\\${v:,.2f}"
 
 
 def _learn_open(ticker: str, r2: float, conf_delta: float, upside: float | None) -> str:

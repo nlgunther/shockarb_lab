@@ -11,7 +11,8 @@ Usage
     cd utils && python -m marketfit report --llm          # enhanced report via LLM
     cd utils && python -m marketfit report --snapshot /path/to/snapshot.json
 
-    Defaults resolve to ../data/ (relative to utils/).
+    Input data resolves to ../data/ (relative to utils/).
+    Reports are written to ../reports/ by default; override with --reports-dir.
     Intraday snapshots (mode=intraday) default to market_report_intraday.md.
     Always run from the utils/ directory: cd utils && python -m marketfit report
 
@@ -37,11 +38,10 @@ from loguru import logger
 from marketfit import features, rules, report
 
 
-_DATA_DIR           = "../data"
-_DEFAULT_SNAPSHOT   = "../data/market_snapshot.json"
-_DEFAULT_OUT_DAILY  = "../data/market_report.md"
-_DEFAULT_OUT_INTRA  = "../data/market_report_intraday.md"
-_STALE_HOURS        = 6
+_DATA_DIR             = "../data"
+_DEFAULT_SNAPSHOT     = "../data/market_snapshot.json"
+_DEFAULT_REPORTS_DIR  = "../reports"
+_STALE_HOURS          = 6
 
 
 def _is_stale(snapshot: dict) -> bool:
@@ -58,7 +58,7 @@ def _is_stale(snapshot: dict) -> bool:
         return True
 
 
-def _resolve_out(args_out: str, snapshot: dict, timestamp: bool = False) -> str:
+def _resolve_out(args_out: str | None, reports_dir: str, snapshot: dict, timestamp: bool = False) -> str:
     """
     Resolve output path.
 
@@ -66,8 +66,9 @@ def _resolve_out(args_out: str, snapshot: dict, timestamp: bool = False) -> str:
     --timestamp appends the snapshot fetch time so reports are never overwritten:
         market_report_20260604_1455.md  (daily)
         market_report_intraday_20260604_0932.md  (intraday)
+    --reports-dir changes the output folder (default: ../reports).
     """
-    if args_out != _DEFAULT_OUT_DAILY:
+    if args_out is not None:
         return args_out   # explicit path always wins
 
     mode = snapshot.get("mode", "daily")
@@ -75,9 +76,10 @@ def _resolve_out(args_out: str, snapshot: dict, timestamp: bool = False) -> str:
 
     if timestamp:
         ts = snapshot.get("fetched_at_local", "").replace(" ", "_").replace(":", "")
-        return f"{_DATA_DIR}/{base}_{ts}.md"
+        return f"{reports_dir}/{base}_{ts}.md"
 
-    return _DEFAULT_OUT_INTRA if mode == "intraday" else _DEFAULT_OUT_DAILY
+    suffix = "_intraday" if mode == "intraday" else ""
+    return f"{reports_dir}/market_report{suffix}.md"
 
 
 def _load_picks(path: str):
@@ -166,7 +168,7 @@ def cmd_report(args) -> None:
     else:
         md = report.build(snapshot, verdict, stale=stale)
 
-    out_path = _resolve_out(args.out, snapshot, timestamp=args.timestamp)
+    out_path = _resolve_out(args.out, args.reports_dir, snapshot, timestamp=args.timestamp)
 
     try:
         os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
@@ -246,8 +248,10 @@ def main() -> None:
     p = sub.add_parser("report", help="Generate market report from local snapshot")
     p.add_argument("--snapshot", "-s", default=_DEFAULT_SNAPSHOT,
                    help=f"Path to market_snapshot.json (default: {_DEFAULT_SNAPSHOT})")
-    p.add_argument("--out", "-o", default=_DEFAULT_OUT_DAILY,
-                   help="Output .md path (default: auto)")
+    p.add_argument("--reports-dir", default=_DEFAULT_REPORTS_DIR,
+                   help=f"Directory for report output (default: {_DEFAULT_REPORTS_DIR})")
+    p.add_argument("--out", "-o", default=None,
+                   help="Exact output .md path; overrides --reports-dir (default: auto)")
     p.add_argument("--llm", action="store_true",
                    help="Generate enhanced report with LLM narratives (requires GOOGLE_API_KEY or ANTHROPIC_API_KEY)")
     p.add_argument("--timestamp", action="store_true",

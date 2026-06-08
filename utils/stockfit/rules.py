@@ -94,8 +94,8 @@ class StockVerdict:
     def as_markdown_row(self) -> str:
         """Single table row for the stock report."""
         upside = f"{self.analyst_upside * 100:+.1f}%" if self.analyst_upside is not None else "—"
-        price  = f"${self.price:,.2f}" if self.price else "—"
-        target = f"${self.analyst_target:,.2f}" if self.analyst_target else "—"
+        price  = f"\\${self.price:,.2f}" if self.price else "—"
+        target = f"\\${self.analyst_target:,.2f}" if self.analyst_target else "—"
         pe     = f"{self.fwd_pe:.1f}x" if self.fwd_pe else "—"
         return (
             f"| {self.ticker} | {self.r_squared:.3f} | "

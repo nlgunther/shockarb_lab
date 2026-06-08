@@ -402,28 +402,36 @@ class TestCliResolveOut:
     def setup_method(self):
         import sys, os
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "utils"))
-        from marketfit.cli import _resolve_out, _DEFAULT_OUT_DAILY, _DEFAULT_OUT_INTRA
-        self._resolve_out     = _resolve_out
-        self._default_daily   = _DEFAULT_OUT_DAILY
-        self._default_intraday = _DEFAULT_OUT_INTRA
+        from marketfit.cli import _resolve_out, _DEFAULT_REPORTS_DIR
+        self._resolve_out    = _resolve_out
+        self._reports_dir    = _DEFAULT_REPORTS_DIR
 
     def test_daily_snapshot_uses_daily_default(self):
         snap = {"mode": "daily"}
-        assert self._resolve_out(self._default_daily, snap) == self._default_daily
+        out = self._resolve_out(None, self._reports_dir, snap)
+        assert out == f"{self._reports_dir}/market_report.md"
 
     def test_intraday_snapshot_uses_intraday_default(self):
         snap = {"mode": "intraday"}
-        assert self._resolve_out(self._default_daily, snap) == self._default_intraday
+        out = self._resolve_out(None, self._reports_dir, snap)
+        assert out == f"{self._reports_dir}/market_report_intraday.md"
 
     def test_explicit_out_always_honoured(self):
         """User-supplied --out overrides mode-based default."""
         snap = {"mode": "intraday"}
-        assert self._resolve_out("/tmp/custom.md", snap) == "/tmp/custom.md"
+        assert self._resolve_out("/tmp/custom.md", self._reports_dir, snap) == "/tmp/custom.md"
 
     def test_missing_mode_falls_back_to_daily(self):
         """Old snapshots without 'mode' field use the daily default."""
         snap = {}
-        assert self._resolve_out(self._default_daily, snap) == self._default_daily
+        out = self._resolve_out(None, self._reports_dir, snap)
+        assert out == f"{self._reports_dir}/market_report.md"
+
+    def test_custom_reports_dir_is_used(self):
+        """--reports-dir changes the output folder."""
+        snap = {"mode": "daily"}
+        out = self._resolve_out(None, "/custom/dir", snap)
+        assert out == "/custom/dir/market_report.md"
 
 
 # =============================================================================
@@ -436,37 +444,41 @@ class TestCliTimestamp:
     def setup_method(self):
         import sys, os
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "utils"))
-        from marketfit.cli import _resolve_out, _DEFAULT_OUT_DAILY
-        self._resolve_out   = _resolve_out
-        self._default_daily = _DEFAULT_OUT_DAILY
+        from marketfit.cli import _resolve_out, _DEFAULT_REPORTS_DIR
+        self._resolve_out  = _resolve_out
+        self._reports_dir  = _DEFAULT_REPORTS_DIR
 
     def _snap(self, mode="daily", fetched_at_local="2026-06-04 14:55"):
         return {"mode": mode, "fetched_at_local": fetched_at_local}
 
     def test_timestamp_daily_includes_datestamp(self):
-        out = self._resolve_out(self._default_daily, self._snap(), timestamp=True)
+        out = self._resolve_out(None, self._reports_dir, self._snap(), timestamp=True)
         assert "market_report_" in out
         assert "2026-06-04" in out
         assert out.endswith(".md")
 
     def test_timestamp_intraday_includes_intraday_in_name(self):
-        out = self._resolve_out(self._default_daily, self._snap(mode="intraday"), timestamp=True)
+        out = self._resolve_out(None, self._reports_dir, self._snap(mode="intraday"), timestamp=True)
         assert "market_report_intraday_" in out
 
     def test_timestamp_colons_stripped_from_time(self):
         """14:55 → 1455 in filename (colons invalid on Windows paths)."""
-        out = self._resolve_out(self._default_daily, self._snap(fetched_at_local="2026-06-04 14:55"), timestamp=True)
+        out = self._resolve_out(None, self._reports_dir, self._snap(fetched_at_local="2026-06-04 14:55"), timestamp=True)
         assert "14:55" not in out
         assert "1455" in out
 
     def test_explicit_out_ignores_timestamp(self):
         """User-supplied --out is always honoured, even with --timestamp."""
-        out = self._resolve_out("/tmp/my_report.md", self._snap(), timestamp=True)
+        out = self._resolve_out("/tmp/my_report.md", self._reports_dir, self._snap(), timestamp=True)
         assert out == "/tmp/my_report.md"
 
-    def test_no_timestamp_returns_default(self):
-        out = self._resolve_out(self._default_daily, self._snap(), timestamp=False)
-        assert out == self._default_daily
+    def test_no_timestamp_returns_reports_dir_default(self):
+        out = self._resolve_out(None, self._reports_dir, self._snap(), timestamp=False)
+        assert out == f"{self._reports_dir}/market_report.md"
+
+    def test_custom_reports_dir_used_in_timestamp_path(self):
+        out = self._resolve_out(None, "/alt/reports", self._snap(), timestamp=True)
+        assert out.startswith("/alt/reports/market_report_")
 
 
 # =============================================================================

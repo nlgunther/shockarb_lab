@@ -189,14 +189,43 @@ class TestFeatureExtraction:
         result = features.extract_all(str(scores_path), str(fund_path), str(tmp_path / "missing.txt"))
         assert result[0]["target_below_price"] is True
 
-    def test_earnings_imminent_flag(self, tmp_path):
+    def test_earnings_imminent_within_window(self, tmp_path):
+        """Earnings 3 days out → imminent under default 14-day window."""
+        from datetime import date, timedelta
+        soon = (date.today() + timedelta(days=3)).strftime("%Y-%m-%d")
         scores_path = self._write_scores_csv(tmp_path, [_score_row("ORCL")])
         fund_path   = self._write_fundamentals_csv(tmp_path, [
-            {"ticker": "ORCL", "price": 213.0, "analyst_target": 251.0, "next_earnings": "2026-06-10"}
+            {"ticker": "ORCL", "price": 213.0, "analyst_target": 251.0, "next_earnings": soon}
         ])
         result = features.extract_all(str(scores_path), str(fund_path), str(tmp_path / "missing.txt"))
         assert result[0]["earnings_imminent"] is True
-        assert result[0]["next_earnings"] == "2026-06-10"
+        assert result[0]["next_earnings"] == soon
+
+    def test_earnings_not_imminent_outside_window(self, tmp_path):
+        """Earnings 60 days out → NOT imminent under default 14-day window."""
+        from datetime import date, timedelta
+        far = (date.today() + timedelta(days=60)).strftime("%Y-%m-%d")
+        scores_path = self._write_scores_csv(tmp_path, [_score_row("AMAT")])
+        fund_path   = self._write_fundamentals_csv(tmp_path, [
+            {"ticker": "AMAT", "price": 453.0, "analyst_target": 511.0, "next_earnings": far}
+        ])
+        result = features.extract_all(str(scores_path), str(fund_path), str(tmp_path / "missing.txt"))
+        assert result[0]["earnings_imminent"] is False
+
+    def test_earnings_window_respected(self, tmp_path):
+        """earnings_window=30 flags a date 20 days out; default 14 does not."""
+        from datetime import date, timedelta
+        target = (date.today() + timedelta(days=20)).strftime("%Y-%m-%d")
+        scores_path = self._write_scores_csv(tmp_path, [_score_row("ETN")])
+        fund_path   = self._write_fundamentals_csv(tmp_path, [
+            {"ticker": "ETN", "price": 396.0, "analyst_target": 452.0, "next_earnings": target}
+        ])
+        result_default = features.extract_all(str(scores_path), str(fund_path),
+                                               str(tmp_path / "missing.txt"), earnings_window=14)
+        result_wide    = features.extract_all(str(scores_path), str(fund_path),
+                                               str(tmp_path / "missing.txt"), earnings_window=30)
+        assert result_default[0]["earnings_imminent"] is False
+        assert result_wide[0]["earnings_imminent"] is True
 
     def test_news_headlines_loaded(self, tmp_path):
         scores_path = self._write_scores_csv(tmp_path, [_score_row("ETN")])
@@ -565,28 +594,37 @@ class TestCliResolveOut:
     """cli._resolve_out() filename logic."""
 
     def setup_method(self):
-        from stockfit.cli import _resolve_out, _DEFAULT_OUT
-        self._resolve_out = _resolve_out
-        self._default     = _DEFAULT_OUT
+        from stockfit.cli import _resolve_out, _DEFAULT_REPORTS_DIR
+        self._resolve_out  = _resolve_out
+        self._reports_dir  = _DEFAULT_REPORTS_DIR
 
     def test_no_timestamp_returns_default(self):
-        assert self._resolve_out(self._default, timestamp=False) == self._default
+        out = self._resolve_out(None, self._reports_dir, timestamp=False)
+        assert out == f"{self._reports_dir}/stock_report.md"
 
     def test_timestamp_produces_datestamped_name(self):
-        out = self._resolve_out(self._default, timestamp=True)
+        out = self._resolve_out(None, self._reports_dir, timestamp=True)
         assert "stock_report_" in out
         import re
         assert re.search(r"\d{8}_\d{4}", out), f"No YYYYMMDD_HHMM in: {out}"
 
     def test_timestamp_output_ends_with_md(self):
-        out = self._resolve_out(self._default, timestamp=True)
+        out = self._resolve_out(None, self._reports_dir, timestamp=True)
         assert out.endswith(".md")
 
     def test_explicit_out_always_honoured(self):
-        assert self._resolve_out("/tmp/custom.md", timestamp=True) == "/tmp/custom.md"
+        assert self._resolve_out("/tmp/custom.md", self._reports_dir, timestamp=True) == "/tmp/custom.md"
 
     def test_explicit_out_without_timestamp(self):
-        assert self._resolve_out("/tmp/out.md", timestamp=False) == "/tmp/out.md"
+        assert self._resolve_out("/tmp/out.md", self._reports_dir, timestamp=False) == "/tmp/out.md"
+
+    def test_custom_reports_dir_is_used(self):
+        out = self._resolve_out(None, "/my/reports", timestamp=False)
+        assert out == "/my/reports/stock_report.md"
+
+    def test_custom_reports_dir_used_in_timestamp_path(self):
+        out = self._resolve_out(None, "/my/reports", timestamp=True)
+        assert out.startswith("/my/reports/stock_report_")
 
 
 # =============================================================================

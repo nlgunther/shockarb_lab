@@ -24,12 +24,13 @@ Feature spec (single source of truth — rules.py and report.py both consume thi
   next_earnings     str   | None — next earnings date ('' if blank)
   news_headlines    list[str]    — up to 3 news headlines for this ticker
   target_below_price bool        — True when analyst_target < price (data quality flag)
-  earnings_imminent bool         — True when next_earnings is non-empty
+  earnings_imminent bool         — True when next_earnings is within earnings_window days
 """
 
 from __future__ import annotations
 
 import csv
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -143,10 +144,22 @@ def _load_news(path: str) -> dict[str, list[str]]:
 # Public API
 # ---------------------------------------------------------------------------
 
+def _earnings_imminent(next_earnings: str | None, window_days: int) -> bool:
+    """Return True if next_earnings is a valid date within window_days of today."""
+    if not next_earnings:
+        return False
+    try:
+        earn_date = datetime.strptime(next_earnings, "%Y-%m-%d").date()
+        return (earn_date - date.today()).days <= window_days
+    except ValueError:
+        return False
+
+
 def extract_all(
     scores_path:       str = "../data/live_alpha_us.csv",
     fundamentals_path: str = "../data/fundamentals.csv",
     news_path:         str = "../data/news.txt",
+    earnings_window:   int = 14,
 ) -> list[dict[str, Any]]:
     """
     Extract per-ticker feature dicts from the three pipeline output files.
@@ -156,6 +169,7 @@ def extract_all(
     scores_path       : path to live_alpha_us.csv
     fundamentals_path : path to fundamentals.csv
     news_path         : path to news.txt
+    earnings_window   : days-out threshold for earnings_imminent flag (default 14)
 
     Returns
     -------
@@ -188,7 +202,7 @@ def extract_all(
             price is not None and target is not None and target < price
         )
 
-        earnings_imminent = bool(fund.get("next_earnings"))
+        earnings_imminent = _earnings_imminent(fund.get("next_earnings"), earnings_window)
 
         results.append({
             # Signal features

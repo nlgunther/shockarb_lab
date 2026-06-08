@@ -12,7 +12,8 @@ Usage
     cd utils && python -m stockfit report --llm --timestamp
     cd utils && python -m stockfit report --min-r2 0.70 --min-confidence 0.025
 
-    Defaults resolve to ../data/ (relative to utils/).
+    Input data resolves to ../data/ (relative to utils/).
+    Reports are written to ../reports/ by default; override with --reports-dir.
     Always run from the utils/ directory: cd utils && python -m stockfit report
 
 Options
@@ -21,13 +22,15 @@ Options
                     (requires ANTHROPIC_API_KEY or GOOGLE_API_KEY)
   --timestamp       Save as stock_report_YYYYMMDD_HHMM.md — never overwrites;
                     builds archive for LLM training
+  --reports-dir     Directory for report output (default ../reports)
+  --earnings-window Days ahead to treat earnings as imminent (default 14)
   --min-r2          Minimum r² threshold (default 0.65)
   --min-confidence  Minimum confidence_delta threshold (default 0.020)
   --min-upside      Minimum analyst upside fraction (default 0.05 = 5%)
   --scores          Path to live_alpha_us.csv (default ../data/live_alpha_us.csv)
   --fundamentals    Path to fundamentals.csv  (default ../data/fundamentals.csv)
   --news            Path to news.txt          (default ../data/news.txt)
-  --out             Output .md path (default: auto-resolved)
+  --out             Exact output .md path; overrides --reports-dir (default: auto-resolved)
 
 See docs/ENVIRONMENT_VARIABLES.md for LLM env vars.
 """
@@ -49,26 +52,27 @@ _DATA_DIR             = "../data"
 _DEFAULT_SCORES       = "../data/live_alpha_us.csv"
 _DEFAULT_FUNDAMENTALS = "../data/fundamentals.csv"
 _DEFAULT_NEWS         = "../data/news.txt"
-_DEFAULT_OUT          = "../data/stock_report.md"
+_DEFAULT_REPORTS_DIR  = "../reports"
 
 
-def _resolve_out(args_out: str, timestamp: bool) -> str:
+def _resolve_out(args_out: str | None, reports_dir: str, timestamp: bool) -> str:
     """
     Resolve output path.
 
     Priority: explicit --out > --timestamp auto-name > default.
     --timestamp appends YYYYMMDD_HHMM so reports are never overwritten:
         stock_report_20260606_1551.md
+    --reports-dir changes the output folder (default: ../reports).
     """
-    if args_out != _DEFAULT_OUT:
+    if args_out is not None:
         return args_out
 
     if timestamp:
         now = datetime.now(timezone.utc)
         ts  = now.strftime("%Y%m%d_%H%M")
-        return f"{_DATA_DIR}/stock_report_{ts}.md"
+        return f"{reports_dir}/stock_report_{ts}.md"
 
-    return _DEFAULT_OUT
+    return f"{reports_dir}/stock_report.md"
 
 
 def _check_inputs(scores: str, fundamentals: str, news: str) -> None:
@@ -89,7 +93,8 @@ def cmd_report(args) -> None:
     """Generate a stock opportunity report from pipeline outputs."""
     _check_inputs(args.scores, args.fundamentals, args.news)
 
-    feats    = features.extract_all(args.scores, args.fundamentals, args.news)
+    feats    = features.extract_all(args.scores, args.fundamentals, args.news,
+                                    earnings_window=args.earnings_window)
     verdicts = rules.evaluate_all(
         feats,
         min_r2           = args.min_r2,
@@ -110,7 +115,7 @@ def cmd_report(args) -> None:
     else:
         md = report.build(verdicts, date_str=now_str, thresholds=thresholds)
 
-    out_path = _resolve_out(args.out, timestamp=args.timestamp)
+    out_path = _resolve_out(args.out, args.reports_dir, timestamp=args.timestamp)
 
     try:
         os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
@@ -185,12 +190,16 @@ def main() -> None:
                    help=f"Path to fundamentals.csv (default: {_DEFAULT_FUNDAMENTALS})")
     p.add_argument("--news", default=_DEFAULT_NEWS,
                    help=f"Path to news.txt (default: {_DEFAULT_NEWS})")
-    p.add_argument("--out", "-o", default=_DEFAULT_OUT,
-                   help="Output .md path (default: auto)")
+    p.add_argument("--reports-dir", default=_DEFAULT_REPORTS_DIR,
+                   help=f"Directory for report output (default: {_DEFAULT_REPORTS_DIR})")
+    p.add_argument("--out", "-o", default=None,
+                   help="Exact output .md path; overrides --reports-dir (default: auto)")
     p.add_argument("--llm", action="store_true",
                    help="Enhanced report with LLM narratives (requires API key)")
     p.add_argument("--timestamp", action="store_true",
                    help="Save as stock_report_YYYYMMDD_HHMM.md — never overwrites")
+    p.add_argument("--earnings-window", type=int, default=14,
+                   help="Days ahead to treat earnings as imminent and exclude (default: 14)")
     p.add_argument("--min-r2", type=float, default=0.65,
                    help="Minimum r² threshold (default: 0.65)")
     p.add_argument("--min-confidence", type=float, default=0.020,

@@ -238,13 +238,17 @@ print(loadings)  # Factor_1, Factor_2, ... betas
 
 ---
 
-## File Locations (default `./data`)
+## File Locations
 
 ```
-data/
+data/                            # Input data and model artefacts (default ./data)
 ├── us_20260301_143022.json      # Saved model (load with pipeline.load_model())
 ├── us_etf_basis.csv             # ETF factor directions (human-readable)
 ├── us_stock_loadings.csv        # Stock loadings + R² + residual vol
+├── live_alpha_us.csv            # Latest score output
+├── market_snapshot.json         # Latest market data snapshot
+├── news.txt                     # Headlines fetched by news_scanner.py
+├── fundamentals.csv             # Fundamentals fetched by news_scanner.py
 ├── ticker_reference_cache.json  # Company name/industry cache (for markdown reports)
 ├── nyse_*.csv, nasdaq_*.csv     # Reference CSVs (download from exchanges)
 ├── shockarb.log                 # Execution log (rotating, 10MB)
@@ -253,6 +257,19 @@ data/
 │   ├── us_stock_ohlcv.parquet   # Cached stock prices
 │   └── cache_metadata.json      # Cache inventory
 └── backups/                     # Pre-mutation parquet backups (7-day retention)
+
+reports/                         # Generated reports (default ./reports)
+├── market_report.md             # Latest market fit report (overwritten each run)
+├── market_report_YYYYMMDD_HHMM.md   # Timestamped archive (--timestamp flag)
+├── stock_report.md              # Latest stock opportunity report
+└── stock_report_YYYYMMDD_HHMM.md    # Timestamped archive (--timestamp flag)
+```
+
+To write reports to a different folder, pass `--reports-dir /your/path` to either CLI:
+
+```bash
+cd utils && python -m marketfit report --llm --reports-dir C:\Users\me\Desktop\reports
+cd utils && python -m stockfit report --llm --reports-dir C:\Users\me\Desktop\reports
 ```
 
 **Ticker cache maintenance:**

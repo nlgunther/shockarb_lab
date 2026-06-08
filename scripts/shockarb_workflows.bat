@@ -1,9 +1,12 @@
 @echo off
 REM ============================================================
 REM  ShockArb Workflow Commands
-REM  Run from project root: scripts\shockarb_workflows.bat <CMD>
-REM  Usage: shockarb_workflows.bat score
+REM  Can be run from any directory.
+REM  Usage: scripts\shockarb_workflows.bat score
 REM ============================================================
+
+REM Always run from the project root (one level above scripts\)
+cd /d "%~dp0.."
 
 if "%1"=="" goto :help
 goto :%1 2>nul || (echo Unknown command: %1 && goto :help)
@@ -12,7 +15,7 @@ goto :%1 2>nul || (echo Unknown command: %1 && goto :help)
 REM ── SCORE ───────────────────────────────────────────────────
 :score
 echo [ShockArb] Scoring against sticky regime...
-shockarb score
+python -m shockarb score
 goto :end
 
 REM ── MARKET_REPORT ───────────────────────────────────────────
@@ -21,7 +24,7 @@ echo [MarketFit] Refreshing market snapshot...
 python utils\market_data.py
 echo [MarketFit] Generating report (rules-based)...
 cd utils && python -m marketfit report && cd ..
-echo Done. Output: data\market_report.md
+echo Done. Output: reports\market_report.md
 goto :end
 
 REM ── MARKET_REPORT_LLM ───────────────────────────────────────
@@ -30,13 +33,13 @@ echo [MarketFit] Refreshing market snapshot...
 python utils\market_data.py
 echo [MarketFit] Generating LLM-enhanced timestamped report...
 cd utils && python -m marketfit report --llm --timestamp && cd ..
-echo Done. Timestamped report written to data\
+echo Done. Timestamped report written to reports\
 goto :end
 
 REM ── SHOCKARB_SCORE  (canonical training-corpus run) ─────────
 :shockarb_score
 echo [ShockArb] Full scoring run (score + marketfit)...
-shockarb score
+python -m shockarb score
 cd utils && python -m marketfit report --llm --timestamp && cd ..
 goto :end
 
@@ -58,21 +61,21 @@ REM ── STOCK_REPORT ──────────────────�
 :stock_report
 echo [StockFit] Generating stock opportunity report (rules-based)...
 cd utils && python -m stockfit report && cd ..
-echo Done. Output: data\stock_report.md
+echo Done. Output: reports\stock_report.md
 goto :end
 
 REM ── STOCK_REPORT_LLM ─────────────────────────────────────────
 :stock_report_llm
 echo [StockFit] Generating LLM-enhanced stock report (timestamped)...
 cd utils && python -m stockfit report --llm --timestamp && cd ..
-echo Done. Timestamped stock report written to data\
+echo Done. Timestamped stock report written to reports\
 goto :end
 
 REM ── EOD (full end-of-day workflow) ───────────────────────────
 :eod
 echo [EOD] Starting full end-of-day workflow...
 echo Step 1/5: ShockArb score
-shockarb score
+python -m shockarb score
 echo Step 2/5: News + fundamentals
 python utils\news_scanner.py
 echo Step 3/5: Market snapshot
@@ -97,7 +100,7 @@ goto :end
 REM ── BUILD ────────────────────────────────────────────────────
 :build
 echo [Build] Building factor model for sticky regime...
-shockarb build
+python -m shockarb build
 goto :end
 
 REM ── HELP ─────────────────────────────────────────────────────
