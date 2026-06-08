@@ -3,7 +3,7 @@
 *Updated after each session. Captures decisions and context not derivable from reading the code.  
 For API details see API.md; for quick commands see CHEATSHEET.md.*
 
-> Last updated: 2026-06-08 | Trigger: manual (\ukt) | Staleness: Drifting (session 7)
+> Last updated: 2026-06-08T12:35 | Trigger: manual (\ukt) | Staleness: Fresh (session 8)
 
 ---
 
@@ -183,7 +183,7 @@ Run: `python utils/value_score_viz.py --regime ukraine_shock --out data/viz`
 
 ## Test Suite
 
-**`test_stockfit.py` + `test_marketfit.py`: 128/128 passing.** Run with:
+**`test_stockfit.py` + `test_marketfit.py`: 146/146 passing.** Run with:
 ```bash
 PYTHONPYCACHEPREFIX=/tmp/shockarb_pycache python -m pytest tests/test_stockfit.py tests/test_marketfit.py -v
 ```
@@ -198,7 +198,7 @@ PYTHONPYCACHEPREFIX=/tmp/shockarb_pycache python -m pytest tests/test_stockfit.p
 - `tests/test_stockfit.py` — 128 tests across 7 classes: `TestFeatureExtraction` (11), `TestRulesEngine` (13), `TestClusterAnnotation` (4), `TestReportBuild` (18), `TestReportEnhanced` (10), `TestCliResolveOut` (5), `TestCliLoaders` (8; uses `tmp_path` for synthetic file I/O)
 - `tests/test_marketfit.py` — extended with `TestCliLoaders` (9 tests): `_load_news`, `_load_picks`, `_load_fundamentals`, `_is_stale`
 - `tests/test_fundamental_scanner.py` — 26 tests for `fundamental_scanner.py`
-- `tests/test_portfolio_sizer.py` — 5 tests for `--exclude` flag
+- `tests/test_portfolio_sizer.py` — 10 tests: `TestExclude` (5 tests for `--exclude`), `TestTickers` (5 tests for `--tickers`)
 - `tests/test_out_flag.py` — 16 tests via `OutFileContract` / `OutDirContract` base classes; **pattern for new utilities:** subclass the appropriate contract, implement `invoke()`, contract tests are inherited automatically
 - `tests/test_coordinator_phase1.py` — 2 regression tests for head-miss bug fix (`TestGapAnalyseHeadMiss`)
 - `tests/test_regimes.py` — `TestCovidReopening` class (11 tests); count assertion updated to 5
@@ -219,7 +219,7 @@ utils/
 ├── daily_scanner.py        — EOD scanner; honours sticky regime; outputs live_alpha_us/global.csv
 ├── news_scanner.py         — headlines + fundamentals table; --out/-o saves news.txt + fundamentals.csv (default: data/)
 ├── fundamental_scanner.py  — yfinance fundamentals; Fwd P/E cross-check flags bad data with '?'; stale ex-div suppressed
-├── portfolio_sizer.py      — conviction-weighted position sizing; saves data/portfolio_sizer.csv by default; --no-out to suppress
+├── portfolio_sizer.py      — conviction-weighted position sizing; saves data/portfolio_sizer.csv by default; --no-out to suppress; --tickers overrides CSV ranking to size only named tickers
 ├── eval_picks.py           — evaluates pick P&L vs entry prices from trades.csv or portfolio_sizer.csv
 ├── market_data.py          — fetches market snapshot to data/market_snapshot.json (~30s); run before \mktrep
 ├── marketfit/              — local ShockArb-fit condition scorer (rules-based + LLM narrative)
@@ -402,3 +402,4 @@ python verify_install.py --regenerate
 | 2026-06-06 (session 5) | Directory reorganisation completed: `data/reports/`, `docs/archive/`, `docs/corpus/` created; 8 timestamped report MDs moved to `data/reports/`; `docs/VALUE_FRONTIER.md` renamed; `msc/` populated; `tests/` received 2 root-level test files; `utils/value_analyzer.py` moved from root; root now has only MANIFEST.txt + 4 Windows-locked temp files (delete manually); wrote `tests/test_stockfit.py` (128 tests, 7 classes) + extended `tests/test_marketfit.py` with `TestCliLoaders` (9 tests); fixed stale `.pyc` test failures via `PYTHONPYCACHEPREFIX=/tmp/` workaround; 128/128 passing on `test_stockfit.py` + `test_marketfit.py` |
 | 2026-06-07 (session 6) | Fixed `scripts/shockarb_workflows.bat`: added `cd /d "%~dp0.."` to anchor to project root; replaced bare `shockarb` calls with `python -m shockarb`; created `reports/` at project root (separate from `data/reports/`); moved two generated reports there; updated both CLIs with `--reports-dir` flag (default `../reports`) and `--earnings-window` flag (default 14 days); fixed malformed markdown: `$...` → `\$...` in `report.py` and `rules.py`; fixed critical earnings bug — `bool(fund.get("next_earnings"))` replaced by `_earnings_imminent()` using date arithmetic (was causing zero-candidate reports); confirmed 1345 stock report (AMAT/ADI/ETN INCLUDE) is correct; KLAC/QCOM analyst targets confirmed stale in fundamentals.csv (need update) |
 | 2026-06-08 (session 7) | Resolved 3-file merge conflict (`utils/marketfit/cli.py`, `utils/stockfit/cli.py`, `utils/stockfit/features.py`): incoming branch had centralised paths via `paths.py` with absolute paths + `str()` casts; HEAD had `_DEFAULT_REPORTS_DIR` + earnings fix; resolution adopts both intents cleanly — rewrote `utils/paths.py` to use relative `pathlib.Path` objects covering all inputs and outputs, no `str()` casts anywhere; added `_check_cwd()` to both CLI `main()` functions with actionable error message; created `docs/PATHS.md` (full path design rationale); added Documentation Guide section to `docs/README.md`; `reports/` folder is now the canonical CLI output location (not `data/reports/`) |
+| 2026-06-08 (session 8) | Fixed NTFS write-truncation corruptions: `utils/stockfit/features.py` (347 null bytes → rewritten via bash) and `utils/paths.py` (missing outputs section → rewritten via bash); fixed `_DEFAULT_REPORTS_DIR` ImportError in both test files (replaced with `REPORTS_DIR` from `paths`); fixed Windows path-separator mismatch in two `startswith` assertions (`str(out)` → `out.as_posix()`); fixed literal-newline corruption in `features.py` `_load_news()` split; all 146 tests in `test_stockfit.py` + `test_marketfit.py` now passing |

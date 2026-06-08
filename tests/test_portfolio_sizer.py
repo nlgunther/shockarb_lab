@@ -8,6 +8,7 @@ Uses injected fakes for yfinance — no network calls.
 from __future__ import annotations
 
 import os
+import re
 import sys
 from unittest.mock import patch
 
@@ -85,7 +86,7 @@ class TestExclude:
         assert "SNPS" not in out
 
     def test_exclude_nonexistent_ticker_is_harmless(self, tmp_path, capsys):
-        """Excluding a ticker that isn't in the CSV raises no error."""
+        """Excluding a ticker that is not in the CSV raises no error."""
         csv = tmp_path / "alpha.csv"
         _write_alpha_csv(str(csv), _ALPHA_ROWS)
         tickers = ["BLK", "TXN", "SNPS", "PH", "V"]
@@ -105,3 +106,71 @@ class TestExclude:
         with patch("portfolio_sizer.yf.download", return_value=_mock_price(all_tickers)):
             generate_orders([str(csv)], capital=10_000, top_n=5, exclude=all_tickers)
         # should complete without exception; output may be empty
+
+
+# =============================================================================
+# --tickers flag
+# =============================================================================
+
+class TestTickers:
+    """--tickers sizes only the named tickers, bypassing CSV ranking."""
+
+    def test_only_named_tickers_appear(self, tmp_path, capsys):
+        csv = tmp_path / "alpha.csv"
+        _write_alpha_csv(str(csv), _ALPHA_ROWS)
+
+        with patch("portfolio_sizer.yf.download", return_value=_mock_price(["TXN", "PH"])):
+            generate_orders([str(csv)], capital=10_000, tickers=["TXN", "PH"])
+
+        out = capsys.readouterr().out
+        assert "TXN" in out
+        assert "PH" in out
+        assert "BLK" not in out
+        assert "SNPS" not in out
+
+    def test_tickers_overrides_top_n(self, tmp_path, capsys):
+        """--tickers ignores --top; all named tickers are sized regardless of top_n."""
+        csv = tmp_path / "alpha.csv"
+        _write_alpha_csv(str(csv), _ALPHA_ROWS)
+
+        with patch("portfolio_sizer.yf.download", return_value=_mock_price(["BLK", "TXN", "PH"])):
+            generate_orders([str(csv)], capital=10_000, top_n=1, tickers=["BLK", "TXN", "PH"])
+
+        out = capsys.readouterr().out
+        assert "BLK" in out
+        assert "TXN" in out
+        assert "PH" in out
+
+    def test_tickers_is_case_insensitive(self, tmp_path, capsys):
+        csv = tmp_path / "alpha.csv"
+        _write_alpha_csv(str(csv), _ALPHA_ROWS)
+
+        with patch("portfolio_sizer.yf.download", return_value=_mock_price(["BLK"])):
+            generate_orders([str(csv)], capital=10_000, tickers=["blk"])
+
+        out = capsys.readouterr().out
+        assert "BLK" in out
+
+    def test_weights_sum_to_one(self, tmp_path, capsys):
+        """Conviction weights for the filtered set must sum to 100%."""
+        csv = tmp_path / "alpha.csv"
+        _write_alpha_csv(str(csv), _ALPHA_ROWS)
+
+        with patch("portfolio_sizer.yf.download", return_value=_mock_price(["BLK", "TXN"])):
+            generate_orders([str(csv)], capital=10_000, tickers=["BLK", "TXN"])
+
+        out = capsys.readouterr().out
+        weights = [float(w.rstrip("%")) for w in re.findall(r"\d+\.\d+%", out)]
+        assert abs(sum(weights) - 100.0) < 0.2
+
+    def test_tickers_not_in_csv_are_silently_skipped(self, tmp_path, capsys):
+        """A ticker named in --tickers but absent from the CSV is skipped without error."""
+        csv = tmp_path / "alpha.csv"
+        _write_alpha_csv(str(csv), _ALPHA_ROWS)
+
+        with patch("portfolio_sizer.yf.download", return_value=_mock_price(["BLK"])):
+            generate_orders([str(csv)], capital=10_000, tickers=["BLK", "BOGUS"])
+
+        out = capsys.readouterr().out
+        assert "BLK" in out
+        assert "BOGUS" not in out

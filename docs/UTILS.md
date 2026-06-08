@@ -149,6 +149,9 @@ python utils/portfolio_sizer.py --csv data/live_alpha_us.csv --capital 50000 --t
 python utils/portfolio_sizer.py \
     --csv data/live_alpha_us.csv data/live_alpha_global.csv \
     --capital 200000 --top 8
+
+# Size only the tickers the stock report flagged INCLUDE (bypasses CSV ranking)
+python utils/portfolio_sizer.py --tickers AMAT ADI ETN --capital 10000
 ```
 
 **Arguments**
@@ -157,8 +160,9 @@ python utils/portfolio_sizer.py \
 |----------|---------|-------------|
 | `--csv` | `./data/live_alpha_us.csv` | Path(s) to score CSVs. Merged before ranking. |
 | `--capital` | `100000` | Total dollar capital to allocate. |
-| `--top` | `5` | Number of positions. |
-| `--exclude` / `-e` | — | Tickers to exclude before ranking (e.g. `--exclude SNPS BSX`). Case-insensitive. |
+| `--top` | `5` | Number of positions. Ignored when `--tickers` is set. |
+| `--tickers` / `-t` | — | Size only these tickers. Bypasses CSV ranking, `--top`, and `--exclude`. Case-insensitive. Use this to act on the INCLUDE list from the stock report. |
+| `--exclude` / `-e` | — | Tickers to exclude before ranking (e.g. `--exclude SNPS BSX`). Case-insensitive. Ignored when `--tickers` is set. |
 | `--out` / `-o` | `./data/portfolio_sizer.csv` | Save ticket to CSV at this path. |
 | `--no-out` / `-sout` | — | Suppress CSV output. |
 

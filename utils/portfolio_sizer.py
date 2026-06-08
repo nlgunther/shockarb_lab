@@ -21,6 +21,9 @@ Usage examples
     python utils/portfolio_sizer.py --csv data/live_alpha_us.csv --capital 100000 \
         --exclude SNPS BSX
 
+    # Size only specific tickers (bypasses CSV ranking entirely)
+    python utils/portfolio_sizer.py --tickers AMAT ADI ETN --capital 10000
+
     # Suppress file output entirely
     python utils/portfolio_sizer.py --csv data/live_alpha_us.csv --capital 100000 --no-out
 
@@ -48,6 +51,7 @@ def generate_orders(
     top_n: int = 5,
     exclude: list[str] | None = None,
     out: str | None = _DEFAULT_OUT,
+    tickers: list[str] | None = None,
 ) -> None:
     """
     Print a trade ticket for the top-N conviction signals.
@@ -59,14 +63,19 @@ def generate_orders(
     capital : float
         Total dollar capital to allocate.
     top_n : int
-        Number of positions to take.
+        Number of positions to take.  Ignored when tickers is set.
     exclude : list of str, optional
         Tickers to exclude before ranking (e.g. catalyst-driven traps).
+        Ignored when tickers is set.
     out : str, optional
         Path to save the ticket CSV.  Defaults to data/portfolio_sizer.csv.
         Pass None to suppress file output.
+    tickers : list of str, optional
+        If supplied, only these tickers are sized (CSV ranking is bypassed).
+        Overrides top_n and exclude.
     """
     exclude = [t.upper() for t in (exclude or [])]
+    tickers = [t.upper() for t in (tickers or [])]
     dfs = []
     for path in csv_paths:
         if not os.path.exists(path):
@@ -93,13 +102,15 @@ def generate_orders(
         logger.error(f"  Available columns: {list(master.columns)}")
         return
 
-    if exclude:
+    if tickers:
+        master = master[master["Ticker"].str.upper().isin(tickers)]
+    elif exclude:
         master = master[~master["Ticker"].str.upper().isin(exclude)]
 
     buys = (
         master[master["confidence_delta"] > 0]
         .sort_values("confidence_delta", ascending=False)
-        .head(top_n)
+        .head(top_n if not tickers else len(master))
     )
 
     if buys.empty:
@@ -107,9 +118,9 @@ def generate_orders(
         return
 
     # Fetch live prices
-    tickers = buys["Ticker"].tolist()
-    logger.info(f"Fetching live prices for: {tickers}")
-    raw = yf.download(tickers, period="1d", progress=False, auto_adjust=False)
+    ticker_list = buys["Ticker"].tolist()
+    logger.info(f"Fetching live prices for: {ticker_list}")
+    raw = yf.download(ticker_list, period="1d", progress=False, auto_adjust=False)
 
     # Resolve price series robustly (MultiIndex or flat)
     if isinstance(raw.columns, pd.MultiIndex):
@@ -187,11 +198,15 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--top", type=int, default=5,
-        help="Number of top positions (default: 5)",
+        help="Number of top positions (default: 5); ignored when --tickers is set",
     )
     parser.add_argument(
         "--exclude", "-e", nargs="+", default=[],
-        help="Tickers to exclude before ranking (e.g. --exclude SNPS BSX)",
+        help="Tickers to exclude before ranking (e.g. --exclude SNPS BSX); ignored when --tickers is set",
+    )
+    parser.add_argument(
+        "--tickers", "-t", nargs="+", default=[],
+        help="Size only these tickers; bypasses CSV ranking, --top, and --exclude (e.g. --tickers AMAT ADI ETN)",
     )
     parser.add_argument(
         "--out", "-o", default=_DEFAULT_OUT,
@@ -203,4 +218,4 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     out = None if args.no_out else args.out
-    generate_orders(args.csv, args.capital, args.top, args.exclude, out)
+    generate_orders(args.csv, args.capital, args.top, args.exclude, out, args.tickers)
