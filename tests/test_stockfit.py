@@ -22,6 +22,7 @@ import sys
 import textwrap
 
 import pytest
+from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "utils"))
 
@@ -594,37 +595,38 @@ class TestCliResolveOut:
     """cli._resolve_out() filename logic."""
 
     def setup_method(self):
-        from stockfit.cli import _resolve_out, _DEFAULT_REPORTS_DIR
+        from stockfit.cli import _resolve_out
+        from paths import REPORTS_DIR
         self._resolve_out  = _resolve_out
-        self._reports_dir  = _DEFAULT_REPORTS_DIR
+        self._reports_dir  = REPORTS_DIR
 
     def test_no_timestamp_returns_default(self):
         out = self._resolve_out(None, self._reports_dir, timestamp=False)
-        assert out == f"{self._reports_dir}/stock_report.md"
+        assert out == self._reports_dir / "stock_report.md"
 
     def test_timestamp_produces_datestamped_name(self):
         out = self._resolve_out(None, self._reports_dir, timestamp=True)
-        assert "stock_report_" in out
+        assert "stock_report_" in str(out)
         import re
-        assert re.search(r"\d{8}_\d{4}", out), f"No YYYYMMDD_HHMM in: {out}"
+        assert re.search(r"\d{8}_\d{4}", str(out)), f"No YYYYMMDD_HHMM in: {out}"
 
     def test_timestamp_output_ends_with_md(self):
         out = self._resolve_out(None, self._reports_dir, timestamp=True)
-        assert out.endswith(".md")
+        assert out.suffix == ".md"
 
     def test_explicit_out_always_honoured(self):
-        assert self._resolve_out("/tmp/custom.md", self._reports_dir, timestamp=True) == "/tmp/custom.md"
+        assert self._resolve_out("/tmp/custom.md", self._reports_dir, timestamp=True) == Path("/tmp/custom.md")
 
     def test_explicit_out_without_timestamp(self):
-        assert self._resolve_out("/tmp/out.md", self._reports_dir, timestamp=False) == "/tmp/out.md"
+        assert self._resolve_out("/tmp/out.md", self._reports_dir, timestamp=False) == Path("/tmp/out.md")
 
     def test_custom_reports_dir_is_used(self):
         out = self._resolve_out(None, "/my/reports", timestamp=False)
-        assert out == "/my/reports/stock_report.md"
+        assert out == Path("/my/reports/stock_report.md")
 
     def test_custom_reports_dir_used_in_timestamp_path(self):
         out = self._resolve_out(None, "/my/reports", timestamp=True)
-        assert out.startswith("/my/reports/stock_report_")
+        assert out.as_posix().startswith("/my/reports/stock_report_")
 
 
 # =============================================================================

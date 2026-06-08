@@ -78,6 +78,7 @@ def _resolve_out(args_out: str | None, reports_dir: Path, timestamp: bool) -> Pa
     if args_out is not None:
         return Path(args_out)
 
+    reports_dir = Path(reports_dir)   # accept str or Path from argparse / tests
     if timestamp:
         now = datetime.now(timezone.utc)
         ts  = now.strftime("%Y%m%d_%H%M")
@@ -228,4 +229,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-    

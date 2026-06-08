@@ -85,6 +85,7 @@ def _resolve_out(args_out: str | None, reports_dir: Path, snapshot: dict, timest
     if args_out is not None:
         return Path(args_out)   # explicit path always wins
 
+    reports_dir = Path(reports_dir)   # accept str or Path from argparse / tests
     mode = snapshot.get("mode", "daily")
     base = "market_report_intraday" if mode == "intraday" else "market_report"
 
@@ -279,4 +280,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-     

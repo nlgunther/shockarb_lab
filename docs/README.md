@@ -6,6 +6,19 @@ ShockArb decomposes daily stock returns into a macro-factor-explained component 
 
 ---
 
+## Documentation Guide
+
+| File | Contents |
+|------|----------|
+| `README.md` | This file — project overview, quick start, maths, CLI reference |
+| `CHEATSHEET.md` | Day-to-day command reference; signal interpretation; troubleshooting |
+| `API.md` | Complete function and class reference for the `shockarb` package |
+| `UTILS.md` | Reference for post-scoring utility scripts (`news_scanner.py`, `portfolio_sizer.py`, etc.) |
+| `PATHS.md` | Path design: why `paths.py` is the single source of truth, relative-path convention, CWD requirement, full path table |
+| `KT.md` | Knowledge Transfer — session history, active decisions, open issues |
+
+---
+
 ## Quick Start
 
 ```bash

@@ -3,7 +3,7 @@
 *Updated after each session. Captures decisions and context not derivable from reading the code.  
 For API details see API.md; for quick commands see CHEATSHEET.md.*
 
-> Last updated: 2026-06-06 | Trigger: manual (\ukt) | Staleness: Fresh (session 5)
+> Last updated: 2026-06-08 | Trigger: manual (\ukt) | Staleness: Drifting (session 7)
 
 ---
 
@@ -90,16 +90,18 @@ data/
 ├── nyse_*.csv, nasdaq_*.csv                      ← reference data
 ├── live_alpha_us.csv / live_alpha_global.csv     ← daily scanner / shockarb score output
 ├── market_snapshot.json                          ← market_data.py output (refresh after 4pm)
-├── market_report.md                              ← latest market-report (overwritten each run without --timestamp)
-├── market_report_YYYYMMDD_HHMM.md               ← timestamped training-corpus copies (--timestamp flag)
-├── market_report_intraday.md                     ← intraday variant
-├── stock_report.md                               ← latest stock opportunity report (overwritten without --timestamp)
-├── stock_report_YYYYMMDD_HHMM.md                ← timestamped stock report corpus copies (--timestamp flag)
 ├── news.txt / fundamentals.csv                   ← news_scanner output
 ├── portfolio_sizer.csv                           ← portfolio_sizer default output
 ├── viz/                                          ← value_score_viz.py output PNGs + CSV
 ├── cache/                                        ← parquet OHLCV cache
 └── backups/                                      ← pre-mutation parquet backups (7-day)
+
+reports/                                          ← generated Markdown reports (project root)
+├── market_report.md                              ← latest market report (overwritten without --timestamp)
+├── market_report_YYYYMMDD_HHMM.md               ← timestamped archive (--timestamp flag)
+├── market_report_intraday.md                     ← intraday variant
+├── stock_report.md                               ← latest stock opportunity report
+└── stock_report_YYYYMMDD_HHMM.md                ← timestamped archive (--timestamp flag)
 ```
 
 **Regime-qualified model filenames:** `build` now names files `{regime}_{universe}_{timestamp}.json` (e.g. `ukraine_shock_us_20260528_143030.json`). Legacy files named `us_*.json` still exist but are ignored when a sticky regime is set. `find_latest_model(name, exec_cfg, regime=regime.name)` must always be called with the regime argument — all five CLI commands (`score`, `export`, `show`, `add-asset`, `remove-asset`) were fixed to pass it unconditionally (not just when `--regime` is on the command line).
@@ -213,6 +215,7 @@ Key fixture hierarchy in `conftest.py`:
 
 ```
 utils/
+├── paths.py                — canonical path registry; all pipeline paths as relative Path objects; no str() casts anywhere; see docs/PATHS.md
 ├── daily_scanner.py        — EOD scanner; honours sticky regime; outputs live_alpha_us/global.csv
 ├── news_scanner.py         — headlines + fundamentals table; --out/-o saves news.txt + fundamentals.csv (default: data/)
 ├── fundamental_scanner.py  — yfinance fundamentals; Fwd P/E cross-check flags bad data with '?'; stale ex-div suppressed
@@ -232,7 +235,7 @@ utils/
 │   ├── rules.py            — pure: features → StockVerdict (INCLUDE / WATCH / EXCLUDE) with reason + cluster annotation
 │   ├── report.py           — pure: verdicts → Markdown report string with <!-- LEARN --> tags per ticker
 │   ├── llm.py              — Anthropic/Gemini client; generates per-ticker narrative + executive summary
-│   └── cli.py              — `python -m stockfit report [--llm] [--timestamp] [--min-r2] [--min-confidence] [--min-upside]`
+│   └── cli.py              — `python -m stockfit report [--llm] [--timestamp] [--min-r2] [--min-confidence] [--min-upside] [--reports-dir]`
 ├── csv_to_md.py         — converts alpha CSV to markdown report
 ├── score_viz.py         — confidence_delta bubble chart + factor heatmap (ShockArb-only)
 ├── value_score_viz.py   — value screener × ShockArb 3-figure suite + combined CSV
@@ -260,8 +263,8 @@ Smoke-test result (2026-06-06): 3 INCLUDE (AMAT, ADI, ETN), 2 WATCH (LRCX, ASML)
 shockarb score                                              → data/live_alpha_us.csv
 python utils\news_scanner.py                                → data/fundamentals.csv + news.txt
 python utils\market_data.py                                 → data/market_snapshot.json
-cd utils && python -m marketfit report --llm --timestamp && cd ..  → data/market_report_YYYYMMDD_HHMM.md
-cd utils && python -m stockfit report --llm --timestamp && cd ..   → data/stock_report_YYYYMMDD_HHMM.md
+cd utils && python -m marketfit report --llm --timestamp && cd ..  → reports/market_report_YYYYMMDD_HHMM.md
+cd utils && python -m stockfit report --llm --timestamp && cd ..   → reports/stock_report_YYYYMMDD_HHMM.md
 ```
 Or: `scripts\shockarb_workflows.bat eod` (also aliased as `full`).
 
@@ -296,8 +299,7 @@ Reorganisation completed 2026-06-06 (session 5). Root is clean; all loose files 
 
 ```
 shockarb_lab/
-├── data/                   ← all runtime outputs and cache
-│   ├── reports/            ← timestamped report MDs (market/stock/intraday + live_alpha MDs)
+├── data/                   ← runtime model artefacts, scores, and cache
 │   ├── cache/              ← parquet OHLCV cache
 │   ├── backups/            ← pre-mutation parquet backups (7-day)
 │   └── viz/                ← value_score_viz.py output PNGs + CSV
@@ -312,7 +314,8 @@ shockarb_lab/
 ├── examples/               ← unchanged
 ├── msc/                    ← diagnostic/one-off scripts
 │   │                          (check_1991.py, explain_score.py, load_tickers.py, peek_manifest.py)
-├── reports/                ← alpha reports (scored stock lists, ad-hoc names from March 2026)
+├── reports/                ← generated Markdown reports (market_report, stock_report — default CLI output)
+│   └── stock_report_20260607_1345.md  ← example timestamped archive
 ├── scripts/                ← .bat / .sh command wrappers (shockarb_workflows.bat)
 ├── shockarb/               ← core package
 ├── skills/                 ← Cowork skill definitions (market-report-workspace eval scaffolding
@@ -320,6 +323,7 @@ shockarb_lab/
 ├── tests/                  ← all test files (test_cli_regime_additions.py +
 │                              test_pipeline_regime_additions.py moved from root)
 ├── utils/                  ← utility scripts + marketfit/ + stockfit/
+│   ├── paths.py            ← canonical path registry (relative Path objects; see docs/PATHS.md)
 │   └── value_analyzer.py   ← moved from root
 ├── MANIFEST.txt
 └── verify_install.py
@@ -396,3 +400,5 @@ python verify_install.py --regenerate
 | 2026-06-06 (session 3) | Added `--llm` flag to `marketfit report`: calls `utils/marketfit/llm.py` (Gemini API) to generate narrative sections; `--timestamp` flag appends `_YYYYMMDD_HHMM` to output filename for training corpus accumulation; first timestamped report `market_report_2026-06-06_0342.md` produced successfully; `<!-- LEARN section difficulty inputs -->` HTML-comment markup scheme designed for training data extraction; multi-vendor FMP plan documented in `docs/PLAN_fmp_fundamentals.md`; session ended with context overflow — state recovered from `update06062026.md`; session management / checkpoint discipline added to KT.md |
 | 2026-06-06 (session 4) | Built `utils/stockfit/` package: 5-module parallel to `marketfit` for per-ticker stock opportunity report; `features.py` reads live_alpha_us.csv + fundamentals.csv + news.txt; `rules.py` applies r²/conf_delta/analyst-upside gates → INCLUDE/WATCH/EXCLUDE with cluster-risk annotation; `report.py` produces 3-section Markdown with <!-- LEARN --> per ticker; `llm.py` generates per-ticker narratives + executive summary via Anthropic/Gemini; `cli.py` with `--llm --timestamp --min-r2 --min-confidence --min-upside` flags; smoke-tested on live data: 3 INCLUDE (AMAT/ADI/ETN), 2 WATCH (LRCX/ASML), KLAC/QCOM data-quality excluded; added `stock_report` and `stock_report_llm` commands to `scripts/shockarb_workflows.bat`; EOD workflow updated to 5 steps; KT.md updated |
 | 2026-06-06 (session 5) | Directory reorganisation completed: `data/reports/`, `docs/archive/`, `docs/corpus/` created; 8 timestamped report MDs moved to `data/reports/`; `docs/VALUE_FRONTIER.md` renamed; `msc/` populated; `tests/` received 2 root-level test files; `utils/value_analyzer.py` moved from root; root now has only MANIFEST.txt + 4 Windows-locked temp files (delete manually); wrote `tests/test_stockfit.py` (128 tests, 7 classes) + extended `tests/test_marketfit.py` with `TestCliLoaders` (9 tests); fixed stale `.pyc` test failures via `PYTHONPYCACHEPREFIX=/tmp/` workaround; 128/128 passing on `test_stockfit.py` + `test_marketfit.py` |
+| 2026-06-07 (session 6) | Fixed `scripts/shockarb_workflows.bat`: added `cd /d "%~dp0.."` to anchor to project root; replaced bare `shockarb` calls with `python -m shockarb`; created `reports/` at project root (separate from `data/reports/`); moved two generated reports there; updated both CLIs with `--reports-dir` flag (default `../reports`) and `--earnings-window` flag (default 14 days); fixed malformed markdown: `$...` → `\$...` in `report.py` and `rules.py`; fixed critical earnings bug — `bool(fund.get("next_earnings"))` replaced by `_earnings_imminent()` using date arithmetic (was causing zero-candidate reports); confirmed 1345 stock report (AMAT/ADI/ETN INCLUDE) is correct; KLAC/QCOM analyst targets confirmed stale in fundamentals.csv (need update) |
+| 2026-06-08 (session 7) | Resolved 3-file merge conflict (`utils/marketfit/cli.py`, `utils/stockfit/cli.py`, `utils/stockfit/features.py`): incoming branch had centralised paths via `paths.py` with absolute paths + `str()` casts; HEAD had `_DEFAULT_REPORTS_DIR` + earnings fix; resolution adopts both intents cleanly — rewrote `utils/paths.py` to use relative `pathlib.Path` objects covering all inputs and outputs, no `str()` casts anywhere; added `_check_cwd()` to both CLI `main()` functions with actionable error message; created `docs/PATHS.md` (full path design rationale); added Documentation Guide section to `docs/README.md`; `reports/` folder is now the canonical CLI output location (not `data/reports/`) |

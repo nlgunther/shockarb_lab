@@ -56,7 +56,6 @@ def _load_scores(path: str) -> list[dict[str, Any]]:
         reader = csv.DictReader(text.splitlines())
         for row in reader:
             entry: dict[str, Any] = {}
-            # Ticker column may be empty string (index column) or named 'Ticker'/'ticker'
             raw = {k.strip(): v.strip() for k, v in row.items()}
             ticker = (
                 raw.get("Ticker") or raw.get("ticker") or raw.get("")
@@ -185,9 +184,9 @@ def extract_all(
         for c in candidates:
             print(c["ticker"], c["confidence_delta"], c["analyst_upside"])
     """
-    scores = _load_scores(scores_path)
+    scores       = _load_scores(scores_path)
     fundamentals = _load_fundamentals(fundamentals_path)
-    news = _load_news(news_path)
+    news         = _load_news(news_path)
 
     results = []
     for row in scores:
@@ -235,4 +234,3 @@ def extract_all(
 
     results.sort(key=lambda d: d.get("confidence_delta") or float("-inf"), reverse=True)
     return results
-                                                                                                                                                                                                                                                                                                                                                           
