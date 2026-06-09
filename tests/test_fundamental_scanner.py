@@ -21,6 +21,7 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "utils"))
 
 from fundamental_scanner import (
+    _load_overrides,
     _next_dividend,
     _next_earnings,
     _safe_get,
@@ -289,6 +290,89 @@ class TestFetchFundamentals:
         rows = fetch_fundamentals([])
         assert rows == []
         mock_ticker_cls.assert_not_called()
+
+
+# =============================================================================
+# analyst overrides
+# =============================================================================
+
+class TestLoadOverrides:
+    """_load_overrides parses analyst_overrides.csv correctly."""
+
+    def test_valid_csv(self, tmp_path):
+        csv = tmp_path / "overrides.csv"
+        csv.write_text("Ticker,Analyst Tgt\nKLAC,1855.00\nQCOM,185.50\n")
+        result = _load_overrides(csv)
+        assert result == {"KLAC": 1855.00, "QCOM": 185.50}
+
+    def test_missing_file_returns_empty(self, tmp_path):
+        result = _load_overrides(tmp_path / "nonexistent.csv")
+        assert result == {}
+
+    def test_blank_target_skipped(self, tmp_path):
+        csv = tmp_path / "overrides.csv"
+        csv.write_text("Ticker,Analyst Tgt\nKLAC,\nQCOM,185.00\n")
+        result = _load_overrides(csv)
+        assert "KLAC" not in result
+        assert result["QCOM"] == 185.00
+
+    def test_non_numeric_target_skipped(self, tmp_path):
+        csv = tmp_path / "overrides.csv"
+        csv.write_text("Ticker,Analyst Tgt\nKLAC,n/a\nQCOM,185.00\n")
+        result = _load_overrides(csv)
+        assert "KLAC" not in result
+
+    def test_ticker_normalised_to_upper(self, tmp_path):
+        csv = tmp_path / "overrides.csv"
+        csv.write_text("Ticker,Analyst Tgt\nklac,1855.00\n")
+        result = _load_overrides(csv)
+        assert "KLAC" in result
+
+    def test_dollar_sign_stripped(self, tmp_path):
+        csv = tmp_path / "overrides.csv"
+        csv.write_text('Ticker,Analyst Tgt\nKLAC,"$1,855.00"\n')
+        result = _load_overrides(csv)
+        assert result["KLAC"] == 1855.00
+
+
+class TestFetchFundamentalsOverrides:
+    """fetch_fundamentals applies analyst_overrides.csv with highest priority."""
+
+    def _make_ticker_mock(self, target: float = 120.0):
+        info = {
+            "currentPrice": 100.0, "forwardPE": 20.0,
+            "trailingEps": 5.0, "forwardEps": 5.5,
+            "targetMeanPrice": target,
+        }
+        t = MagicMock()
+        t.info = info
+        idx = pd.DatetimeIndex([pd.Timestamp("2026-09-01", tz="UTC")])
+        t.earnings_dates = pd.DataFrame(
+            {"EPS Estimate": [5.5], "Reported EPS": [float("nan")]}, index=idx
+        )
+        return t
+
+    @patch("fundamental_scanner.yf.Ticker")
+    def test_override_replaces_yfinance_target(self, mock_ticker_cls, tmp_path):
+        mock_ticker_cls.return_value = self._make_ticker_mock(target=120.0)
+        csv = tmp_path / "overrides.csv"
+        csv.write_text("Ticker,Analyst Tgt\nAAPL,999.00\n")
+        rows = fetch_fundamentals(["AAPL"], overrides_path=csv)
+        assert rows[0]["Analyst Tgt"] == "999.00"
+
+    @patch("fundamental_scanner.yf.Ticker")
+    def test_yfinance_used_when_no_override(self, mock_ticker_cls, tmp_path):
+        mock_ticker_cls.return_value = self._make_ticker_mock(target=120.0)
+        csv = tmp_path / "overrides.csv"
+        csv.write_text("Ticker,Analyst Tgt\nMSFT,999.00\n")   # different ticker
+        rows = fetch_fundamentals(["AAPL"], overrides_path=csv)
+        assert rows[0]["Analyst Tgt"] == "120.00"
+
+    @patch("fundamental_scanner.yf.Ticker")
+    def test_missing_overrides_file_does_not_raise(self, mock_ticker_cls, tmp_path):
+        mock_ticker_cls.return_value = self._make_ticker_mock(target=120.0)
+        rows = fetch_fundamentals(["AAPL"], overrides_path=tmp_path / "nonexistent.csv")
+        assert rows[0]["Analyst Tgt"] == "120.00"
 
 
 # =============================================================================

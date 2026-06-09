@@ -21,11 +21,26 @@ Data pulled per ticker
     Est. EPS        Consensus EPS estimate for next quarter
     Ex-Div          Next ex-dividend date (suppressed if > 2 years old)
     Div Amt         Next dividend amount
-    Target          Mean analyst 12-month price target
+    Analyst Tgt     Mean analyst 12-month price target
+
+Analyst target priority
+-----------------------
+    1. yfinance ``targetMeanPrice``  — always fetched
+    2. ``data/analyst_overrides.csv`` — manual per-ticker overrides; always wins.
+
+    Edit ``data/analyst_overrides.csv`` to pin a target for any ticker::
+
+        Ticker,Analyst Tgt
+        KLAC,1855.00
+        QCOM,185.00
+
+    Blank or non-numeric rows are silently skipped.
+    Override file path can be changed via the ``overrides_path`` argument.
 """
 
 from __future__ import annotations
 
+import csv as _csv
 import json
 import os
 from datetime import datetime, timezone
@@ -38,8 +53,10 @@ from loguru import logger
 # Suppress noisy per-ticker debug lines — callers see INFO and above only.
 logger.disable("fundamental_scanner")
 
-# Default cache location — mirrors the project's data directory convention
-_DEFAULT_CACHE = Path(os.environ.get("SHOCK_ARB_DATA_DIR", "./data")) / "fundamentals_cache.json"
+# Default paths — both honour SHOCK_ARB_DATA_DIR if set
+_DATA_DIR          = Path(os.environ.get("SHOCK_ARB_DATA_DIR", "./data"))
+_DEFAULT_CACHE     = _DATA_DIR / "fundamentals_cache.json"
+_DEFAULT_OVERRIDES = _DATA_DIR / "analyst_overrides.csv"
 
 # Ex-dividend dates older than this many days are almost certainly stale yfinance
 # artifacts (e.g. pre-suspension data for companies that no longer pay dividends).
@@ -153,9 +170,45 @@ def _save_cache(cache: dict, cache_path: Path) -> None:
     cache_path.write_text(json.dumps(cache, indent=2))
 
 
+def _load_overrides(path: Path) -> dict[str, float]:
+    """
+    Load per-ticker analyst target overrides from a CSV file.
+
+    CSV format (header required)::
+
+        Ticker,Analyst Tgt
+        KLAC,1855.00
+        QCOM,185.00
+
+    Rows with a blank or non-numeric ``Analyst Tgt`` are silently skipped.
+    Missing file is silently ignored (returns ``{}``).
+
+    Returns
+    -------
+    dict mapping ticker (upper) → float target
+    """
+    result: dict[str, float] = {}
+    try:
+        text = path.read_text(encoding="utf-8")
+        for row in _csv.DictReader(text.splitlines()):
+            ticker = row.get("Ticker", "").strip().upper()
+            raw    = row.get("Analyst Tgt", "").strip().replace("$", "").replace(",", "")
+            if ticker and raw:
+                try:
+                    result[ticker] = float(raw)
+                except ValueError:
+                    pass
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        logger.warning(f"[Overrides] Failed to load {path}: {exc}")
+    return result
+
+
 def fetch_fundamentals(
     tickers: list[str],
     cache_path: Path | str = _DEFAULT_CACHE,
+    overrides_path: Path | None = None,
 ) -> list[dict]:
     """
     Fetch fundamental data for each ticker, write to cache, and return row dicts.
@@ -172,6 +225,10 @@ def fetch_fundamentals(
         Ticker symbols to fetch.
     cache_path : Path or str, optional
         Where to persist the cache. Defaults to ``_DEFAULT_CACHE``.
+    overrides_path : Path, optional
+        Path to ``analyst_overrides.csv``. Defaults to ``_DEFAULT_OVERRIDES``.
+        Overrides are applied last and always win over yfinance values.
+        Pass a non-existent path to disable.
 
     Returns
     -------
@@ -183,7 +240,9 @@ def fetch_fundamentals(
         rows = fetch_fundamentals(["BLK", "TXN"])
         print_fundamentals(rows)
     """
-    cache_path = Path(cache_path)
+    cache_path     = Path(cache_path)
+    overrides_path = Path(overrides_path) if overrides_path else _DEFAULT_OVERRIDES
+    overrides      = _load_overrides(overrides_path)
     cache = _load_cache(cache_path)
     rows = []
     for symbol in tickers:
@@ -193,6 +252,10 @@ def fetch_fundamentals(
 
             earn_date, earn_est = _next_earnings(t)
             ex_date, div_amt    = _next_dividend(info)
+
+            yf_target = _safe_get(info, "targetMeanPrice", ".2f")
+            override  = overrides.get(symbol.upper())
+            tgt       = f"{override:.2f}" if override is not None else yf_target
 
             row = {
                 "Ticker":        symbol,
@@ -204,7 +267,7 @@ def fetch_fundamentals(
                 "Est. EPS":      earn_est,
                 "Ex-Div":        ex_date,
                 "Div Amt":       div_amt,
-                "Analyst Tgt":   _safe_get(info, "targetMeanPrice", ".2f"),
+                "Analyst Tgt":   tgt,
             }
             rows.append(row)
             cache[symbol] = {**row, "_cached_at": datetime.now().isoformat(timespec="seconds")}

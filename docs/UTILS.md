@@ -6,7 +6,8 @@ Command-line scripts that form the post-scoring workflow. Each runs standalone f
 utils/
 ├── daily_scanner.py        Score today's tape → export CSVs         (start here each day)
 ├── news_scanner.py         Fetch headlines + fundamentals for top targets
-├── fundamental_scanner.py  Fetch yfinance fundamentals table (imported by news_scanner)
+├── fundamental_scanner.py  Fetch yfinance fundamentals table (imported by news_scanner);
+│                           analyst targets overridden by data/analyst_overrides.csv
 ├── portfolio_sizer.py      Size a conviction-weighted trade ticket
 ├── eval_picks.py           Evaluate pick performance vs entry prices
 ├── csv_to_md.py            Convert a score CSV to a Markdown report
