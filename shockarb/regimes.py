@@ -358,6 +358,46 @@ GLOBAL_UKRAINE_SHOCK = HistoricFactorModel(
     supersedes=None,
 )
 
+# Iran Shock -- US-Israel Operation Epic Fury + Strait of Hormuz closure (Feb-Apr 2026)
+# Calibrated on the current active shock; preferred over ukraine_shock while the conflict
+# persists. Switch to gulf_war_recovery if a ceasefire and Strait reopening materialize.
+IRAN_SHOCK = HistoricFactorModel(
+    name="iran_shock",
+    description="US-Israel strike on Iran / Strait of Hormuz closure (Feb-Apr 2026)",
+    narrative=(
+        "The US-Israel Operation Epic Fury (February 28, 2026) and Iran's subsequent"
+        " declaration of Strait of Hormuz closure (March 4, 2026) created the largest"
+        " oil supply disruption in market history — surpassing the 1973 OPEC embargo"
+        " per the IEA. Brent crude surged past $100/barrel; ~20% of global oil supply"
+        " was disrupted. The factor structure mirrors ukraine_shock — (1) market beta,"
+        " (2) energy/oil spike, (3) defensive rotation into bonds/gold/defense — but"
+        " calibrated on the *current* shock window, giving higher R² for names that"
+        " are actively responding to this specific event rather than the 2022 analog."
+        " Stocks with high R² that sold off harder than factor-implied are the core"
+        " mean-reversion candidates if the Strait reopens or a ceasefire is reached."
+        " Use this regime in preference to ukraine_shock while the Iran conflict remains"
+        " active."
+    ),
+    universe=UniverseConfig(
+        name="us_iran",
+        market_etfs=_US_MACRO_ETFS,
+        individual_stocks=_US_STOCKS,
+        n_components=3,
+        start_date="2026-02-24",
+        end_date="2026-04-30",
+    ),
+    expected_dynamics={
+        "energy": "violent rally (XOM, CVX, OXY; oil >$100)",
+        "defense": "rally (+15-25% vs SPY; LMT, RTX, NOC, GD)",
+        "tech": "sell off (-15-25% vs SPY; inflation + risk-off headwind)",
+        "airlines": "severe sell off (-30-40%; fuel cost spike on top of risk-off)",
+        "staples": "mild outperformance (defensive rotation)",
+        "financials": "mixed (stagflation uncertainty vs credit risk)",
+    },
+    tags=("geopolitical", "energy_shock", "strait_closure", "acute_crisis"),
+    supersedes=None,
+)
+
 # Post-COVID reopening -- vaccine announcement to pre-taper tantrum (Nov 2020 - Feb 2021)
 # The cleanest risk-on regime of the last decade: VIX collapsed, cyclicals/energy surged,
 # bonds sold off, defensives lagged. Use to score days where macro tailwinds drive
@@ -409,6 +449,7 @@ REGIME_REGISTRY: Dict[str, HistoricFactorModel] = {
     "liberation_day_recovery":  LIBERATION_DAY_RECOVERY,
     "global_ukraine_shock":     GLOBAL_UKRAINE_SHOCK,
     "covid_reopening":          COVID_REOPENING,
+    "iran_shock":               IRAN_SHOCK,
 }
 
 

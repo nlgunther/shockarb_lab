@@ -1,18 +1,24 @@
 """
 Canonical paths for the ShockArb pipeline.
 
-All pipeline file paths — inputs and outputs — are defined here as relative
-pathlib.Path objects. Import from this module; do not define path literals
-elsewhere. See docs/PATHS.md for the full design rationale.
+All pipeline file paths — inputs and outputs — are defined here as absolute
+pathlib.Path objects anchored to the project root via ``__file__``.  Import
+from this module; do not define path literals elsewhere.  See docs/PATHS.md
+for the full design rationale.
 """
 
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Directory roots  (relative to utils/ — the required working directory)
+# Project root — always shockarb_lab/, regardless of working directory
 # ---------------------------------------------------------------------------
-DATA    = Path("../data")
-REPORTS = Path("../reports")
+_ROOT = Path(__file__).parent.parent   # utils/paths.py → utils/ → shockarb_lab/
+
+# ---------------------------------------------------------------------------
+# Directory roots
+# ---------------------------------------------------------------------------
+DATA    = _ROOT / "data"
+REPORTS = _ROOT / "reports"
 
 # ---------------------------------------------------------------------------
 # Pipeline inputs

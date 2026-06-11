@@ -2,8 +2,7 @@
 
 This document explains how file paths are managed across the ShockArb pipeline:
 why paths are centralised, why `pathlib.Path` objects are used instead of
-strings, why paths are relative rather than absolute, and what the working-
-directory convention means in practice.
+strings, and how the project-root anchor works in practice.
 
 ---
 
@@ -32,74 +31,66 @@ these functions is unnecessary overhead and strips the semantic type
 information. If you see `str(SOME_PATH)` in the codebase, that is a bug to
 fix, not a pattern to copy.
 
-### 3. Relative paths, not absolute
+### 3. `__file__`-relative root, not CWD-relative
 
-Paths are defined relative to the working directory at runtime — not
-relative to `paths.py`'s own location on disk.
+The project root is computed once, at import time, from `paths.py`'s own
+location on disk:
 
-**Why relative?** Absolute paths computed from `__file__` (e.g.
-`Path(__file__).resolve().parent.parent / "data"`) are robust in theory but
-fragile in practice: they break when the project is moved, symlinked, or
-accessed from a network share. Relative paths keep the project fully
-portable — moving the project folder requires no code changes, only the
-working-directory convention (see below).
+```python
+_ROOT = Path(__file__).parent.parent   # utils/paths.py → utils/ → shockarb_lab/
+DATA    = _ROOT / "data"
+REPORTS = _ROOT / "reports"
+```
 
-**The trade-off:** relative paths require a consistent working directory.
-This is enforced by convention and by a startup check in the CLI entry
-points.
+`Path(__file__)` is the absolute path to `utils/paths.py` itself.
+`.parent` gives `utils/`.
+`.parent.parent` gives `shockarb_lab/` — the project root.
+
+All path constants derived from `_ROOT` are therefore **absolute paths**
+that never depend on the current working directory.
+
+**Why not CWD-relative?** Earlier versions used `Path("../data")` which
+required all commands to run from `utils/`. When `shockarb_workflows.bat`
+runs commands like `python -m shockarb score` from the project root, the
+relative `../data` resolved to the *parent* of the project root, causing
+`live_alpha_us.csv` to be written to the wrong location. The `__file__`
+anchor eliminates this class of bug entirely.
 
 ---
 
 ## Working-Directory Convention
 
-**All `stockfit` and `marketfit` commands must be run from the `utils/`
-directory.**
+**Scripts may be invoked from any directory.** `shockarb_workflows.bat`
+always `cd`s to the project root at the top, and all Python commands run
+from there:
 
-```bash
-cd <project_root>/utils
-python -m stockfit report
-python -m marketfit report
+```bat
+REM Always run from the project root (one level above scripts\)
+cd /d "%~dp0.."
+python -m shockarb score
+python utils\news_scanner.py
 ```
 
-From `utils/`, the relative paths resolve correctly:
-
-| Path constant       | Resolves to (from `utils/`)         |
-|---------------------|-------------------------------------|
-| `DATA`              | `<project_root>/data/`              |
-| `REPORTS`           | `<project_root>/reports/`           |
-| `LIVE_ALPHA_US`     | `<project_root>/data/live_alpha_us.csv` |
-| `FUNDAMENTALS`      | `<project_root>/data/fundamentals.csv`  |
-| `NEWS`              | `<project_root>/data/news.txt`          |
-| `MARKET_SNAPSHOT`   | `<project_root>/data/market_snapshot.json` |
-| `MARKET_REPORT`     | `<project_root>/reports/market_report.md`  |
-| `MARKET_REPORT_INTRADAY` | `<project_root>/reports/market_report_intraday.md` |
-| `STOCK_REPORT`      | `<project_root>/reports/stock_report.md`   |
-| `REPORTS_DIR`       | `<project_root>/reports/`           |
-
-The `scripts/shockarb_workflows.bat` file enforces the project root via
-`cd /d "%~dp0.."` before calling any pipeline command, satisfying this
-convention automatically.
+Because `paths.py` uses `__file__`-anchored constants, the working directory
+no longer matters for path resolution.
 
 ---
 
-## CWD Error Detection
+## Path Constants
 
-Both `stockfit` and `marketfit` CLIs check the working directory on startup
-and emit a clear error if the convention is not met:
-
-```
-❌  This command must be run from the utils/ directory.
-
-    Correct usage:
-        cd <project_root>/utils
-        python -m stockfit report
-
-    Current directory: C:\Users\me\some\other\place
-```
-
-The check verifies that `../data/` exists as a directory relative to CWD.
-This is a project-specific marker that will not be present in an arbitrary
-working directory.
+| Constant                  | Resolves to                                          |
+|---------------------------|------------------------------------------------------|
+| `_ROOT`                   | `<project_root>/`                                    |
+| `DATA`                    | `<project_root>/data/`                               |
+| `REPORTS`                 | `<project_root>/reports/`                            |
+| `LIVE_ALPHA_US`           | `<project_root>/data/live_alpha_us.csv`              |
+| `FUNDAMENTALS`            | `<project_root>/data/fundamentals.csv`               |
+| `NEWS`                    | `<project_root>/data/news.txt`                       |
+| `MARKET_SNAPSHOT`         | `<project_root>/data/market_snapshot.json`           |
+| `MARKET_REPORT`           | `<project_root>/reports/market_report.md`            |
+| `MARKET_REPORT_INTRADAY`  | `<project_root>/reports/market_report_intraday.md`   |
+| `STOCK_REPORT`            | `<project_root>/reports/stock_report.md`             |
+| `REPORTS_DIR`             | `<project_root>/reports/`                            |
 
 ---
 
@@ -119,7 +110,7 @@ from paths import MY_NEW_FILE
 ```
 
 To relocate the inputs folder (e.g. to `data/pipeline_inputs/`), change
-the `DATA` or add a separate `_INPUTS` alias in `paths.py`. Nothing else
+`DATA` or add a separate `_INPUTS` alias in `paths.py`. Nothing else
 needs to touch.
 
 ---
@@ -133,9 +124,11 @@ _DEFAULT_SCORES = "../data/live_alpha_us.csv"
 # ❌ Do not cast Path objects to str
 default=str(LIVE_ALPHA_US)
 
-# ❌ Do not use __file__-relative absolute paths
-ROOT = Path(__file__).resolve().parent.parent
+# ❌ Do not use CWD-relative paths in paths.py
+DATA = Path("../data")   # breaks when called from project root
 ```
 
-All three patterns have appeared in this codebase during development and
-have been deliberately removed. If you see them again, fix them here.
+The CWD-relative `Path("../data")` pattern appeared in this codebase and
+was removed because it caused `shockarb score` to write `live_alpha_us.csv`
+to the wrong directory when run from the project root. All paths must be
+anchored to `_ROOT`.

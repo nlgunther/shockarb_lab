@@ -8,6 +8,9 @@ REM ============================================================
 REM Always run from the project root (one level above scripts\)
 cd /d "%~dp0.."
 
+REM Add utils\ to PYTHONPATH so marketfit and stockfit packages are importable
+set PYTHONPATH=%cd%\utils;%PYTHONPATH%
+
 if "%1"=="" goto :help
 goto :%1 2>nul || (echo Unknown command: %1 && goto :help)
 
@@ -23,7 +26,7 @@ REM ── MARKET_REPORT ──────────────────�
 echo [MarketFit] Refreshing market snapshot...
 python utils\market_data.py
 echo [MarketFit] Generating report (rules-based)...
-cd utils && python -m marketfit report && cd ..
+python -m marketfit report
 echo Done. Output: reports\market_report.md
 goto :end
 
@@ -32,15 +35,24 @@ REM ── MARKET_REPORT_LLM ─────────────────
 echo [MarketFit] Refreshing market snapshot...
 python utils\market_data.py
 echo [MarketFit] Generating LLM-enhanced timestamped report...
-cd utils && python -m marketfit report --llm --timestamp && cd ..
+python -m marketfit report --llm --timestamp
 echo Done. Timestamped report written to reports\
+goto :end
+
+REM ── MARKET_INTRADAY ─────────────────────────────────────────
+:market_intraday
+echo [MarketFit] Fetching live intraday prices...
+python utils\market_data.py --intraday
+echo [MarketFit] Generating intraday report...
+python -m marketfit report --llm --timestamp
+echo Done. Output: reports\market_report_intraday*.md
 goto :end
 
 REM ── SHOCKARB_SCORE  (canonical training-corpus run) ─────────
 :shockarb_score
 echo [ShockArb] Full scoring run (score + marketfit)...
 python -m shockarb score
-cd utils && python -m marketfit report --llm --timestamp && cd ..
+python -m marketfit report --llm --timestamp
 goto :end
 
 REM ── NEWS ────────────────────────────────────────────────────
@@ -60,15 +72,28 @@ goto :end
 REM ── STOCK_REPORT ─────────────────────────────────────────────
 :stock_report
 echo [StockFit] Generating stock opportunity report (rules-based)...
-cd utils && python -m stockfit report && cd ..
+python -m stockfit report
 echo Done. Output: reports\stock_report.md
 goto :end
 
 REM ── STOCK_REPORT_LLM ─────────────────────────────────────────
 :stock_report_llm
 echo [StockFit] Generating LLM-enhanced stock report (timestamped)...
-cd utils && python -m stockfit report --llm --timestamp && cd ..
+python -m stockfit report --llm --timestamp
 echo Done. Timestamped stock report written to reports\
+goto :end
+
+REM ── IRAN_REPORT (score + stock report under iran_shock regime) ─
+:iran_report
+echo [ShockArb] Scoring against iran_shock regime...
+if not exist data\iran_shock mkdir data\iran_shock
+if not exist reports\iran_shock mkdir reports\iran_shock
+python -m shockarb score --regime iran_shock --out data\iran_shock\live_alpha_us.csv
+echo [News] Refreshing fundamentals for iran_shock candidates...
+python utils\news_scanner.py --csv data\iran_shock\live_alpha_us.csv --top 20
+echo [StockFit] Generating LLM-enhanced stock report (iran_shock)...
+python -m stockfit report --scores data\iran_shock\live_alpha_us.csv --reports-dir reports\iran_shock --llm --timestamp
+echo Done. Output: reports\iran_shock\
 goto :end
 
 REM ── EOD (full end-of-day workflow) ───────────────────────────
@@ -81,9 +106,9 @@ python utils\news_scanner.py
 echo Step 3/5: Market snapshot
 python utils\market_data.py
 echo Step 4/5: MarketFit LLM report (timestamped)
-cd utils && python -m marketfit report --llm --timestamp && cd ..
+python -m marketfit report --llm --timestamp
 echo Step 5/5: StockFit LLM report (timestamped)
-cd utils && python -m stockfit report --llm --timestamp && cd ..
+python -m stockfit report --llm --timestamp
 echo [EOD] Complete. Check data\ for all outputs.
 goto :end
 
@@ -114,8 +139,10 @@ echo  Commands:
 echo    score              Run shockarb score (sticky regime)
 echo    market_report      Refresh snapshot + rules-based marketfit report
 echo    market_report_llm  Refresh snapshot + LLM market report (timestamped)
+echo    market_intraday    Live intraday prices + LLM report (timestamped)
 echo    stock_report       Rules-based stock opportunity report
 echo    stock_report_llm   LLM-enhanced stock report (timestamped)
+echo    iran_report        Score + stock report under iran_shock regime (separate folder)
 echo    shockarb_score     score + market_report_llm combined
 echo    news               Fetch headlines + fundamentals
 echo    portfolio          Size positions from live_alpha_us.csv
@@ -127,7 +154,7 @@ echo  Full EOD corpus run:
 echo    scripts\shockarb_workflows.bat eod
 echo.
 echo  Stand-alone stock report with LLM:
-echo    cd utils ^&^& python -m stockfit report --llm --timestamp ^&^& cd ..
+echo    python -m stockfit report --llm --timestamp
 echo.
 
 :end
