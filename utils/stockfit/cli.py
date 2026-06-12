@@ -49,6 +49,11 @@ Options
                     default). Updates existing rows, adds new symbols, and
                     clears ticker_reference_cache.json entries for anything
                     changed. See shockarb/reference_sync.py.
+  --save-verdicts   Also write <report>_verdicts.csv alongside the .md
+                    report, with full per-ticker stats (r², conf.Δ, upside,
+                    price, target, fwd P/E, rvol, intraday, cluster,
+                    warnings) for ALL tiers including EXCLUDE — a durable
+                    record that survives live_alpha_us.csv being overwritten.
 
 RVOL display
 ------------
@@ -65,6 +70,7 @@ See docs/ENVIRONMENT_VARIABLES.md for LLM env vars.
 from __future__ import annotations
 
 import argparse
+import csv
 import os
 import sys
 from datetime import datetime, timezone
@@ -158,6 +164,18 @@ def _resolve_out(args_out: str | None, reports_dir: Path, timestamp: bool) -> Pa
     return reports_dir / "stock_report.md"
 
 
+def _verdicts_path(out_path: Path) -> Path:
+    """
+    Derive the --save-verdicts CSV path from the report's .md path.
+
+    Example
+    -------
+        _verdicts_path(Path("reports/stock_report_20260612_0800.md"))
+        # → Path("reports/stock_report_20260612_0800_verdicts.csv")
+    """
+    return out_path.with_name(out_path.stem + "_verdicts.csv")
+
+
 def _check_inputs(scores: str, fundamentals: str, news: str) -> None:
     """Warn on missing input files; exit if scores (primary input) is missing."""
     if not os.path.exists(scores):
@@ -240,6 +258,20 @@ def cmd_report(args) -> None:
         print(f"\n\U0001f4c1  Saved to: {out_path}")
     else:
         print(f"\n❌  Save failed — check path and permissions: {out_path}")
+
+    if args.save_verdicts:
+        verdicts_path = _verdicts_path(Path(out_path))
+        try:
+            rows = rules.verdicts_to_rows(verdicts)
+            with open(verdicts_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=rules.VERDICT_CSV_FIELDS)
+                writer.writeheader()
+                writer.writerows(rows)
+            logger.info(f"Saved full verdicts ({len(rows)} tickers, all tiers) to {verdicts_path}")
+            print(f"\U0001f4c1  Verdicts saved to: {verdicts_path}")
+        except Exception as exc:
+            logger.error(f"Failed to save verdicts CSV: {exc}")
+            print(f"❌  Verdicts save failed — check path and permissions: {verdicts_path}")
 
     llm_note = " | LLM: enabled" if args.llm else ""
     print(
@@ -342,6 +374,9 @@ def main() -> None:
                    help="Sync NYSE/NASDAQ reference CSVs from "
                         "LondonMarket/Global-Stock-Symbols before generating the report "
                         "(network call, off by default)")
+    p.add_argument("--save-verdicts", action="store_true",
+                   help="Also save full verdicts (all tiers, all stats) to a "
+                        "<report>_verdicts.csv alongside the .md report")
     p.set_defaults(func=cmd_report)
 
     p_set_rvol = sub.add_parser("set-rvol", help="Set sticky RVOL display on/off for future report runs")

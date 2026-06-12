@@ -238,6 +238,36 @@ print(loadings)  # Factor_1, Factor_2, ... betas
 
 ---
 
+## Comparing Reports Across Regimes/Dates
+
+```bash
+# Compare a root .md report against an iran_shock verdicts CSV, print + save
+python -m shockarb compare-reports \
+    reports/stock_report_20260612_0856.md \
+    reports/iran_shock/stock_report_20260612_0945_verdicts.csv \
+    --out compare_verdicts.md
+
+# Compare two .md reports (no --out: console only)
+python -m shockarb compare-reports report_a.md report_b.md
+```
+
+**Inputs:** any mix of `stock_report_*.md` and `stock_report_*_verdicts.csv`
+(2 or more). `.csv` comes from `stockfit --save-verdicts` and carries full
+stats (R², Conf.Δ, Fwd P/E, ...) for **every** tier, including excluded.
+
+**Which tickers show up in the Stats sections:** a ticker appears if it's
+`act_on`/`watch` in *any* of the reports, or if its tier differs across
+reports (flagged ⚠). A ticker excluded consistently in every report is
+omitted — it's not "interesting" for the comparison.
+
+**Reading the Reason column:** for excluded tickers, `reason` says *why* —
+e.g. `"r²=0.063 below threshold (0.65) — model fit too weak"` (bad factor
+fit) vs `"confidence_delta=+0.0092 below threshold (0.020)"` (good fit, weak
+signal). These point to different conclusions about whether the other
+report's regime fits the ticker better right now.
+
+---
+
 ## File Locations
 
 ```

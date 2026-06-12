@@ -39,7 +39,7 @@ def bundle_hash(file_hashes: dict) -> str:
 
 def main() -> None:
     files: list[str] = []
-    for pkg in ["shockarb", "utils", "datamgr", "tests"]:
+    for pkg in ["shockarb", "utils", "datamgr", "tests", "diagnostics"]:
         files += find_py(pkg)
     files += [
         "scripts/run_tests.bat", "scripts/shockarb_workflows.bat",
@@ -75,7 +75,12 @@ def main() -> None:
         sha = rows[path]
         lines.append(("# MISSING\t%s" if sha == "MISSING" else "%s\t%s") % (sha, path))
 
-    lines += ["#", "# Tests: 627 passing (pytest tests/ -q); 20 test files"]
+    lines += [
+        "#",
+        "# Tests: 652 passing, 5 pre-existing failures in test_pipeline.py "
+        "(TestSyntheticPrices/TestAddAssets — unrelated to report_compare; "
+        "pytest tests/ -q); 21 test files",
+    ]
 
     with open("MANIFEST.txt", "w") as f:
         f.write("\n".join(lines) + "\n")

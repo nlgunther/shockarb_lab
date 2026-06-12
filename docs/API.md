@@ -831,3 +831,107 @@ if archive.available_days() < MIN_WINDOW_DAYS:
 | `regime`          | `regime_name` arg               |                                  |
 | `model_file`      | `model_file` arg (basename)     |                                  |
 | `next_day_actual` | Backfilled by next `save_row()` | NaN until tomorrow's run         |
+
+---
+
+## `shockarb.report_compare`
+
+Compares two or more reports — `stock_report_*.md` (rules-based output) and/or
+`stock_report_*_verdicts.csv` (`--save-verdicts` output) — and highlights where
+tickers' tiers or stats diverge. Used by `python -m shockarb compare-reports`.
+
+```python
+from shockarb.report_compare import (
+    parse_report, build_comparison, print_comparison, write_comparison_md,
+)
+```
+
+---
+
+### `ReportData`
+
+```python
+@dataclass
+class ReportData:
+    path: str
+    label: str                      # e.g. "iran_shock_0800" or "root_0945"
+    timestamp: str | None           # None for verdicts CSV
+    source: str | None              # None for verdicts CSV
+    thresholds: str | None          # None for verdicts CSV
+    counts: dict[str, int]          # e.g. {"act_on": 1, "watch": 0, "excluded": 2}
+    tickers: dict[str, dict]        # ticker -> {tier, r_squared, conf_delta, upside, fwd_pe, reason, ...}
+```
+
+`tier` is one of `"act_on"`, `"watch"`, `"excluded"`. For `.md` reports,
+excluded tickers carry only `reason`; for `.csv` reports every tier carries
+full stats.
+
+---
+
+### `parse_report(path: str) → ReportData`
+
+Parse a `.md` report or `.csv` verdicts file, dispatching on extension via
+`_PARSERS` (`.md → _parse_report_md`, `.csv → _parse_verdicts_csv`).
+
+**Raises:** `ValueError` if the extension isn't `.md` or `.csv`.
+
+```python
+report = parse_report("reports/iran_shock/stock_report_20260612_0800.md")
+verdicts = parse_report("reports/iran_shock/stock_report_20260612_0945_verdicts.csv")
+```
+
+---
+
+### `build_comparison(reports: list[ReportData]) → tuple[pd.DataFrame, pd.Series]`
+
+Build a ticker × report comparison table.
+
+**Returns:**
+
+- `comparison` (`pd.DataFrame`): index = union of all tickers (sorted);
+  columns = `MultiIndex(report_label, field)` for each field in
+  `COMPARISON_FIELDS = ["tier", "r_squared", "conf_delta", "upside", "fwd_pe", "reason"]`.
+  Missing ticker/report combinations are `NaN`.
+- `flagged` (`pd.Series[bool]`): `True` for tickers whose `tier` differs across
+  the reports they appear in.
+
+```python
+reports = [parse_report(p) for p in ["report_a.md", "report_b.md"]]
+comparison, flagged = build_comparison(reports)
+comparison.loc["MSFT", ("iran_shock_0945", "r_squared")]
+```
+
+---
+
+### `print_comparison(reports, comparison, flagged) → None`
+
+Print the comparison to the console: a header per report (label, timestamp,
+thresholds, tier counts), a tier-by-report table for every "interesting"
+ticker (⚠ marks tier mismatches), and a per-report Stats section with R²,
+Conf.Δ, Upside, Fwd P/E, and Reason (truncated to 60 chars).
+
+---
+
+### `write_comparison_md(out_path, reports, comparison, flagged) → None`
+
+Write the same comparison to a markdown file (`## Reports`, `## Tier by
+report`, `## Stats — <label>` per report). Reason text is not truncated.
+
+```python
+write_comparison_md("compare.md", reports, comparison, flagged)
+```
+
+---
+
+### `_interesting_tickers(comparison, flagged) → list[str]`
+
+Tickers shown in the tier-comparison table and each Stats section: any ticker
+that is `act_on` or `watch` in **any** report, plus any ticker `flagged` for a
+tier mismatch. This is why a ticker excluded everywhere but with a consistent
+tier (e.g. CPRT excluded in both an `.md` report and a `.csv` verdicts file)
+does **not** appear, while a ticker excluded in one report but `act_on` in
+another does.
+
+```python
+tickers = _interesting_tickers(comparison, flagged)
+```

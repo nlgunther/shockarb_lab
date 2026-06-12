@@ -630,6 +630,69 @@ class TestCliResolveOut:
 
 
 # =============================================================================
+# TestVerdictsCsv — rules.verdicts_to_rows() and cli._verdicts_path()
+# =============================================================================
+
+class TestVerdictsCsv:
+    """--save-verdicts: full per-ticker stats, all tiers, serialized to CSV."""
+
+    def _verdicts(self) -> list[StockVerdict]:
+        include = self._eval("ETN", r2=0.723, conf_delta=0.0260, price=393.64,
+                              analyst_target=451.73)
+        exclude = self._eval("CDNS", r2=0.50, conf_delta=0.030)
+        return rules.evaluate_all([include, exclude])
+
+    def _eval(self, ticker, **kw) -> dict:
+        return _make_features(ticker, **kw)
+
+    def test_verdicts_to_rows_covers_all_tiers(self):
+        verdicts = self._verdicts()
+        rows = rules.verdicts_to_rows(verdicts)
+
+        tiers = {row["tier"] for row in rows}
+        assert tiers == {"INCLUDE", "EXCLUDE"}
+        assert len(rows) == len(verdicts)
+
+    def test_verdicts_to_rows_keeps_excluded_stats(self):
+        verdicts = self._verdicts()
+        rows = rules.verdicts_to_rows(verdicts)
+
+        excluded = next(r for r in rows if r["tier"] == "EXCLUDE")
+        # Unlike the markdown report, the CSV retains r_squared/confidence_delta
+        # for EXCLUDE tickers, not just the reason string.
+        assert excluded["r_squared"] == pytest.approx(0.50)
+        assert excluded["confidence_delta"] == pytest.approx(0.030)
+        assert excluded["reason"]
+
+    def test_verdicts_to_rows_joins_list_fields(self):
+        verdicts = self._verdicts()
+        rows = rules.verdicts_to_rows(verdicts)
+
+        for row in rows:
+            assert isinstance(row["news_headlines"], str)
+            assert isinstance(row["warnings"], str)
+
+    def test_verdicts_to_rows_field_order_matches_constant(self):
+        verdicts = self._verdicts()
+        rows = rules.verdicts_to_rows(verdicts)
+        assert list(rows[0].keys()) == rules.VERDICT_CSV_FIELDS
+
+
+class TestCliVerdictsPath:
+    """cli._verdicts_path() derives <report>_verdicts.csv from the .md path."""
+
+    def test_appends_verdicts_csv_suffix(self):
+        from stockfit.cli import _verdicts_path
+        out = _verdicts_path(Path("/reports/stock_report_20260612_0800.md"))
+        assert out == Path("/reports/stock_report_20260612_0800_verdicts.csv")
+
+    def test_works_with_default_filename(self):
+        from stockfit.cli import _verdicts_path
+        out = _verdicts_path(Path("/reports/stock_report.md"))
+        assert out == Path("/reports/stock_report_verdicts.csv")
+
+
+# =============================================================================
 # TestCliLoaders — _load_scores, _load_fundamentals, _load_news
 # =============================================================================
 
@@ -658,7 +721,7 @@ class TestCliLoaders:
 
     def test_load_scores_handles_truncated_row(self, tmp_path):
         """A short row (missing trailing columns) gives DictReader a None
-        value for the missing key; _load_scores must not crash on it."""
+        " value for the missing key; _load_scores must not crash on it."""
         csv = tmp_path / "scores.csv"
         csv.write_text(
             ",actual_return,expected_rel,expected_abs,delta_rel,delta_abs,r_squared,residual_vol,confidence_delta\n"

@@ -42,6 +42,7 @@ REPORTS_DIR            = REPORTS
 # Mirrors shockarb/cli.py's .shockarb_regime sticky-file pattern.
 STOCKFIT_RVOL_FILE = DATA / ".stockfit_rvol"
 
+
 # ---------------------------------------------------------------------------
 # Reference data (ticker → company name/sector/industry resolution)
 # ---------------------------------------------------------------------------

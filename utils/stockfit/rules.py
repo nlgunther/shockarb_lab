@@ -286,3 +286,55 @@ def evaluate_all(
     _order = {"INCLUDE": 0, "WATCH": 1, "EXCLUDE": 2}
     verdicts.sort(key=lambda v: (_order[v.tier], -(v.confidence_delta or 0)))
     return verdicts
+
+
+# ---------------------------------------------------------------------------
+# CSV serialization (--save-verdicts)
+# ---------------------------------------------------------------------------
+
+VERDICT_CSV_FIELDS = [
+    "ticker", "tier", "reason", "r_squared", "confidence_delta",
+    "analyst_upside", "price", "analyst_target", "fwd_pe", "cluster",
+    "rvol", "rvol_window", "intraday_price", "intraday_chg_pct",
+    "news_headlines", "warnings",
+]
+
+
+def verdicts_to_rows(verdicts: list[StockVerdict]) -> list[dict[str, Any]]:
+    """
+    Flatten verdicts (all tiers) into CSV-ready row dicts.
+
+    List fields (news_headlines, warnings) are joined with "; " so the
+    result writes cleanly with csv.DictWriter. Column order is
+    VERDICT_CSV_FIELDS.
+
+    Example
+    -------
+        rows = verdicts_to_rows(verdicts)
+        with open("verdicts.csv", "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=VERDICT_CSV_FIELDS)
+            writer.writeheader()
+            writer.writerows(rows)
+    """
+    rows = []
+    for v in verdicts:
+        row = {
+            "ticker":           v.ticker,
+            "tier":             v.tier,
+            "reason":           v.reason,
+            "r_squared":        v.r_squared,
+            "confidence_delta": v.confidence_delta,
+            "analyst_upside":   v.analyst_upside,
+            "price":            v.price,
+            "analyst_target":   v.analyst_target,
+            "fwd_pe":           v.fwd_pe,
+            "cluster":          v.cluster,
+            "rvol":             v.rvol,
+            "rvol_window":      v.rvol_window,
+            "intraday_price":   v.intraday_price,
+            "intraday_chg_pct": v.intraday_chg_pct,
+            "news_headlines":   "; ".join(v.news_headlines),
+            "warnings":         "; ".join(v.warnings),
+        }
+        rows.append(row)
+    return rows

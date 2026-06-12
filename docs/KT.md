@@ -3,7 +3,7 @@
 *Updated after each session. Captures decisions and context not derivable from reading the code.  
 For API details see API.md; for quick commands see CHEATSHEET.md.*
 
-> Last updated: 2026-06-11T16:01 | Trigger: manual (\ukt) | Staleness: Fresh (session 12)
+> Last updated: 2026-06-12T12:00 | Trigger: manual (\ukt) | Staleness: Fresh (session 13)
 
 ---
 
@@ -29,6 +29,8 @@ report.py    — terminal display. print_scores, print_model_state, print_live_a
 store.py          — ShockArbStore: parquet file management for the datamgr coordinator.
 score_history.py  — ScoreArchive: rolling daily parquet archive for regime health + alpha validation.
 names.py     — ticker → company name resolution (wraps ticker_reference_cache.json).
+report_compare.py — compares two+ stock_report_*.md / *_verdicts.csv files (dispatch by extension);
+                     ticker x report tier/stat comparison + tier-mismatch flagging; `compare-reports` CLI.
 ```
 
 **Why engine.py has zero I/O:** swapping the data source (yfinance → Bloomberg) means touching `pipeline.py` only. The math is untouched. This boundary has been deliberately enforced — don't put file reads or network calls in engine.py.
@@ -189,7 +191,7 @@ Run: `python utils/value_score_viz.py --regime ukraine_shock --out data/viz`
 PYTHONPYCACHEPREFIX=/tmp/shockarb_pycache python -m pytest tests/test_stockfit.py tests/test_stockfit_rvol.py tests/test_marketfit.py -v
 ```
 
-**Full suite (2026-06-11, session 12): `pytest tests/ -q` — 616/616 passing**, across 18 test files (up from 593 — added `tests/test_stockfit_intraday.py`, 14 tests, plus the `iran_shock` regime test additions). (The earlier "372 passing, 49 failing" figure was specific to a transient pre-RVOL state and is no longer current.)
+**Full suite (2026-06-12, session 13): `pytest tests/ -q` — 652/657 passing**, across 21 test files (up from 616/616 across 18 — added `tests/test_report_compare.py`, 21 tests). The 5 failures are pre-existing and unrelated (`TestSyntheticPrices`/`TestAddAssets` in `test_pipeline.py`). (The earlier "372 passing, 49 failing" figure was specific to a transient pre-RVOL state and is no longer current.)
 
 **Running subsets:** use `scripts\run_tests.bat <group>` instead of memorising file lists — e.g. `scripts\run_tests.bat rvol`, `scripts\run_tests.bat stockfit -v`, `scripts\run_tests.bat all -k rvol`. Run `scripts\run_tests.bat help` for the full group list (stockfit, rvol, marketfit, report, cli, engine, pipeline, regimes, cache, config, portfolio, fundamentals, all).
 
@@ -207,6 +209,7 @@ PYTHONPYCACHEPREFIX=/tmp/shockarb_pycache python -m pytest tests/test_stockfit.p
 - `tests/test_out_flag.py` — 16 tests via `OutFileContract` / `OutDirContract` base classes; **pattern for new utilities:** subclass the appropriate contract, implement `invoke()`, contract tests are inherited automatically
 - `tests/test_coordinator_phase1.py` — 2 regression tests for head-miss bug fix (`TestGapAnalyseHeadMiss`)
 - `tests/test_regimes.py` — `TestCovidReopening` class (11 tests); count assertion updated to 5
+- `tests/test_report_compare.py` — 21 tests covering `_clean_number`/`_to_float`, `parse_report` dispatch (`.md` and `.csv` verdicts), `build_comparison` (union of tickers + tier-mismatch flagging), `_interesting_tickers`, `print_comparison`, and `write_comparison_md` (including `fwd_pe` from verdicts CSV and exclusion `reason` for flagged tickers)
 
 Key fixture hierarchy in `conftest.py`:
 - `sample_etf_returns` → 36 days × 5 ETFs, synthetic crisis structure
@@ -275,6 +278,18 @@ Off by default. Enable per-run with `python -m stockfit report --rvol` (or `--no
 Informational/display-only column, mirroring marketfit's `_fetch_intraday_current` design — does not affect scoring, ranking, or gating. `features._fetch_intraday_prices(tickers)` makes a single batch `yf.download(tickers, period="1d", auto_adjust=True)` call and returns `{ticker: last_close_price}` (or `{}` on failure/empty/no tickers — network errors degrade gracefully). `extract_all(..., compute_intraday=True)` populates `intraday_price` and `intraday_chg_pct = (intraday_price - price) / price` per ticker; the report table's Intraday column shows `+x.xx%` or `—` if unavailable.
 
 Off by default, no sticky setting (unlike RVOL) — enable per-run with `python -m stockfit report --intraday`. This is a network call. See `tests/test_stockfit_intraday.py` for full coverage.
+
+**`--save-verdicts` — durable full-stat CSV (added 2026-06-12):**
+
+Problem: `report.build()` only writes full per-ticker stats (r², confidence_delta, upside, price, target, fwd P/E, etc.) for INCLUDE/WATCH tickers — the `❌ Excluded` table keeps only a `reason` string. `data/live_alpha_us.csv` is overwritten by every `shockarb score` run, so once a report is generated, the EXCLUDE-tier stats for that run are gone for good.
+
+`python -m stockfit report --save-verdicts` writes `<report>_verdicts.csv` alongside the `.md` (e.g. `stock_report_20260612_0800.md` → `stock_report_20260612_0800_verdicts.csv`), one row per ticker for ALL tiers. Columns: `VERDICT_CSV_FIELDS` in `stockfit/rules.py` — `ticker, tier, reason, r_squared, confidence_delta, analyst_upside, price, analyst_target, fwd_pe, cluster, rvol, rvol_window, intraday_price, intraday_chg_pct, news_headlines, warnings` (list fields joined with `"; "`). Serialization helper: `rules.verdicts_to_rows()`. Path derivation: `cli._verdicts_path()`.
+
+Off by default (opt-in, avoids file proliferation). A natural pairing is `--timestamp --save-verdicts` so the CSV survives alongside the archived `.md`. **Resolved (session 13):** `shockarb.report_compare` now reads these CSVs via `parse_report`'s `.csv` dispatch (`_parse_verdicts_csv`), enabling full-stat cross-report comparison — see below. See `tests/test_stockfit.py::TestVerdictsCsv` and `::TestCliVerdictsPath`.
+
+**`shockarb.report_compare` / `compare-reports` CLI (added 2026-06-12, session 13):**
+
+Compares two or more reports — any mix of `stock_report_*.md` and `stock_report_*_verdicts.csv` — and highlights where tickers' tiers or stats diverge across regimes/dates. `parse_report(path)` dispatches on extension via `_PARSERS` (`.md → _parse_report_md`, `.csv → _parse_verdicts_csv`) into a common `ReportData`. `build_comparison(reports)` returns a ticker × report `MultiIndex` DataFrame (`COMPARISON_FIELDS = ["tier", "r_squared", "conf_delta", "upside", "fwd_pe", "reason"]`) plus a `flagged` Series for tier mismatches. `_interesting_tickers()` selects tickers that are act_on/watch in *any* report, or flagged — tickers excluded consistently everywhere are omitted from the Stats sections. `print_comparison()` and `write_comparison_md()` render the tier table + per-report Stats (including `fwd_pe` and the exclusion `reason`, useful for judging which regime's factor model currently fits a ticker better). CLI: `python -m shockarb compare-reports <reportA> <reportB> [...] [--out compare.md]`. 21 tests in `tests/test_report_compare.py`. Documented in `docs/API.md` (new module section) and `docs/CHEATSHEET.md` ("Comparing Reports Across Regimes/Dates").
 
 **Full EOD workflow (5 steps):**
 ```
@@ -386,7 +401,7 @@ No manual copy-paste needed. Session transcripts are accessible programmatically
 `MANIFEST.txt` tracks SHA-256 prefixes (CRLF-normalised, hash-of-hashes bundle)
 for all `.py` files under `shockarb/`, `utils/`, `datamgr/`, `tests/`, plus
 `scripts/*.bat`, `verify_install.py`, and `generate_manifest.py` itself
-(84 files as of 2026-06-11, session 12 — added `tests/test_stockfit_intraday.py` since session 11's 82). Regenerate after code changes, then verify:
+(90 files as of 2026-06-12, session 13, bundle `7f373e306b3b2f1254653d5e` — added `shockarb/report_compare.py` and `tests/test_report_compare.py` since session 12's 84). Regenerate after code changes, then verify:
 ```bash
 python generate_manifest.py
 python verify_install.py
@@ -434,3 +449,4 @@ python verify_install.py
 | 2026-06-11 (session 11) | RVOL (relative volume) display feature, Option #1 (informational only — no change to ranking/gating/PCA factor model): `_compute_rvol()` in `stockfit/features.py` (dynamic 5-20 day trailing window), `rvol`/`rvol_window` fields on `StockVerdict` + RVOL column in `report.py`, sticky `set-rvol`/`show-rvol`/`--rvol`/`--no-rvol` CLI mirroring `shockarb`'s `.shockarb_regime` pattern (`STOCKFIT_RVOL_FILE` in `paths.py`); 21 new tests in `tests/test_stockfit_rvol.py` (full suite now 593/593 passing across 18 files); added `scripts/run_tests.bat` test-subset runner (13 groups, passthrough pytest args); updated `docs/PATHS.md` and `stockfit/cli.py` docstring |
 | 2026-06-08 (session 9) | Added `--tickers` / `-t` flag to `portfolio_sizer.py`: when set, bypasses CSV ranking entirely and sizes only the named tickers (designed for acting on the INCLUDE list from the stock report); `--top` and `--exclude` are ignored when `--tickers` is present; usage: `python utils/portfolio_sizer.py --tickers AMAT ADI ETN --capital 10000`; added `TestTickers` class (5 tests) to `test_portfolio_sizer.py` (now 10/10 passing); updated `docs/UTILS.md` arguments table |
 | 2026-06-11 (session 12) | Added `iran_shock` regime (`shockarb/regimes.py`) — US-Israel strike on Iran / Strait of Hormuz closure, 2026-02-24 → 2026-04-30, 19 ETFs / 80 stocks / 3 factors, preferred over `ukraine_shock` while the conflict is active; registry now 6 regimes, `test_regimes.py` count assertion `== 6`. Added `--intraday` flag to `stockfit report`: `_fetch_intraday_prices()` in `stockfit/features.py` (single batch yfinance call, period="1d"), `intraday_price`/`intraday_chg_pct` fields on `StockVerdict`, Intraday column in `report.py` table; off by default, no sticky setting; 14 new tests (`tests/test_stockfit_intraday.py`, full suite now 616/616 across 18 files). Diagnosed and fixed recurring Linux-sandbox-mount file corruption (6 files truncated mid-statement: `utils/marketfit/cli.py`, `utils/stockfit/features.py`, `utils/fundamental_scanner.py`, `tests/test_fundamental_scanner.py`, `tests/test_stockfit_rvol.py`, `shockarb/regimes.py`) via Windows-side Read + bash heredoc rewrite + `ast.parse` verification + `__pycache__` clear; documented full-repo `ast.parse` glob-scan detection technique in Known Design Debt. MANIFEST regenerated (84 files), bundle verified. |
+| 2026-06-12 (session 13) | Added `shockarb/report_compare.py` + `compare-reports` CLI subcommand: `ReportData`, `parse_report` (dispatch `.md`/`.csv` via `_PARSERS`, reads both rules-based `stock_report_*.md` and `--save-verdicts` CSVs), `build_comparison` (ticker × report MultiIndex table + tier-mismatch `flagged` Series), `_interesting_tickers` (act_on/watch in any report OR flagged — so consistently-excluded tickers are omitted), `print_comparison`/`write_comparison_md` (Stats sections add `fwd_pe` + exclusion `reason`). 21 new tests in `tests/test_report_compare.py` (652/657 passing project-wide across 21 files; the 5 failures are pre-existing/unrelated `test_pipeline.py` cases). Documented in `docs/API.md` (new `shockarb.report_compare` section) and `docs/CHEATSHEET.md` ("Comparing Reports Across Regimes/Dates"). MANIFEST regenerated (90 files, bundle `7f373e306b3b2f1254653d5e`). Resolves the session-12 `--save-verdicts` follow-up note (cross-report comparison can now read full-stat verdicts CSVs). |

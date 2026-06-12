@@ -12,6 +12,7 @@ Commands
   show-regime  Display the current sticky regime.
   list-regimes List all available regimes.
   backtest     Run walk-forward backtest to measure signal decay.
+  compare-reports  Compare two or more stock_report_*.md files side by side.
 
 Examples
 --------
@@ -552,6 +553,24 @@ def cmd_backtest(args) -> None:
 
 
 
+def cmd_compare_reports(args) -> None:
+    """Compare two or more stock_report_*.md files."""
+    from shockarb.report_compare import (
+        build_comparison,
+        parse_report,
+        print_comparison,
+        write_comparison_md,
+    )
+
+    reports = [parse_report(p) for p in args.reports]
+    comparison, flagged = build_comparison(reports)
+    print_comparison(reports, comparison, flagged)
+
+    if args.out:
+        write_comparison_md(args.out, reports, comparison, flagged)
+        print(f"  📝 Comparison written to {args.out}\n")
+
+
 def cmd_regime_health(args) -> None:
     """Display SNR-based regime health table from the rolling score archive."""
     from shockarb.score_history import ScoreArchive, MIN_WINDOW_DAYS
@@ -707,6 +726,12 @@ Examples:
     p.add_argument("--min-confidence", type=float, default=0.005, help="Minimum entry threshold")
     p.add_argument("--min-r-squared", type=float, default=0.50, help="Minimum model fit quality")
     p.set_defaults(func=cmd_backtest)
+
+    # compare-reports
+    p = sub.add_parser("compare-reports", help="Compare two or more stock_report_*.md files")
+    p.add_argument("reports", nargs="+", help="Paths to stock_report_*.md files (2 or more)")
+    p.add_argument("--out", "-o", help="Optional path to write a markdown comparison file")
+    p.set_defaults(func=cmd_compare_reports)
 
     # regime-health
     p = sub.add_parser("regime-health", help="Show SNR-based regime health from rolling archive")
