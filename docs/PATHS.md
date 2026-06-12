@@ -91,6 +91,19 @@ no longer matters for path resolution.
 | `MARKET_REPORT_INTRADAY`  | `<project_root>/reports/market_report_intraday.md`   |
 | `STOCK_REPORT`            | `<project_root>/reports/stock_report.md`             |
 | `REPORTS_DIR`             | `<project_root>/reports/`                            |
+| `STOCKFIT_RVOL_FILE`      | `<project_root>/data/.stockfit_rvol`                 |
+
+---
+
+## Sticky CLI State
+
+`STOCKFIT_RVOL_FILE` (`data/.stockfit_rvol`) follows the same sticky-file
+pattern as `shockarb`'s `.shockarb_regime`: a small text file in `data/`
+holding a literal `on` or `off`, written by `stockfit set-rvol <on|off>` and
+read by `stockfit report` to decide whether to compute/display the RVOL
+column. Resolution order is `--rvol` / `--no-rvol` flag > sticky file >
+default `off`. See `docs/KT.md` ("RVOL (relative volume) display") for the
+full RVOL design.
 
 ---
 

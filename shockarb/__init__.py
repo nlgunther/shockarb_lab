@@ -43,6 +43,7 @@ from shockarb.config import (
 import shockarb.pipeline as pipeline  # preferred: `pipeline.build(...)` etc.
 
 from shockarb.names import TickerReferenceResolver
+from shockarb.reference_sync import sync_reference_data
 from shockarb.backtest import Backtest, BacktestConfig, BacktestResults
 
 __all__ = [
@@ -54,6 +55,7 @@ __all__ = [
     "GLOBAL_UNIVERSE",
     "pipeline",
     "TickerReferenceResolver",
+    "sync_reference_data",
     "Backtest",
     "BacktestConfig",
     "BacktestResults",

@@ -656,6 +656,22 @@ class TestCliLoaders:
         rows = self._load_scores(str(tmp_path / "nonexistent.csv"))
         assert rows == []
 
+    def test_load_scores_handles_truncated_row(self, tmp_path):
+        """A short row (missing trailing columns) gives DictReader a None
+        value for the missing key; _load_scores must not crash on it."""
+        csv = tmp_path / "scores.csv"
+        csv.write_text(
+            ",actual_return,expected_rel,expected_abs,delta_rel,delta_abs,r_squared,residual_vol,confidence_delta\n"
+            "ETN,-0.05,-0.01,0,0.04,0,0.693,0.25,0.028\n"
+            # FTNT row is missing its trailing confidence_delta value
+            "FTNT,0.0035,-0.0283,-0.0260,-0.0319,-0.0295,0.5586,0.4411\n",
+            encoding="utf-8")
+        rows = self._load_scores(str(csv))
+        assert len(rows) == 2
+        ftnt = next(r for r in rows if r["ticker"] == "FTNT")
+        # missing field becomes NaN rather than raising
+        assert ftnt["confidence_delta"] != ftnt["confidence_delta"]  # NaN != NaN
+
     def test_load_fundamentals_returns_dict_keyed_by_ticker(self, tmp_path):
         csv = tmp_path / "fundamentals.csv"
         csv.write_text(
@@ -669,6 +685,20 @@ class TestCliLoaders:
     def test_load_fundamentals_missing_file_returns_empty(self, tmp_path):
         result = self._load_fundamentals(str(tmp_path / "missing.csv"))
         assert result == {}
+
+    def test_load_fundamentals_handles_truncated_row(self, tmp_path):
+        """A short row gives DictReader a None value for a missing trailing
+        column; _load_fundamentals must not crash on it."""
+        csv = tmp_path / "fundamentals.csv"
+        csv.write_text(
+            "Ticker,Price,Fwd P/E,TTM EPS,Fwd EPS,Next Earnings,Est. EPS,Ex-Div,Div Amt,Analyst Tgt\n"
+            "ETN,395.94,25.2,10.22,15.72,—,—,2026-05-07,$4.40,451.73\n"
+            # FTNT row is missing its trailing Analyst Tgt value
+            "FTNT,85.10,32.1,1.05,1.60,—,—,—,$0.00\n",
+            encoding="utf-8")
+        result = self._load_fundamentals(str(csv))
+        assert "FTNT" in result
+        assert result["FTNT"]["analyst_target"] is None
 
     def test_load_fundamentals_target_parsed_without_dollar_sign(self, tmp_path):
         """Analyst Tgt column may or may not have a $ prefix."""

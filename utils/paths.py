@@ -35,3 +35,21 @@ MARKET_REPORT          = REPORTS / "market_report.md"
 MARKET_REPORT_INTRADAY = REPORTS / "market_report_intraday.md"
 STOCK_REPORT           = REPORTS / "stock_report.md"
 REPORTS_DIR            = REPORTS
+
+# ---------------------------------------------------------------------------
+# Sticky CLI state
+# ---------------------------------------------------------------------------
+# Mirrors shockarb/cli.py's .shockarb_regime sticky-file pattern.
+STOCKFIT_RVOL_FILE = DATA / ".stockfit_rvol"
+
+# ---------------------------------------------------------------------------
+# Reference data (ticker → company name/sector/industry resolution)
+# ---------------------------------------------------------------------------
+# Filenames only (not full paths) — combined with a data directory by callers
+# that support a configurable --data-dir, e.g. csv_to_md.py and
+# shockarb.reference_sync. Single source of truth: edit here, nowhere else.
+TICKER_CACHE_FILENAME = "ticker_reference_cache.json"
+EXCHANGE_CSV_FILENAMES = [
+    "nyse_1668526574444.csv",
+    "nasdaq_1668526380140.csv",
+]

@@ -7,14 +7,15 @@ Commands
 
 Usage
 -----
-    cd utils && python -m marketfit report
-    cd utils && python -m marketfit report --llm          # enhanced report via LLM
-    cd utils && python -m marketfit report --snapshot /path/to/snapshot.json
+    python -m marketfit report
+    python -m marketfit report --llm          # enhanced report via LLM
+    python -m marketfit report --snapshot /path/to/snapshot.json
 
-    Input data resolves to ../data/ (relative to utils/).
-    Reports are written to ../reports/ by default; override with --reports-dir.
+    Paths (data/, reports/) are anchored to the project root via paths.py
+    (__file__-based), so this works from any working directory — no need to
+    `cd utils` first.
+    Reports are written to reports/ by default; override with --reports-dir.
     Intraday snapshots (mode=intraday) default to market_report_intraday.md.
-    Always run from the utils/ directory: cd utils && python -m marketfit report
 
 LLM mode
 --------
@@ -41,21 +42,6 @@ from marketfit import features, rules, report
 from paths import MARKET_SNAPSHOT, LIVE_ALPHA_US, FUNDAMENTALS, NEWS, REPORTS_DIR
 
 _STALE_HOURS = 6
-
-
-def _check_cwd() -> None:
-    """Exit with a clear error if not run from the utils/ directory."""
-    if not Path("../data").is_dir():
-        print(
-            "\n❌  This command must be run from the utils/ directory.\n"
-            "\n"
-            "    Correct usage:\n"
-            "        cd <project_root>/utils\n"
-            "        python -m marketfit report\n"
-            "\n"
-            f"    Current directory: {Path.cwd()}\n"
-        )
-        sys.exit(1)
 
 
 def _is_stale(snapshot: dict) -> bool:
@@ -158,7 +144,7 @@ def _load_news(path: str) -> dict[str, list[str]]:
 def cmd_report(args) -> None:
     """Generate a market report from a local snapshot."""
     if not os.path.exists(args.snapshot):
-        print(f"\n\u274c  Snapshot not found: {args.snapshot}")
+        print(f"\n❌  Snapshot not found: {args.snapshot}")
         print("    Run first:  python utils/market_data.py")
         sys.exit(1)
 
@@ -198,7 +184,7 @@ def cmd_report(args) -> None:
     if save_ok:
         print(f"\n\U0001f4c1  Saved to: {out_path}")
     else:
-        print(f"\n\u274c  Save failed — check path and permissions: {out_path}")
+        print(f"\n❌  Save failed — check path and permissions: {out_path}")
     print(f"    Snapshot:  {snapshot.get('fetched_at_local', 'unknown')}")
     print(f"    Baseline:  {snapshot.get('baseline_date', '(unknown — re-run market_data.py)')}")
     print(f"    Mode:      {snapshot.get('mode', 'daily')}")
@@ -252,7 +238,6 @@ def _build_with_llm(snapshot: dict, verdict, stale: bool) -> str:
 
 
 def main() -> None:
-    _check_cwd()
     parser = argparse.ArgumentParser(
         prog="marketfit",
         description="Local ShockArb market report.",

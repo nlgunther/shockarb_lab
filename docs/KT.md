@@ -3,7 +3,7 @@
 *Updated after each session. Captures decisions and context not derivable from reading the code.  
 For API details see API.md; for quick commands see CHEATSHEET.md.*
 
-> Last updated: 2026-06-09T00:00 | Trigger: manual (\ukt) | Staleness: Fresh (session 10)
+> Last updated: 2026-06-11T16:01 | Trigger: manual (\ukt) | Staleness: Fresh (session 12)
 
 ---
 
@@ -119,12 +119,13 @@ A regime is a `HistoricFactorModel`: a `UniverseConfig` (tickers + calibration w
 | `gulf_war_recovery` | `us_recovery` | 5 | 27 | 4 | 1991-03-01 → 1991-06-28 |
 | `liberation_day_recovery` | `us_lib_day` | 19 | 66 | 3 | 2025-04-01 → 2025-07-31 |
 | `covid_reopening` | `us_reopening` | 10 | 98 | 3 | 2020-11-09 → 2021-02-28 |
+| `iran_shock` | `us_iran` | 19 | 80 | 3 | 2026-02-24 → 2026-04-30 |
 
 **US universe now has 98 stocks** (was 66) after bulk `add-asset` of 26 Morningstar wide-moat USD names in this session. Tickers added: NKE, FICO, LPLA, GWRE, BR, EFX, APH, OTIS, A, MKC (removed — low R²), MCD, META, BKNG, BSY, MELI, BAC, ALLE, ANET, ABNB, BMY, MDLZ, ECL, MSI, MAS, ADSK, PTC, AVGO, GOOGL. MKTX, BF-B, JKHY, DPZ, MKC removed for R² < 0.27.
 
 **ETF basis for `ukraine_shock`:** VOO, VYM, VEU, VDE, VNQ, TLT, GLD, USO, ITA, HYG (10 ETFs, 3 factors). ITA is the defense ETF.
 
-**Adding a new regime:** define a `HistoricFactorModel` in `regimes.py`, add it to `REGIME_REGISTRY`. No other files change. Registry now has 5 regimes; `test_regimes.py` count assertion is `== 5`.
+**Adding a new regime:** define a `HistoricFactorModel` in `regimes.py`, add it to `REGIME_REGISTRY`. No other files change. Registry now has 6 regimes (added `iran_shock` — US-Israel strike on Iran / Strait of Hormuz closure, 2026-02-24 → 2026-04-30, preferred over `ukraine_shock` while the conflict is active); `test_regimes.py` count assertion is `== 6`.
 
 **`covid_reopening` gotcha:** first build attempt produced T=0 (empty calibration). Root cause was a head-miss bug in `DataCoordinator._gap_analyse()` — the cache held 2022+ data and was incorrectly considered "covering" the 2020 window. Fixed by adding a `cached_start_ts > req_start_ts` head-miss check. Always verify build output shows `T > 0` before scoring.
 
@@ -183,12 +184,14 @@ Run: `python utils/value_score_viz.py --regime ukraine_shock --out data/viz`
 
 ## Test Suite
 
-**`test_stockfit.py` + `test_marketfit.py`: 146/146 passing.** Run with:
+**`test_stockfit.py` + `test_stockfit_rvol.py` + `test_marketfit.py`: all passing.** Run with:
 ```bash
-PYTHONPYCACHEPREFIX=/tmp/shockarb_pycache python -m pytest tests/test_stockfit.py tests/test_marketfit.py -v
+PYTHONPYCACHEPREFIX=/tmp/shockarb_pycache python -m pytest tests/test_stockfit.py tests/test_stockfit_rvol.py tests/test_marketfit.py -v
 ```
 
-**Full suite:** `pytest tests/ -q` — 372 passing, 49 failing (pre-existing failures unrelated to stockfit/marketfit work; see Known Design Debt).
+**Full suite (2026-06-11, session 12): `pytest tests/ -q` — 616/616 passing**, across 18 test files (up from 593 — added `tests/test_stockfit_intraday.py`, 14 tests, plus the `iran_shock` regime test additions). (The earlier "372 passing, 49 failing" figure was specific to a transient pre-RVOL state and is no longer current.)
+
+**Running subsets:** use `scripts\run_tests.bat <group>` instead of memorising file lists — e.g. `scripts\run_tests.bat rvol`, `scripts\run_tests.bat stockfit -v`, `scripts\run_tests.bat all -k rvol`. Run `scripts\run_tests.bat help` for the full group list (stockfit, rvol, marketfit, report, cli, engine, pipeline, regimes, cache, config, portfolio, fundamentals, all).
 
 **`PYTHONPYCACHEPREFIX` workaround:** The Linux sandbox mount of the Windows NTFS project folder does not reflect file mtime updates made via the file Edit tool. Python's `.pyc` cache reads the stale mtime, bypasses the updated source, and runs old bytecode. Setting `PYTHONPYCACHEPREFIX=/tmp/fresh_dir` redirects the pyc cache to a directory where no stale files exist, forcing recompilation from the current source. Required whenever tests fail with `???` instead of a real source line in the traceback.
 
@@ -196,6 +199,8 @@ PYTHONPYCACHEPREFIX=/tmp/shockarb_pycache python -m pytest tests/test_stockfit.p
 
 **Test files by package:**
 - `tests/test_stockfit.py` — 128 tests across 7 classes: `TestFeatureExtraction` (11), `TestRulesEngine` (13), `TestClusterAnnotation` (4), `TestReportBuild` (18), `TestReportEnhanced` (10), `TestCliResolveOut` (5), `TestCliLoaders` (8; uses `tmp_path` for synthetic file I/O)
+- `tests/test_stockfit_rvol.py` — 21 tests across 5 classes: `TestComputeRvol` (6), `TestExtractAllRvol` (2), `TestStockVerdictRvol` (4), `TestReportRvolColumn` (2), `TestStickyRvolCli` (7)
+- `tests/test_stockfit_intraday.py` — 14 tests across 4 classes: `TestFetchIntradayPrices` (5), `TestExtractAllIntraday` (3), `TestStockVerdictIntraday` (4), `TestReportIntradayColumn` (2)
 - `tests/test_marketfit.py` — extended with `TestCliLoaders` (9 tests): `_load_news`, `_load_picks`, `_load_fundamentals`, `_is_stale`
 - `tests/test_fundamental_scanner.py` — 36 tests for `fundamental_scanner.py` (added `TestLoadOverrides` 6 tests + `TestFetchFundamentalsOverrides` 3 tests + `TestStockfitDebugFlag` 1 test)
 - `tests/test_portfolio_sizer.py` — 10 tests: `TestExclude` (5), `TestTickers` (5 — covers bypass of ranking, `--top` override, case-insensitivity, weight normalisation, unknown-ticker skip)
@@ -232,11 +237,11 @@ utils/
 │   ├── labels.py           — ML stub: label-generation design documented, not yet implemented
 │   └── cli.py              — `python -m marketfit report [--snapshot] [--out] [--llm] [--timestamp]`
 ├── stockfit/               — per-ticker stock opportunity report (parallel to marketfit)
-│   ├── features.py         — pure: live_alpha_us.csv + fundamentals.csv + news.txt → per-ticker feature dicts
+│   ├── features.py         — pure: live_alpha_us.csv + fundamentals.csv + news.txt → per-ticker feature dicts; optional intraday quote fetch
 │   ├── rules.py            — pure: features → StockVerdict (INCLUDE / WATCH / EXCLUDE) with reason + cluster annotation
-│   ├── report.py           — pure: verdicts → Markdown report string with <!-- LEARN --> tags per ticker
+│   ├── report.py           — pure: verdicts → Markdown report string with <!-- LEARN --> tags per ticker; table includes RVOL + Intraday columns
 │   ├── llm.py              — Anthropic/Gemini client; generates per-ticker narrative + executive summary
-│   └── cli.py              — `python -m stockfit report [--llm] [--timestamp] [--min-r2] [--min-confidence] [--min-upside] [--reports-dir]`
+│   └── cli.py              — `python -m stockfit {report,set-rvol,show-rvol}`; report flags: `[--llm] [--timestamp] [--min-r2] [--min-confidence] [--min-upside] [--reports-dir] [--rvol] [--no-rvol] [--intraday]`
 ├── csv_to_md.py         — converts alpha CSV to markdown report
 ├── score_viz.py         — confidence_delta bubble chart + factor heatmap (ShockArb-only)
 ├── value_score_viz.py   — value screener × ShockArb 3-figure suite + combined CSV
@@ -255,9 +260,21 @@ Parallel to `marketfit` but operates on stock signals rather than macro conditio
 - `rules.py` applies deterministic gates in order: data quality (target_below_price → hard EXCLUDE) → earnings (imminent → EXCLUDE) → signal strength (r² ≥ 0.65, confidence_delta ≥ 0.020) → analyst upside (≥ 5% for INCLUDE; below threshold → WATCH). Annotates INCLUDE tickers that share a sector cluster (e.g. ≥2 semiconductor equipment names → cluster-risk warning added).
 - `report.py` assembles a three-section Markdown report: `✅ Act on These` (INCLUDE, per-ticker LEARN block), `⚠️ Watch`, `❌ Excluded` (table with reason), plus `📌 Data Quality Flags`.
 - `llm.py` reuses the same Anthropic/Gemini backend pattern as `marketfit/llm.py`. Produces: `executive_summary`, `picks_analysis` (nested dict of per-ticker narratives), `watch_list_notes`, `risk_factors`.
-- CLI: `cd utils && python -m stockfit report [--llm] [--timestamp] [--min-r2 0.65] [--min-confidence 0.020] [--min-upside 0.05]`. Output: `data/stock_report.md` or `data/stock_report_YYYYMMDD_HHMM.md`.
+- CLI: `cd utils && python -m stockfit report [--llm] [--timestamp] [--min-r2 0.65] [--min-confidence 0.020] [--min-upside 0.05] [--rvol] [--no-rvol] [--intraday]`. Output: `data/stock_report.md` or `data/stock_report_YYYYMMDD_HHMM.md`.
 
 Smoke-test result (2026-06-06): 3 INCLUDE (AMAT, ADI, ETN), 2 WATCH (LRCX, ASML), 61 EXCLUDE. KLAC and QCOM correctly excluded via data-quality gate.
+
+**RVOL (relative volume) display (added 2026-06-11):**
+
+Informational/display-only column (Option #1 of the RVOL design discussion) — does not affect scoring, ranking, gating, or the PCA factor model. RVOL = most recent cached day's volume / trailing average volume, dynamic 5-20 day window (`RVOL_MIN_WINDOW`/`RVOL_MAX_WINDOW` in `stockfit/features.py`), shown as e.g. `2.3x (10d)` or `—` if cache history is insufficient. Computed from the local DataStore parquet cache only — no network calls.
+
+Off by default. Enable per-run with `python -m stockfit report --rvol` (or `--no-rvol` to force off). Persist a preference across runs with `python -m stockfit set-rvol on` / `set-rvol off`; check the current sticky setting with `python -m stockfit show-rvol`. The sticky file is `data/.stockfit_rvol` (`STOCKFIT_RVOL_FILE` in `paths.py`), mirroring `shockarb`'s `.shockarb_regime` pattern. Resolution order: `--rvol`/`--no-rvol` flag > sticky file > default off. See `docs/PATHS.md` ("Sticky CLI State") for the path/file convention and `tests/test_stockfit_rvol.py` for the full test coverage.
+
+**Intraday price/% change display (added 2026-06-11, session 12):**
+
+Informational/display-only column, mirroring marketfit's `_fetch_intraday_current` design — does not affect scoring, ranking, or gating. `features._fetch_intraday_prices(tickers)` makes a single batch `yf.download(tickers, period="1d", auto_adjust=True)` call and returns `{ticker: last_close_price}` (or `{}` on failure/empty/no tickers — network errors degrade gracefully). `extract_all(..., compute_intraday=True)` populates `intraday_price` and `intraday_chg_pct = (intraday_price - price) / price` per ticker; the report table's Intraday column shows `+x.xx%` or `—` if unavailable.
+
+Off by default, no sticky setting (unlike RVOL) — enable per-run with `python -m stockfit report --intraday`. This is a network call. See `tests/test_stockfit_intraday.py` for full coverage.
 
 **Full EOD workflow (5 steps):**
 ```
@@ -303,7 +320,9 @@ shockarb_lab/
 ├── data/                   ← runtime model artefacts, scores, and cache
 │   ├── cache/              ← parquet OHLCV cache
 │   ├── backups/            ← pre-mutation parquet backups (7-day)
-│   └── viz/                ← value_score_viz.py output PNGs + CSV
+│   ├── viz/                ← value_score_viz.py output PNGs + CSV
+│   ├── .shockarb_regime    ← sticky regime (one line, regime name)
+│   └── .stockfit_rvol      ← sticky RVOL display setting (on/off, see PATHS.md)
 ├── datamgr/                ← provider-agnostic data management layer
 ├── docs/                   ← all documentation + plans
 │   ├── archive/            ← update06062026.md, Names_deleted_052826.md,
@@ -317,7 +336,8 @@ shockarb_lab/
 │   │                          (check_1991.py, explain_score.py, load_tickers.py, peek_manifest.py)
 ├── reports/                ← generated Markdown reports (market_report, stock_report — default CLI output)
 │   └── stock_report_20260607_1345.md  ← example timestamped archive
-├── scripts/                ← .bat / .sh command wrappers (shockarb_workflows.bat)
+├── scripts/                ← .bat / .sh command wrappers (shockarb_workflows.bat,
+│                              run_tests.bat — file-based pytest subset runner)
 ├── shockarb/               ← core package
 ├── skills/                 ← Cowork skill definitions (market-report-workspace eval scaffolding
 │                              still here; low priority to move)
@@ -327,6 +347,7 @@ shockarb_lab/
 │   ├── paths.py            ← canonical path registry (relative Path objects; see docs/PATHS.md)
 │   └── value_analyzer.py   ← moved from root
 ├── MANIFEST.txt
+├── generate_manifest.py
 └── verify_install.py
 ```
 
@@ -362,9 +383,13 @@ No manual copy-paste needed. Session transcripts are accessible programmatically
 
 ## File Integrity
 
-`MANIFEST.txt` tracks SHA-256 prefixes for source + test files. Regenerate after code changes:
+`MANIFEST.txt` tracks SHA-256 prefixes (CRLF-normalised, hash-of-hashes bundle)
+for all `.py` files under `shockarb/`, `utils/`, `datamgr/`, `tests/`, plus
+`scripts/*.bat`, `verify_install.py`, and `generate_manifest.py` itself
+(84 files as of 2026-06-11, session 12 — added `tests/test_stockfit_intraday.py` since session 11's 82). Regenerate after code changes, then verify:
 ```bash
-python verify_install.py --regenerate
+python generate_manifest.py
+python verify_install.py
 ```
 
 ---
@@ -377,7 +402,8 @@ python verify_install.py --regenerate
 - **`liberation_day_recovery` end date `2025-07-31`** — window may now be complete; update once normalization is confirmed.
 - **Value screener ticker mapping is manual** (`VALUE_TICKER_MAP` in `value_score_viz.py`). Only 38 of 48 USD stocks are mapped; 10 unmapped names produce hollow circles with no ShockArb signal.
 - **`value_score_viz.py` file truncation bug** — the sandbox Edit tool truncates files >~19KB. All repairs done via bash `head | append` pattern. If editing this file, use bash cat-to-file rather than the Edit tool.
-- **`shockarb/cli.py` IndentationError at line ~738** — dangling code fragment `se_args()` and a duplicate `if args.data_dir:` block appear after `main()`. Breaks `test_cli.py` and `test_out_flag.py` collection. Needs a targeted fix before next test run against the full suite.
+- ~~**`shockarb/cli.py` IndentationError at line ~738**~~ — resolved; full suite (593/593, including `test_cli.py` and `test_out_flag.py`) passes as of 2026-06-11 (session 11).
+- **Bash sandbox mount can serve stale/corrupted content for files NOT touched this session** — recurs across sessions, not limited to recently-edited files. Session 12 found 6 files truncated mid-statement on the Linux mount (`utils/marketfit/cli.py` had embedded null bytes; `utils/stockfit/features.py`, `utils/fundamental_scanner.py`, `tests/test_fundamental_scanner.py`, `tests/test_stockfit_rvol.py`, `shockarb/regimes.py` all had `SyntaxError: unterminated string/triple-quote` at truncation points), despite all having been verified correct earlier. **Detection:** full-repo scan — `python3 -c "import ast,glob; [print(f,e) for f in glob.glob('**/*.py',recursive=True) for e in [ast_parse_error(f)] if e]"` (attempt `ast.parse` on every `.py` file, collect failures) catches all corrupted files in one pass rather than discovering them one-by-one via pytest collection errors. **Fix:** `Read` the file via the Windows-side path to get ground truth, rewrite the Linux-mount copy via `cat > <path> << 'UNIQUE_DELIM' ... UNIQUE_DELIM` heredoc (quoted delimiter avoids shell expansion), verify with `ast.parse`, then `find . -name __pycache__ -exec rm -rf {} +`. Run the full-repo scan again after fixes — corruption can recur in files just rewritten.
 
 ---
 
@@ -405,4 +431,6 @@ python verify_install.py --regenerate
 | 2026-06-08 (session 7) | Resolved 3-file merge conflict (`utils/marketfit/cli.py`, `utils/stockfit/cli.py`, `utils/stockfit/features.py`): incoming branch had centralised paths via `paths.py` with absolute paths + `str()` casts; HEAD had `_DEFAULT_REPORTS_DIR` + earnings fix; resolution adopts both intents cleanly — rewrote `utils/paths.py` to use relative `pathlib.Path` objects covering all inputs and outputs, no `str()` casts anywhere; added `_check_cwd()` to both CLI `main()` functions with actionable error message; created `docs/PATHS.md` (full path design rationale); added Documentation Guide section to `docs/README.md`; `reports/` folder is now the canonical CLI output location (not `data/reports/`) |
 | 2026-06-08 (session 8) | Fixed NTFS write-truncation corruptions: `utils/stockfit/features.py` (347 null bytes → rewritten via bash) and `utils/paths.py` (missing outputs section → rewritten via bash); fixed `_DEFAULT_REPORTS_DIR` ImportError in both test files (replaced with `REPORTS_DIR` from `paths`); fixed Windows path-separator mismatch in two `startswith` assertions (`str(out)` → `out.as_posix()`); fixed literal-newline corruption in `features.py` `_load_news()` split; all 146 tests in `test_stockfit.py` + `test_marketfit.py` now passing |
 | 2026-06-09 (session 10) | Added `--debug` flag to `stockfit report`: zeroes signal thresholds, skips LLM, always timestamps output — for diagnosing filter issues without touching production config; added `:debug_stock` to `shockarb_workflows.bat`; added `_load_overrides()` to `fundamental_scanner.py` — reads `data/analyst_overrides.csv`, applied last (highest priority) over yfinance analyst targets; `overrides_path` param on `fetch_fundamentals()`; `_DEFAULT_OVERRIDES` constant honours `SHOCK_ARB_DATA_DIR`; 10 new tests (`TestLoadOverrides` + `TestFetchFundamentalsOverrides`) |
+| 2026-06-11 (session 11) | RVOL (relative volume) display feature, Option #1 (informational only — no change to ranking/gating/PCA factor model): `_compute_rvol()` in `stockfit/features.py` (dynamic 5-20 day trailing window), `rvol`/`rvol_window` fields on `StockVerdict` + RVOL column in `report.py`, sticky `set-rvol`/`show-rvol`/`--rvol`/`--no-rvol` CLI mirroring `shockarb`'s `.shockarb_regime` pattern (`STOCKFIT_RVOL_FILE` in `paths.py`); 21 new tests in `tests/test_stockfit_rvol.py` (full suite now 593/593 passing across 18 files); added `scripts/run_tests.bat` test-subset runner (13 groups, passthrough pytest args); updated `docs/PATHS.md` and `stockfit/cli.py` docstring |
 | 2026-06-08 (session 9) | Added `--tickers` / `-t` flag to `portfolio_sizer.py`: when set, bypasses CSV ranking entirely and sizes only the named tickers (designed for acting on the INCLUDE list from the stock report); `--top` and `--exclude` are ignored when `--tickers` is present; usage: `python utils/portfolio_sizer.py --tickers AMAT ADI ETN --capital 10000`; added `TestTickers` class (5 tests) to `test_portfolio_sizer.py` (now 10/10 passing); updated `docs/UTILS.md` arguments table |
+| 2026-06-11 (session 12) | Added `iran_shock` regime (`shockarb/regimes.py`) — US-Israel strike on Iran / Strait of Hormuz closure, 2026-02-24 → 2026-04-30, 19 ETFs / 80 stocks / 3 factors, preferred over `ukraine_shock` while the conflict is active; registry now 6 regimes, `test_regimes.py` count assertion `== 6`. Added `--intraday` flag to `stockfit report`: `_fetch_intraday_prices()` in `stockfit/features.py` (single batch yfinance call, period="1d"), `intraday_price`/`intraday_chg_pct` fields on `StockVerdict`, Intraday column in `report.py` table; off by default, no sticky setting; 14 new tests (`tests/test_stockfit_intraday.py`, full suite now 616/616 across 18 files). Diagnosed and fixed recurring Linux-sandbox-mount file corruption (6 files truncated mid-statement: `utils/marketfit/cli.py`, `utils/stockfit/features.py`, `utils/fundamental_scanner.py`, `tests/test_fundamental_scanner.py`, `tests/test_stockfit_rvol.py`, `shockarb/regimes.py`) via Windows-side Read + bash heredoc rewrite + `ast.parse` verification + `__pycache__` clear; documented full-repo `ast.parse` glob-scan detection technique in Known Design Debt. MANIFEST regenerated (84 files), bundle verified. |

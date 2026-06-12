@@ -59,8 +59,8 @@ _LEARN_CLOSE = "<!-- /LEARN -->"
 
 def _table_header() -> str:
     return (
-        "| Ticker | R² | Conf.Δ | Price | Analyst Tgt | Upside | Fwd P/E |\n"
-        "| ------ | --:| ------:| -----:| -----------:| ------:| -------:|"
+        "| Ticker | R² | Conf.Δ | Price | Analyst Tgt | Upside | Fwd P/E | RVOL | Intraday |\n"
+        "| ------ | --:| ------:| -----:| -----------:| ------:| -------:| ----:| --------:|"
     )
 
 

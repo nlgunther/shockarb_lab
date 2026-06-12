@@ -25,17 +25,35 @@ Feature spec (single source of truth — rules.py and report.py both consume thi
   news_headlines    list[str]    — up to 3 news headlines for this ticker
   target_below_price bool        — True when analyst_target < price (data quality flag)
   earnings_imminent bool         — True when next_earnings is within earnings_window days
+  rvol              float | None — relative volume: latest cached volume / trailing
+                                    average volume (only populated when compute_rvol=True)
+  rvol_window       int   | None — trailing window size (days) used for rvol
+  intraday_price    float | None — live current price (only populated when
+                                    compute_intraday=True)
+  intraday_chg_pct  float | None — (intraday_price - price) / price; change vs
+                                    the cached close used for `price`
 """
 
 from __future__ import annotations
 
 import csv
-from datetime import date, datetime
+import os
+import sys
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 # All paths centralised in paths.py. See docs/PATHS.md for design rationale.
-from paths import LIVE_ALPHA_US, FUNDAMENTALS, NEWS
+from paths import DATA, LIVE_ALPHA_US, FUNDAMENTALS, NEWS
+
+# Resolve project root so `shockarb.store` is importable regardless of cwd.
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
+# RVOL window bounds (see docs/PATHS.md / RVOL design notes).
+RVOL_MAX_WINDOW = 20
+RVOL_MIN_WINDOW = 5
 
 
 # ---------------------------------------------------------------------------
@@ -56,7 +74,10 @@ def _load_scores(path: str) -> list[dict[str, Any]]:
         reader = csv.DictReader(text.splitlines())
         for row in reader:
             entry: dict[str, Any] = {}
-            raw = {k.strip(): v.strip() for k, v in row.items()}
+            # DictReader fills missing trailing fields with None on short
+            # (truncated) rows; treat those as empty strings rather than
+            # crashing on .strip().
+            raw = {(k or "").strip(): (v or "").strip() for k, v in row.items()}
             ticker = (
                 raw.get("Ticker") or raw.get("ticker") or raw.get("")
             )
@@ -89,7 +110,9 @@ def _load_fundamentals(path: str) -> dict[str, dict[str, Any]]:
         text = Path(path).read_text(encoding="utf-8", errors="replace")
         reader = csv.DictReader(text.splitlines())
         for row in reader:
-            raw = {k.strip(): v.strip() for k, v in row.items()}
+            # See _load_scores: DictReader fills missing trailing fields
+            # with None on short (truncated) rows.
+            raw = {(k or "").strip(): (v or "").strip() for k, v in row.items()}
             ticker = raw.get("Ticker", "").upper()
             if not ticker:
                 continue
@@ -157,11 +180,97 @@ def _earnings_imminent(next_earnings: str | None, window_days: int) -> bool:
         return False
 
 
+def _compute_rvol(
+    ticker:     str,
+    store:      Any,
+    max_window: int = RVOL_MAX_WINDOW,
+    min_window: int = RVOL_MIN_WINDOW,
+) -> tuple[float | None, int | None]:
+    """
+    Compute relative volume for *ticker* from cached daily OHLCV.
+
+    RVOL = most recent cached day's volume / trailing average volume.
+    Uses a dynamic window: as many trailing days as are cached, capped at
+    max_window and floored at min_window. Reads only the local parquet
+    cache (no network calls) — returns (None, None) if fewer than
+    min_window + 1 days are cached.
+
+    Example
+        rvol, window = _compute_rvol("ETN", store)
+        # rvol=2.3, window=10  → today's volume is 2.3x the 10-day average
+    """
+    end   = date.today().isoformat()
+    start = (date.today() - timedelta(days=max_window * 3)).isoformat()
+
+    ohlcv = store.fetch_daily_ohlcv([ticker], start, end)
+    if ohlcv.empty:
+        return None, None
+
+    # The cached parquet schema has used both "Volume" and "volume" across
+    # store.py revisions; accept either rather than assuming one.
+    col = next(
+        (c for c in ((f, ticker) for f in ("Volume", "volume")) if c in ohlcv.columns),
+        None,
+    )
+    if col is None:
+        return None, None
+
+    volumes = ohlcv[col].dropna()
+    if len(volumes) < min_window + 1:
+        return None, None
+
+    today_vol = volumes.iloc[-1]
+    window    = min(max_window, len(volumes) - 1)
+    trailing  = volumes.iloc[-(window + 1):-1]
+    avg       = trailing.mean()
+    if avg <= 0:
+        return None, None
+
+    return today_vol / avg, window
+
+
+def _fetch_intraday_prices(tickers: list[str]) -> dict[str, float]:
+    """
+    Fetch current (latest intraday) price for a batch of tickers via yfinance.
+
+    Single batch call, period="1d" — returns today's bars up to the last
+    complete minute and takes the final row's Close as "current price".
+    Not cached (intraday prices are too ephemeral). Returns {} on failure
+    or if no tickers are given.
+
+    Example
+        prices = _fetch_intraday_prices(["ETN", "HON"])
+        # {"ETN": 410.20, "HON": 225.10}
+    """
+    if not tickers:
+        return {}
+
+    import yfinance as yf
+
+    try:
+        raw = yf.download(tickers, period="1d", progress=False, auto_adjust=True)
+        if raw.empty:
+            return {}
+        close_col = raw["Close"] if "Close" in raw.columns else raw
+        if hasattr(close_col, "columns"):
+            last = close_col.iloc[-1]
+            return {
+                t: float(last[t]) for t in tickers
+                if t in last.index and last[t] == last[t]   # NaN check
+            }
+        val = float(close_col.iloc[-1])
+        return {tickers[0]: val} if val == val else {}      # NaN check
+    except Exception:
+        return {}
+
+
 def extract_all(
     scores_path:       Path = LIVE_ALPHA_US,
     fundamentals_path: Path = FUNDAMENTALS,
     news_path:         Path = NEWS,
     earnings_window:   int  = 14,
+    compute_rvol:      bool = False,
+    compute_intraday:  bool = False,
 ) -> list[dict[str, Any]]:
     """
     Extract per-ticker feature dicts from the three pipeline output files.
@@ -172,6 +281,15 @@ def extract_all(
     fundamentals_path : path to fundamentals.csv
     news_path         : path to news.txt
     earnings_window   : days-out threshold for earnings_imminent flag (default 14)
+    compute_rvol      : if True, populate "rvol"/"rvol_window" from the local
+                        DataStore parquet cache (data/prices/daily/). No network
+                        calls — tickers without enough cached history get
+                        rvol=None. Default False (no behavior change).
+    compute_intraday  : if True, fetch live current prices for all tickers in a
+                        single batch yfinance call and populate
+                        "intraday_price"/"intraday_chg_pct". Network call —
+                        tickers the fetch fails for get both fields as None.
+                        Default False (no behavior change).
 
     Returns
     -------
@@ -187,6 +305,15 @@ def extract_all(
     scores       = _load_scores(scores_path)
     fundamentals = _load_fundamentals(fundamentals_path)
     news         = _load_news(news_path)
+
+    store = None
+    if compute_rvol:
+        from shockarb.store import DataStore
+        store = DataStore(DATA)
+
+    intraday_prices: dict[str, float] = {}
+    if compute_intraday:
+        intraday_prices = _fetch_intraday_prices([row["ticker"] for row in scores])
 
     results = []
     for row in scores:
@@ -206,6 +333,15 @@ def extract_all(
 
         earnings_imminent = _earnings_imminent(fund.get("next_earnings"), earnings_window)
 
+        rvol, rvol_window = (None, None)
+        if compute_rvol:
+            rvol, rvol_window = _compute_rvol(ticker, store)
+
+        intraday_price = intraday_prices.get(ticker)
+        intraday_chg_pct = None
+        if intraday_price is not None and price and price > 0:
+            intraday_chg_pct = (intraday_price - price) / price
+
         results.append({
             # Signal features
             "ticker":           ticker,
@@ -215,7 +351,7 @@ def extract_all(
             "actual_return":    row.get("actual_return", float("nan")),
             "expected_rel":     row.get("expected_rel", float("nan")),
             "residual_vol":     row.get("residual_vol", float("nan")),
-            # Fundamental features
+            # Fundamentals
             "price":            price,
             "analyst_target":   target,
             "analyst_upside":   analyst_upside,
@@ -230,6 +366,12 @@ def extract_all(
             # Derived flags
             "target_below_price": target_below_price,
             "earnings_imminent":  earnings_imminent,
+            # Volume context (informational only — see RVOL design notes)
+            "rvol":               rvol,
+            "rvol_window":        rvol_window,
+            # Live-quote context (informational only — see intraday design notes)
+            "intraday_price":     intraday_price,
+            "intraday_chg_pct":   intraday_chg_pct,
         })
 
     results.sort(key=lambda d: d.get("confidence_delta") or float("-inf"), reverse=True)

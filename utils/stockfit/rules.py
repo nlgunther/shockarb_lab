@@ -90,16 +90,22 @@ class StockVerdict:
     news_headlines:   list[str]
     cluster:          str | None   # cluster label if ticker is in a known cluster
     warnings:         list[str] = field(default_factory=list)
+    rvol:             float | None = None   # relative volume (informational only)
+    rvol_window:      int | None = None     # trailing window (days) used for rvol
+    intraday_price:   float | None = None   # live current price (informational only)
+    intraday_chg_pct: float | None = None   # (intraday_price - price) / price
 
     def as_markdown_row(self) -> str:
         """Single table row for the stock report."""
-        upside = f"{self.analyst_upside * 100:+.1f}%" if self.analyst_upside is not None else "—"
-        price  = f"\\${self.price:,.2f}" if self.price else "—"
-        target = f"\\${self.analyst_target:,.2f}" if self.analyst_target else "—"
-        pe     = f"{self.fwd_pe:.1f}x" if self.fwd_pe else "—"
+        upside   = f"{self.analyst_upside * 100:+.1f}%" if self.analyst_upside is not None else "—"
+        price    = f"\\${self.price:,.2f}" if self.price else "—"
+        target   = f"\\${self.analyst_target:,.2f}" if self.analyst_target else "—"
+        pe       = f"{self.fwd_pe:.1f}x" if self.fwd_pe else "—"
+        rvol     = f"{self.rvol:.1f}x ({self.rvol_window}d)" if self.rvol is not None else "—"
+        intraday = f"{self.intraday_chg_pct * 100:+.2f}%" if self.intraday_chg_pct is not None else "—"
         return (
             f"| {self.ticker} | {self.r_squared:.3f} | "
-            f"{self.confidence_delta:+.4f} | {price} | {target} | {upside} | {pe} |"
+            f"{self.confidence_delta:+.4f} | {price} | {target} | {upside} | {pe} | {rvol} | {intraday} |"
         )
 
 
@@ -130,6 +136,9 @@ def _evaluate_one(
             price=feats.get("price"), analyst_target=feats.get("analyst_target"),
             fwd_pe=feats.get("fwd_pe"), news_headlines=feats.get("news_headlines", []),
             cluster=cluster,
+            rvol=feats.get("rvol"), rvol_window=feats.get("rvol_window"),
+            intraday_price=feats.get("intraday_price"),
+            intraday_chg_pct=feats.get("intraday_chg_pct"),
         )
 
     # --- Earnings imminent (hard EXCLUDE) ---
@@ -141,6 +150,9 @@ def _evaluate_one(
             price=feats.get("price"), analyst_target=feats.get("analyst_target"),
             fwd_pe=feats.get("fwd_pe"), news_headlines=feats.get("news_headlines", []),
             cluster=cluster,
+            rvol=feats.get("rvol"), rvol_window=feats.get("rvol_window"),
+            intraday_price=feats.get("intraday_price"),
+            intraday_chg_pct=feats.get("intraday_chg_pct"),
         )
 
     # --- Signal strength gates ---
@@ -152,6 +164,9 @@ def _evaluate_one(
             price=feats.get("price"), analyst_target=feats.get("analyst_target"),
             fwd_pe=feats.get("fwd_pe"), news_headlines=feats.get("news_headlines", []),
             cluster=cluster,
+            rvol=feats.get("rvol"), rvol_window=feats.get("rvol_window"),
+            intraday_price=feats.get("intraday_price"),
+            intraday_chg_pct=feats.get("intraday_chg_pct"),
         )
 
     if cd < min_conf_delta:
@@ -162,6 +177,9 @@ def _evaluate_one(
             price=feats.get("price"), analyst_target=feats.get("analyst_target"),
             fwd_pe=feats.get("fwd_pe"), news_headlines=feats.get("news_headlines", []),
             cluster=cluster,
+            rvol=feats.get("rvol"), rvol_window=feats.get("rvol_window"),
+            intraday_price=feats.get("intraday_price"),
+            intraday_chg_pct=feats.get("intraday_chg_pct"),
         )
 
     # --- Analyst upside gate ---
@@ -175,6 +193,9 @@ def _evaluate_one(
             price=feats.get("price"), analyst_target=feats.get("analyst_target"),
             fwd_pe=feats.get("fwd_pe"), news_headlines=feats.get("news_headlines", []),
             cluster=cluster, warnings=warnings,
+            rvol=feats.get("rvol"), rvol_window=feats.get("rvol_window"),
+            intraday_price=feats.get("intraday_price"),
+            intraday_chg_pct=feats.get("intraday_chg_pct"),
         )
 
     if upside < min_upside:
@@ -186,6 +207,9 @@ def _evaluate_one(
             price=feats.get("price"), analyst_target=feats.get("analyst_target"),
             fwd_pe=feats.get("fwd_pe"), news_headlines=feats.get("news_headlines", []),
             cluster=cluster, warnings=warnings,
+            rvol=feats.get("rvol"), rvol_window=feats.get("rvol_window"),
+            intraday_price=feats.get("intraday_price"),
+            intraday_chg_pct=feats.get("intraday_chg_pct"),
         )
 
     # --- INCLUDE ---
@@ -196,6 +220,9 @@ def _evaluate_one(
         price=feats.get("price"), analyst_target=feats.get("analyst_target"),
         fwd_pe=feats.get("fwd_pe"), news_headlines=feats.get("news_headlines", []),
         cluster=cluster, warnings=warnings,
+        rvol=feats.get("rvol"), rvol_window=feats.get("rvol_window"),
+        intraday_price=feats.get("intraday_price"),
+        intraday_chg_pct=feats.get("intraday_chg_pct"),
     )
 
 

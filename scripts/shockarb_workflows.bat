@@ -11,8 +11,19 @@ cd /d "%~dp0.."
 REM Add utils\ to PYTHONPATH so marketfit and stockfit packages are importable
 set PYTHONPATH=%cd%\utils;%PYTHONPATH%
 
-if "%1"=="" goto :help
-goto :%1 2>nul || (echo Unknown command: %1 && goto :help)
+REM Capture the command, then collect any remaining args (e.g. --rvol,
+REM --intraday, --no-rvol) so they can be forwarded to `stockfit report`.
+set COMMAND=%1
+set EXTRA_ARGS=
+:collect_extra
+shift
+if "%1"=="" goto :after_collect
+set EXTRA_ARGS=%EXTRA_ARGS% %1
+goto :collect_extra
+:after_collect
+
+if "%COMMAND%"=="" goto :help
+goto :%COMMAND% 2>nul || (echo Unknown command: %COMMAND% && goto :help)
 
 
 REM ── SCORE ───────────────────────────────────────────────────
@@ -72,14 +83,14 @@ goto :end
 REM ── STOCK_REPORT ─────────────────────────────────────────────
 :stock_report
 echo [StockFit] Generating stock opportunity report (rules-based)...
-python -m stockfit report
+python -m stockfit report%EXTRA_ARGS%
 echo Done. Output: reports\stock_report.md
 goto :end
 
 REM ── STOCK_REPORT_LLM ─────────────────────────────────────────
 :stock_report_llm
 echo [StockFit] Generating LLM-enhanced stock report (timestamped)...
-python -m stockfit report --llm --timestamp
+python -m stockfit report --llm --timestamp%EXTRA_ARGS%
 echo Done. Timestamped stock report written to reports\
 goto :end
 
@@ -92,7 +103,7 @@ python -m shockarb score --regime iran_shock --out data\iran_shock\live_alpha_us
 echo [News] Refreshing fundamentals for iran_shock candidates...
 python utils\news_scanner.py --csv data\iran_shock\live_alpha_us.csv --top 20
 echo [StockFit] Generating LLM-enhanced stock report (iran_shock)...
-python -m stockfit report --scores data\iran_shock\live_alpha_us.csv --reports-dir reports\iran_shock --llm --timestamp
+python -m stockfit report --scores data\iran_shock\live_alpha_us.csv --reports-dir reports\iran_shock --llm --timestamp%EXTRA_ARGS%
 echo Done. Output: reports\iran_shock\
 goto :end
 
@@ -108,7 +119,7 @@ python utils\market_data.py
 echo Step 4/5: MarketFit LLM report (timestamped)
 python -m marketfit report --llm --timestamp
 echo Step 5/5: StockFit LLM report (timestamped)
-python -m stockfit report --llm --timestamp
+python -m stockfit report --llm --timestamp%EXTRA_ARGS%
 echo [EOD] Complete. Check data\ for all outputs.
 goto :end
 
@@ -155,6 +166,11 @@ echo    scripts\shockarb_workflows.bat eod
 echo.
 echo  Stand-alone stock report with LLM:
 echo    python -m stockfit report --llm --timestamp
+echo.
+echo  Extra args after the command are forwarded to `stockfit report`
+echo  (stock_report, stock_report_llm, iran_report, eod/full), e.g.:
+echo    scripts\shockarb_workflows.bat eod --rvol
+echo    scripts\shockarb_workflows.bat stock_report_llm --rvol --intraday
 echo.
 
 :end

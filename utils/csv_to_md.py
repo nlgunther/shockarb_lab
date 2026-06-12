@@ -9,8 +9,9 @@ Name resolution is delegated to shockarb.names.TickerReferenceResolver,
 which searches a JSON cache first, then the exchange CSVs in order.
 See names.py for full lookup semantics.
 
-Key file paths  (ALL filenames are constants — edit here, nowhere else)
------------------------------------------------------------------------
+Key file paths (filenames defined once in paths.py — TICKER_CACHE_FILENAME,
+EXCHANGE_CSV_FILENAMES — so this module and shockarb.reference_sync stay in sync)
+------------------------------------------------------------------------------
   TICKER_CACHE   ticker_reference_cache.json   — JSON disk cache
   EXCHANGE_CSVS  nyse_1668526574444.csv        — NYSE reference (checked first)
                  nasdaq_1668526380140.csv       — NASDAQ reference
@@ -55,21 +56,20 @@ except ImportError:
     TickerReferenceResolver = None
     logger.warning("shockarb.names not importable — name resolution unavailable.")
 
+from paths import EXCHANGE_CSV_FILENAMES, TICKER_CACHE_FILENAME
+
 # =============================================================================
-# File paths — ALL filenames live here.  Change them in one place only.
+# File paths — filenames are defined once in paths.py. Change them there.
 # =============================================================================
 
 _DEFAULT_DATA_DIR = "./data"
 
 # JSON disk cache: ticker → {"Name": ..., "Industry": ...}
-TICKER_CACHE = "ticker_reference_cache.json"
+TICKER_CACHE = TICKER_CACHE_FILENAME
 
 # Exchange reference CSVs searched in this order (NYSE before NASDAQ).
 # Supports .csv and .parquet — see names.py for format requirements.
-EXCHANGE_CSVS = [
-    "nyse_1668526574444.csv",
-    "nasdaq_1668526380140.csv",
-]
+EXCHANGE_CSVS = EXCHANGE_CSV_FILENAMES
 
 # =============================================================================
 # Column definitions — formatting rules and display names in one place.

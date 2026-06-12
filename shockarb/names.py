@@ -50,7 +50,7 @@ from typing import Optional
 import pandas as pd
 from loguru import logger
 
-__all__ = ["TickerReferenceResolver"]
+__all__ = ["TickerReferenceResolver", "clear_cache_entries"]
 
 # Sentinel Industry value used when a ticker is not found in any reference
 # file.  Distinct from "Unknown" (which comes from NaN in the source CSV)
@@ -62,6 +62,38 @@ _FALLBACK_INDUSTRY = "Unknown"
 # non-empty.  Incomplete entries are re-queried against the reference files.
 def _is_complete(entry: dict) -> bool:
     return bool(entry.get("Name")) and bool(entry.get("Industry"))
+
+
+def clear_cache_entries(cache_path: str, tickers: list[str]) -> int:
+    """
+    Drop cache entries for *tickers* so they are re-resolved on next lookup.
+
+    Used by shockarb.reference_sync after a reference CSV update: a ticker's
+    cached Name/Industry would otherwise keep serving pre-update values until
+    something marks it incomplete.
+
+    Example:
+        clear_cache_entries("data/ticker_reference_cache.json", ["CPRT", "V"])
+        # → 2 (both were present and removed)
+
+    Returns
+    -------
+    int — number of entries actually removed. 0 if the cache file is
+    missing, unreadable, or none of *tickers* were cached.
+    """
+    try:
+        with open(cache_path, encoding="utf-8") as f:
+            cache = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return 0
+
+    removed = sum(1 for ticker in tickers if cache.pop(ticker, None) is not None)
+
+    if removed:
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump(cache, f, indent=2)
+
+    return removed
 
 
 class TickerReferenceResolver:
