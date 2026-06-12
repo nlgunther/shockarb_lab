@@ -803,8 +803,43 @@ def score_universe(
             f"score_universe({universe.name!r}): coordinator returned no stock data."
         )
 
+    # Align ETF and stock price histories to their common date index before
+    # computing returns. The coordinator can return mismatched trailing
+    # ranges (e.g. ETF data includes a "today" bar that the stock fetch
+    # hasn't picked up yet); without this, etf_returns.iloc[-1] and
+    # stock_returns.iloc[-1] would represent returns from two different
+    # calendar days, corrupting confidence_delta across the universe.
+    common_idx = etf_prices.index.intersection(stock_prices.index)
+    if len(common_idx) < 2:
+        raise ValueError(
+            f"score_universe({universe.name!r}): ETF "
+            f"({etf_prices.index.min().date()}..{etf_prices.index.max().date()}) "
+            f"and stock ({stock_prices.index.min().date()}..{stock_prices.index.max().date()}) "
+            f"price histories share fewer than 2 common dates after alignment."
+        )
+    if len(common_idx) < len(etf_prices.index) or len(common_idx) < len(stock_prices.index):
+        logger.debug(
+            f"score_universe({universe.name!r}): ETF range "
+            f"{etf_prices.index.min().date()}..{etf_prices.index.max().date()} and stock range "
+            f"{stock_prices.index.min().date()}..{stock_prices.index.max().date()} differ; "
+            f"aligning both to common range "
+            f"{common_idx.min().date()}..{common_idx.max().date()}."
+        )
+    etf_prices   = etf_prices.loc[common_idx]
+    stock_prices = stock_prices.loc[common_idx]
+
     etf_returns   = prices_to_returns(etf_prices).iloc[-1]
     stock_returns = prices_to_returns(stock_prices).iloc[-1]
+
+    assert etf_returns.name == stock_returns.name, (
+        f"score_universe({universe.name!r}): etf_returns date "
+        f"({etf_returns.name}) != stock_returns date ({stock_returns.name}) "
+        f"after index alignment -- this should be unreachable."
+    )
+    logger.debug(
+        f"score_universe({universe.name!r}): etf_returns and stock_returns "
+        f"both dated {etf_returns.name} (synchronized)."
+    )
 
     # Daily provenance: numerator is today's adj_close, denominator is yesterday's
     all_prices = pd.concat([etf_prices, stock_prices], axis=1)
@@ -813,7 +848,12 @@ def score_universe(
         yesterday_close = all_prices.ffill().iloc[-2]
         today_date      = str(all_prices.index[-1].date())
         yesterday_date  = str(all_prices.index[-2].date())
-        all_returns_combined = pd.concat([etf_returns, stock_returns])
+        # .rename(None) drops each Series' .name (a Timestamp from .iloc[-1]);
+        # pandas 3.0.1 raises AttributeError on pd.concat of two Series with
+        # differing non-None names (concat.py:489 hits result.columns on a
+        # Series). Dropping the name is safe -- _sample_tickers() keys off
+        # the ticker index, not .name.
+        all_returns_combined = pd.concat([etf_returns.rename(None), stock_returns.rename(None)])
         prov.sample_tickers = _sample_tickers(
             today_close, yesterday_close, all_returns_combined,
         )

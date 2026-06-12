@@ -378,6 +378,47 @@ class TestScoreUniverse:
             f"Date misalignment: ETF ends {etf_end}, stocks end {stock_end}"
         )
 
+    def test_aligns_mismatched_etf_stock_date_ranges(self, fitted_model):
+        """
+        If the coordinator returns ETF and stock price histories with
+        different trailing dates (e.g. ETF data includes a "today" bar the
+        stock fetch hasn't picked up yet), score_universe() must align both
+        to their common date range before computing returns, so
+        etf_returns and stock_returns end up dated identically and the
+        provenance reflects the aligned (shorter) range.
+        """
+        from datamgr.coordinator import DataCoordinator
+        from datamgr.providers.mock import MockProvider
+
+        stock_idx = pd.bdate_range("2026-06-01", periods=8)
+        etf_idx   = pd.bdate_range("2026-06-01", periods=9)  # one extra trailing day
+
+        etf_prices = pd.DataFrame(
+            {t: [100 + i * 0.5 for i in range(len(etf_idx))] for t in ("VOO", "TLT", "GLD")},
+            index=etf_idx,
+        )
+        stock_prices = pd.DataFrame(
+            {t: [50 + i * 0.3 for i in range(len(stock_idx))] for t in ("AAPL", "MSFT")},
+            index=stock_idx,
+        )
+
+        coord = DataCoordinator(_InMemoryStore(), provider=MockProvider())
+        coord.fulfill = lambda **kw: {
+            "test.live_etf":   etf_prices,
+            "test.live_stock": stock_prices,
+        }
+
+        with patch.object(pipeline, "_coordinator", return_value=coord), \
+             patch.object(pipeline, "_market_is_open", return_value=False):
+            scores, prov = pipeline.score_universe(self._UNIVERSE, fitted_model)
+
+        assert isinstance(scores, pd.DataFrame)
+        assert not scores.empty
+        # Provenance dates must reflect the aligned (shorter, stock) range —
+        # not the raw ETF range's extra trailing day.
+        assert prov.numerator_timestamp.startswith(str(stock_idx[-1].date()))
+        assert prov.denominator_timestamp.startswith(str(stock_idx[-2].date()))
+
     def test_raises_on_empty_etf_data(self, fitted_model):
         """
         ValueError when the coordinator returns no ETF data.

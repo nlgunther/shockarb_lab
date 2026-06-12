@@ -28,6 +28,14 @@ The industry field in score reports is sourced from an external reference (likel
 - [ ] **MSFT/V cluster tagging** — Both MSFT and V are annotated "Mega-Cap Tech" cluster risk in the same report. Visa is a payments/financial-services name, not tech — grouping it with MSFT under "Mega-Cap Tech" looks like a sector-classification bug in the cluster annotation logic (`stockfit/rules.py`). — Verify sector source and cluster grouping logic; may share root cause with the industry-classification issues above.
 - [x] **Large analyst-upside figures (MSFT +43.7%, CPRT +33.4%, V +25.0%)** — CHECKED 2026-06-11. `data/fundamentals.csv` is internally consistent (Fwd P/E recomputes correctly from Price/Fwd EPS for all three: MSFT 20.2x, CPRT 18.4x, V 21.5x). `data/analyst_overrides.csv` has no entries for MSFT/CPRT/V (only KLAC/QCOM/ISRG), so these targets are raw yfinance consensus, not a parsing bug. The implied re-rating is large (target P/E ~25-29x vs current ~18-22x for all three), which is consistent with analyst targets lagging a sharp price selloff rather than bad data — but that lag means the "upside" may shrink once analysts revise targets down, not because price reverts up. — Treat these upside figures as potentially stale/lagging, not as a hard data error. Re-check after next `fundamental_scanner` run / analyst revision cycle.
 
+### Tooling / Workflow Enhancements (Backlog)
+
+- [ ] **NEWS-CACHE** — `[News] Refreshing fundamentals for ... candidates` re-downloads news/fundamentals (Yahoo Finance scan) on every `iran_report`/`shockarb_workflows` run, even when only re-debugging the scoring step. Ken wants an option to reuse `data/news.txt` / `data/fundamentals.csv` from a prior run instead of re-fetching, at least for debugging. — Likely a CLI flag (e.g. `--skip-news` / `--cached-news`) in the news-scan step of `shockarb_workflows.bat` / `stockfit.cli`.
+
+### Environment: pandas major-version bump (2026-06-12)
+
+- [ ] **PANDAS-3.0.1** — The `shockarb` conda env now has pandas 3.0.1 (diagnostic run showed `pandas 3.0.1, numpy 2.4.3, python 3.11.14`), a major-version jump from the 2.3.x baseline used during development/sandbox testing. This caused the `pd.concat` `AttributeError: 'Series' object has no attribute 'columns'` at `pipeline.py:816` (concatenating two named Series with differing `.name` values triggers a pandas 3.0.1 regression in `concat.py:489`). — Worked around at the call site (`.rename(None)`), but run the full test suite under pandas 3.0.1 to check for other concat/reshape call sites with the same pattern (two named Series with differing names passed to `pd.concat`).
+
 ### Performance Analysis: Executive Overview
 
 - [ ] **BACKFILL-SCORES** — Need weekly score CSVs (Dec 2024 – May 2026) to reconstruct 6-month signal series. Run the backfill loop below on your machine and drop results into `data/backfill/`. — See command in conversation (2026-05-31).
@@ -38,6 +46,8 @@ The industry field in score reports is sourced from an external reference (likel
 ## Resolved Items
 
 *(Move entries here once verified and fixed upstream.)*
+
+- [x] **ETF-STOCK-DATE-LAG** — RESOLVED 2026-06-12. `score_universe()` (Path A, `pipeline.py`) now intersects `etf_prices.index` and `stock_prices.index` to a `common_idx` before computing `etf_returns`/`stock_returns`, eliminating the 1-day misalignment between ETF and stock fetches (root cause of the "0 candidates" / impossible sample-verification math seen in `us_iran` 2026-06-12 reports). Added `logger.debug(...)` reporting the aligned date range when the raw ranges differ, an `assert etf_returns.name == stock_returns.name` after alignment, and a new test `TestScoreUniverse::test_aligns_mismatched_etf_stock_date_ranges` (deliberately mismatched ETF/stock date ranges, verifies provenance reflects the aligned range). The underlying *why* the coordinator returns mismatched ranges (one fetch a day stale vs. the other) is still unexplained, but the pipeline is now robust to it regardless.
 
 ---
 
