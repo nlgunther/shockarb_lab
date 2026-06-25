@@ -89,8 +89,8 @@ class TestListRegimes:
         assert "covid_reopening" in names
 
     def test_regime_count(self):
-        """Registry contains exactly 6 regimes."""
-        assert len(list_regimes()) == 6
+        """Registry contains exactly 7 regimes."""
+        assert len(list_regimes()) == 7
 
     def test_sorted(self):
         """Names are sorted alphabetically."""

@@ -131,7 +131,7 @@ class _GeminiBackend:
     Retries on 429/503, honouring the API's reported retry delay.
     Cost: treated as $0 on free tier; update if billing applies.
     """
-    DEFAULT_MODEL = "gemini-2.5-flash-lite"
+    DEFAULT_MODEL = "gemini-2.5-flash"
 
     def __init__(self, api_key: str, model: str | None = None):
         self.api_key = api_key

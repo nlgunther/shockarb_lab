@@ -36,6 +36,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
+from pathlib import Path
 
 import pandas as pd
 import yfinance as yf
@@ -43,6 +45,21 @@ from loguru import logger
 
 
 _DEFAULT_OUT = "./data/portfolio_sizer.csv"
+
+
+def _check_cwd() -> None:
+    """Exit with a clear error if not run from the project root."""
+    if not Path("data").is_dir():
+        print(
+            "\n❌  portfolio_sizer.py must be run from the project root.\n"
+            "\n"
+            "    Correct usage:\n"
+            "        cd <project_root>\n"
+            "        python utils\\portfolio_sizer.py --tickers MSFT IDXX --capital 10000\n"
+            "\n"
+            f"    Current directory: {Path.cwd()}\n"
+        )
+        sys.exit(1)
 
 
 def generate_orders(
@@ -183,6 +200,7 @@ def generate_orders(
 # =============================================================================
 
 if __name__ == "__main__":
+    _check_cwd()
     parser = argparse.ArgumentParser(
         description="Generate a conviction-weighted ShockArb trade ticket.",
         formatter_class=argparse.RawDescriptionHelpFormatter,

@@ -188,7 +188,7 @@ def cmd_report(args) -> None:
     print(f"    Snapshot:  {snapshot.get('fetched_at_local', 'unknown')}")
     print(f"    Baseline:  {snapshot.get('baseline_date', '(unknown — re-run market_data.py)')}")
     print(f"    Mode:      {snapshot.get('mode', 'daily')}")
-    llm_note = " | LLM: enabled" if args.llm else ""
+    llm_note = " | LLM: enabled" if args.llm else " | LLM: disabled (--no-llm)"
     print(f"    Verdict:   {verdict.overall}  (score {verdict.score}/11){llm_note}")
 
 
@@ -253,11 +253,11 @@ def main() -> None:
                    help=f"Directory for report output (default: {REPORTS_DIR})")
     p.add_argument("--out", "-o", default=None,
                    help="Exact output .md path; overrides --reports-dir (default: auto)")
-    p.add_argument("--llm", action="store_true",
-                   help="Generate enhanced report with LLM narratives (requires GOOGLE_API_KEY or ANTHROPIC_API_KEY)")
+    p.add_argument("--no-llm", action="store_false", dest="llm",
+                   help="Disable LLM narratives; use rules-based report only")
     p.add_argument("--timestamp", action="store_true",
                    help="Save as market_report_YYYYMMDD_HHMM.md — never overwrites; builds archive for LLM training")
-    p.set_defaults(func=cmd_report)
+    p.set_defaults(func=cmd_report, llm=True)
 
     args = parser.parse_args()
     args.func(args)

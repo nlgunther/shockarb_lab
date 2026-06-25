@@ -3,7 +3,15 @@
 *Updated after each session. Captures decisions and context not derivable from reading the code.  
 For API details see API.md; for quick commands see CHEATSHEET.md.*
 
-> Last updated: 2026-06-12T12:00 | Trigger: manual (\ukt) | Staleness: Fresh (session 13)
+> Last updated: 2026-06-18T16:50 | Trigger: manual (\ukt) | Staleness: Fresh (session 16)
+
+---
+
+## Trading Preferences
+
+**No short selling.** Ken trades only long positions. Short signals from the scanner (negative `confidence_delta`) are informational context — they identify names to *avoid* or *underweight*, not to act on. The only exception would be an extraordinarily compelling, high-conviction short case; this is expected to be a very rare occurrence.
+
+When reviewing stock reports, short-side commentary should be surfaced only as a "names to avoid" framing, not as actionable short candidates.
 
 ---
 
@@ -122,12 +130,15 @@ A regime is a `HistoricFactorModel`: a `UniverseConfig` (tickers + calibration w
 | `liberation_day_recovery` | `us_lib_day` | 19 | 66 | 3 | 2025-04-01 → 2025-07-31 |
 | `covid_reopening` | `us_reopening` | 10 | 98 | 3 | 2020-11-09 → 2021-02-28 |
 | `iran_shock` | `us_iran` | 19 | 80 | 3 | 2026-02-24 → 2026-04-30 |
+| `iran_extended` | `us_iran_ext` | 19 | 80 | 3 | 2026-02-24 → 2026-06-15 |
 
 **US universe now has 98 stocks** (was 66) after bulk `add-asset` of 26 Morningstar wide-moat USD names in this session. Tickers added: NKE, FICO, LPLA, GWRE, BR, EFX, APH, OTIS, A, MKC (removed — low R²), MCD, META, BKNG, BSY, MELI, BAC, ALLE, ANET, ABNB, BMY, MDLZ, ECL, MSI, MAS, ADSK, PTC, AVGO, GOOGL. MKTX, BF-B, JKHY, DPZ, MKC removed for R² < 0.27.
 
-**ETF basis for `ukraine_shock`:** VOO, VYM, VEU, VDE, VNQ, TLT, GLD, USO, ITA, HYG (10 ETFs, 3 factors). ITA is the defense ETF.
+**ETF basis for `ukraine_shock`:** VOO, VYM, VEU, VDE, VNQ, TLT, GLD, USO, ITA, HYG (10 ETFs, 3 factors). ITA is the defense ETF. **(Stale — session 16):** the active saved model `data/ukraine_shock_us_20260617_211317.json` actually carries a **19-ETF** basket identical to `iran_shock`'s (`VOO, VYM, VUG, VEU, VDE, VNQ, TLT, GLD, USO, ITA, XLB, XLI, XLK, XLP, XLY, XLF, XLV, XLU, HYG`); the "10 ETFs" figure here and in the Regimes table is out of date for the current model. Confirm whether `regimes.py` was updated to 19 or the model was rebuilt under a different universe. *(This shared 19-ETF ambient space is what makes the cross-regime subspace comparison well-defined — see `docs/SUBSPACE_DISLOCATION.md`.)*
 
-**Adding a new regime:** define a `HistoricFactorModel` in `regimes.py`, add it to `REGIME_REGISTRY`. No other files change. Registry now has 6 regimes (added `iran_shock` — US-Israel strike on Iran / Strait of Hormuz closure, 2026-02-24 → 2026-04-30, preferred over `ukraine_shock` while the conflict is active); `test_regimes.py` count assertion is `== 6`.
+**Adding a new regime:** define a `HistoricFactorModel` in `regimes.py`, add it to `REGIME_REGISTRY`. No other files change except `test_regimes.py` count assertion. Registry now has **7 regimes** (added `iran_extended` in session 15 — extends iran_shock calibration window to 2026-06-15 to capture full conflict + normalization phase; `supersedes="iran_shock"`); `test_regimes.py` count assertion is `== 7`.
+
+**Regime selection guidance (2026-06-18):** `ukraine_shock` is NOT obsolete during the Iran conflict. Its calibration (Feb–Mar 2022) captured how tech/software stocks correlate with macro factors during a broad geopolitical risk-off, which is structurally stable. `iran_shock` (calibrated on energy/defense/Strait factors) has low r² for tech names (MSFT r²=0.60, CRM r²=0.32) and is the right lens for energy, defense, and industrial names. **Recommended dual-regime workflow:** score both, compare with `compare-reports --save-verdicts`, act on names where both agree. Cross-regime agreement on direction = higher conviction. ASML is the clearest short signal (both regimes agree, iran r²=0.67). MSFT is the clearest long (both agree, iran r²=0.60). **`iran_extended`** (added session 15) extends calibration to 2026-06-15 to refit on the full conflict + normalization phase — likely improves r² for tech names. Run `shockarb build --regime iran_extended` before scoring with it. **Regime combination/selection — resolved (session 16).** The "ML/XGBoost regime-selection (Opus-level task)" item is closed. Chosen approach is geometric, not supervised ML: work with the two regimes' factor **subspaces** (Grassmannian), since ShockArb's signal `r − Π_H r` is a projection quantity invariant to eigenvector rotation/flip. Combine = residual orthogonal to the union `S_u + S_i`; select = attribute `r²_u − r²_i` to the symmetric-difference directions (iran-only ≈ energy/Strait); bias-correct `r²` via factor_lab's James–Stein projection `H D_ψ⁻¹ Hᵀ` (raw `r²` is dispersion-biased low, worst at the `r²>0.50` gate). XGBoost demoted to an optional thin weight-emitting selector; Kalman demoted (two-stream blend not worth it; time-varying loadings, if ever wanted, should be subspace tracking, not `β_t` tracking — no basis anchoring needed). Full design: `docs/SUBSPACE_DISLOCATION.md`; reasoning + rejected alternatives: `docs/Opus_KT.md`; information/coding-theory framing + a CUSUM regime-switch direction: `docs/channel_KT.md`.
 
 **`covid_reopening` gotcha:** first build attempt produced T=0 (empty calibration). Root cause was a head-miss bug in `DataCoordinator._gap_analyse()` — the cache held 2022+ data and was incorrectly considered "covering" the 2020 window. Fixed by adding a `cached_start_ts > req_start_ts` head-miss check. Always verify build output shows `T > 0` before scoring.
 
@@ -230,6 +241,7 @@ utils/
 │                             analyst targets overridden by data/analyst_overrides.csv (always wins; blank rows skipped)
 ├── portfolio_sizer.py      — conviction-weighted position sizing; --tickers AMAT ADI ETN sizes only named tickers (bypasses CSV ranking); --exclude for ad-hoc drops; saves data/portfolio_sizer.csv by default; --no-out to suppress
 ├── eval_picks.py           — evaluates pick P&L vs entry prices from trades.csv or portfolio_sizer.csv
+get_analyst_targets.py      — fetches consensus analyst price targets; default provider: Finviz (no API key); also supports yfinance, FMP, Finnhub; lives in project root; output: {provider}_analyst_data.csv
 ├── market_data.py          — fetches market snapshot to data/market_snapshot.json (~30s); run before \mktrep
 ├── marketfit/              — local ShockArb-fit condition scorer (rules-based + LLM narrative)
 │   ├── features.py         — pure: snapshot dict → named feature vector (vix, breadth, dispersion, etc.)
@@ -238,13 +250,13 @@ utils/
 │   ├── llm.py              — Gemini API integration; generates narrative sections keyed on LEARN tags
 │   ├── model.py            — ML stub: is_usable()=False, train/predict raise NotImplementedError
 │   ├── labels.py           — ML stub: label-generation design documented, not yet implemented
-│   └── cli.py              — `python -m marketfit report [--snapshot] [--out] [--llm] [--timestamp]`
+│   └── cli.py              — `python -m marketfit report [--snapshot] [--out] [--no-llm] [--timestamp]`
 ├── stockfit/               — per-ticker stock opportunity report (parallel to marketfit)
 │   ├── features.py         — pure: live_alpha_us.csv + fundamentals.csv + news.txt → per-ticker feature dicts; optional intraday quote fetch
 │   ├── rules.py            — pure: features → StockVerdict (INCLUDE / WATCH / EXCLUDE) with reason + cluster annotation
 │   ├── report.py           — pure: verdicts → Markdown report string with <!-- LEARN --> tags per ticker; table includes RVOL + Intraday columns
 │   ├── llm.py              — Anthropic/Gemini client; generates per-ticker narrative + executive summary
-│   └── cli.py              — `python -m stockfit {report,set-rvol,show-rvol}`; report flags: `[--llm] [--timestamp] [--min-r2] [--min-confidence] [--min-upside] [--reports-dir] [--rvol] [--no-rvol] [--intraday]`
+│   └── cli.py              — `python -m stockfit {report,set-rvol,show-rvol}`; report flags: `[--no-llm] [--timestamp] [--min-r2] [--min-confidence] [--min-upside] [--reports-dir] [--rvol] [--no-rvol] [--intraday]`
 ├── csv_to_md.py         — converts alpha CSV to markdown report
 ├── score_viz.py         — confidence_delta bubble chart + factor heatmap (ShockArb-only)
 ├── value_score_viz.py   — value screener × ShockArb 3-figure suite + combined CSV
@@ -263,7 +275,7 @@ Parallel to `marketfit` but operates on stock signals rather than macro conditio
 - `rules.py` applies deterministic gates in order: data quality (target_below_price → hard EXCLUDE) → earnings (imminent → EXCLUDE) → signal strength (r² ≥ 0.65, confidence_delta ≥ 0.020) → analyst upside (≥ 5% for INCLUDE; below threshold → WATCH). Annotates INCLUDE tickers that share a sector cluster (e.g. ≥2 semiconductor equipment names → cluster-risk warning added).
 - `report.py` assembles a three-section Markdown report: `✅ Act on These` (INCLUDE, per-ticker LEARN block), `⚠️ Watch`, `❌ Excluded` (table with reason), plus `📌 Data Quality Flags`.
 - `llm.py` reuses the same Anthropic/Gemini backend pattern as `marketfit/llm.py`. Produces: `executive_summary`, `picks_analysis` (nested dict of per-ticker narratives), `watch_list_notes`, `risk_factors`.
-- CLI: `cd utils && python -m stockfit report [--llm] [--timestamp] [--min-r2 0.65] [--min-confidence 0.020] [--min-upside 0.05] [--rvol] [--no-rvol] [--intraday]`. Output: `data/stock_report.md` or `data/stock_report_YYYYMMDD_HHMM.md`.
+- CLI: `cd utils && python -m stockfit report [--no-llm] [--timestamp] [--min-r2 0.65] [--min-confidence 0.020] [--min-upside 0.05] [--rvol] [--no-rvol] [--intraday]`. LLM is ON by default. Output: `data/stock_report.md` or `data/stock_report_YYYYMMDD_HHMM.md`.
 
 Smoke-test result (2026-06-06): 3 INCLUDE (AMAT, ADI, ETN), 2 WATCH (LRCX, ASML), 61 EXCLUDE. KLAC and QCOM correctly excluded via data-quality gate.
 
@@ -296,17 +308,18 @@ Compares two or more reports — any mix of `stock_report_*.md` and `stock_repor
 shockarb score                                              → data/live_alpha_us.csv
 python utils\news_scanner.py                                → data/fundamentals.csv + news.txt
 python utils\market_data.py                                 → data/market_snapshot.json
-cd utils && python -m marketfit report --llm --timestamp && cd ..  → reports/market_report_YYYYMMDD_HHMM.md
-cd utils && python -m stockfit report --llm --timestamp && cd ..   → reports/stock_report_YYYYMMDD_HHMM.md
+python -m marketfit report --timestamp                              → reports/market_report_YYYYMMDD_HHMM.md  (LLM on by default)
+python -m stockfit report --timestamp                               → reports/stock_report_YYYYMMDD_HHMM.md   (LLM on by default)
 ```
-Or: `scripts\shockarb_workflows.bat eod` (also aliased as `full`).
+Or: `scripts\shockarb_workflows.bat dual_eod` (recommended — scores both regimes + auto-compares).
+Or: `scripts\shockarb_workflows.bat eod` (single regime, also aliased as `full`).
 
-**marketfit `--llm` and `--timestamp` flags (added 2026-06-06):**
+**marketfit/stockfit LLM and `--timestamp` flags:**
 
-- `--llm` calls `llm.py` (Gemini API) to generate narrative sections in the report. Without `--llm`, the report is rules-based only.
+- LLM is ON by default (session 14). Use `--no-llm` for a fast rules-based report.
 - `--timestamp` appends `_YYYYMMDD_HHMM` to the output filename, producing e.g. `market_report_20260606_0342.md`. Without it, overwrites `market_report.md`.
-- Standard training-corpus run: `cd utils && python -m marketfit report --llm --timestamp && cd ..`
-- Standard daily-view run (no corpus accumulation): `cd utils && python -m marketfit report && cd ..`
+- Standard training-corpus run: `python -m marketfit report --timestamp` (no flag needed)
+- Fast rules-based run: `python -m marketfit report --no-llm`
 
 **`<!-- LEARN -->` markup scheme:**  
 Report sections are bracketed by HTML comments invisible in rendered Markdown:
@@ -345,14 +358,17 @@ shockarb_lab/
 │   │                          ticker_news.md, news.txt (root copy)
 │   ├── corpus/             ← corpus_pack_1-4.txt, doc_1-4.txt (training bundles)
 │   ├── KT.md               ← this file
+│   ├── RAG_DESIGN.md       ← design doc for local RAG retrieval system (session 15)
 │   └── VALUE_FRONTIER.md   ← renamed from "Knowledge Transfer_ShockArb..."
 ├── examples/               ← unchanged
 ├── msc/                    ← diagnostic/one-off scripts
 │   │                          (check_1991.py, explain_score.py, load_tickers.py, peek_manifest.py)
 ├── reports/                ← generated Markdown reports (market_report, stock_report — default CLI output)
-│   └── stock_report_20260607_1345.md  ← example timestamped archive
+│   ├── stock_report_YYYYMMDD_HHMM.md  ← timestamped ukraine_shock reports
+│   └── iran_shock/         ← iran_shock-specific reports (pass --reports-dir reports\iran_shock)
 ├── scripts/                ← .bat / .sh command wrappers (shockarb_workflows.bat,
-│                              run_tests.bat — file-based pytest subset runner)
+│                              run_tests.bat — file-based pytest subset runner,
+│                              session_log.py — LLM session summarizer from shockarb.log)
 ├── shockarb/               ← core package
 ├── skills/                 ← Cowork skill definitions (market-report-workspace eval scaffolding
 │                              still here; low priority to move)
@@ -401,7 +417,7 @@ No manual copy-paste needed. Session transcripts are accessible programmatically
 `MANIFEST.txt` tracks SHA-256 prefixes (CRLF-normalised, hash-of-hashes bundle)
 for all `.py` files under `shockarb/`, `utils/`, `datamgr/`, `tests/`, plus
 `scripts/*.bat`, `verify_install.py`, and `generate_manifest.py` itself
-(90 files as of 2026-06-12, session 13, bundle `7f373e306b3b2f1254653d5e` — added `shockarb/report_compare.py` and `tests/test_report_compare.py` since session 12's 84). Regenerate after code changes, then verify:
+(90 files as of session 15, bundle `4012091a2f8a66582692af20` — added `scripts/session_log.py` and changes to `regimes.py`, both CLIs, `portfolio_sizer.py`, `shockarb_workflows.bat`). Regenerate after code changes, then verify:
 ```bash
 python generate_manifest.py
 python verify_install.py
@@ -413,11 +429,13 @@ python verify_install.py
 
 - **`gulf_war_recovery` tickers are placeholders.** Not validated against real data yet.
 - **Small calibration window (~35 trading days).** Single-event contamination risk. Inspect R² before trusting signals.
-- **No position sizing built into core.** `portfolio_sizer.py` handles this as a utility.
+- **No position sizing built into core.** `portfolio_sizer.py` handles this as a utility. Note: ALLOCATION column = target dollar amount; SHARES = floor(alloc/price); actual deployment will be less due to whole-share rounding (~$700 undeployed on $10k for 2-stock ticket).
+- ~~**`portfolio_sizer.py` missing `_check_cwd()`**~~ — resolved session 15; `_check_cwd()` added, checks `Path("data").is_dir()` (project root).
 - **`liberation_day_recovery` end date `2025-07-31`** — window may now be complete; update once normalization is confirmed.
 - **Value screener ticker mapping is manual** (`VALUE_TICKER_MAP` in `value_score_viz.py`). Only 38 of 48 USD stocks are mapped; 10 unmapped names produce hollow circles with no ShockArb signal.
 - **`value_score_viz.py` file truncation bug** — the sandbox Edit tool truncates files >~19KB. All repairs done via bash `head | append` pattern. If editing this file, use bash cat-to-file rather than the Edit tool.
 - ~~**`shockarb/cli.py` IndentationError at line ~738**~~ — resolved; full suite (593/593, including `test_cli.py` and `test_out_flag.py`) passes as of 2026-06-11 (session 11).
+- **LLM company-name hallucination** — Gemini confuses tickers with wrong companies (e.g. CPRT → "Coinpair" instead of Copart Inc.). Root cause: `_build_prompt()` in `stockfit/llm.py` sends only `[TICKER]` with no company name; Gemini guesses from training data. Fix: inject `resolve_name(ticker)` from `shockarb/names.py` (wraps `ticker_reference_cache.json`) into the prompt block as `[CPRT — Copart, Inc.]`. Same fix needed in `marketfit/llm.py`. **Not yet implemented.**
 - **Bash sandbox mount can serve stale/corrupted content for files NOT touched this session** — recurs across sessions, not limited to recently-edited files. Session 12 found 6 files truncated mid-statement on the Linux mount (`utils/marketfit/cli.py` had embedded null bytes; `utils/stockfit/features.py`, `utils/fundamental_scanner.py`, `tests/test_fundamental_scanner.py`, `tests/test_stockfit_rvol.py`, `shockarb/regimes.py` all had `SyntaxError: unterminated string/triple-quote` at truncation points), despite all having been verified correct earlier. **Detection:** full-repo scan — `python3 -c "import ast,glob; [print(f,e) for f in glob.glob('**/*.py',recursive=True) for e in [ast_parse_error(f)] if e]"` (attempt `ast.parse` on every `.py` file, collect failures) catches all corrupted files in one pass rather than discovering them one-by-one via pytest collection errors. **Fix:** `Read` the file via the Windows-side path to get ground truth, rewrite the Linux-mount copy via `cat > <path> << 'UNIQUE_DELIM' ... UNIQUE_DELIM` heredoc (quoted delimiter avoids shell expansion), verify with `ast.parse`, then `find . -name __pycache__ -exec rm -rf {} +`. Run the full-repo scan again after fixes — corruption can recur in files just rewritten.
 
 ---
@@ -447,6 +465,10 @@ python verify_install.py
 | 2026-06-08 (session 8) | Fixed NTFS write-truncation corruptions: `utils/stockfit/features.py` (347 null bytes → rewritten via bash) and `utils/paths.py` (missing outputs section → rewritten via bash); fixed `_DEFAULT_REPORTS_DIR` ImportError in both test files (replaced with `REPORTS_DIR` from `paths`); fixed Windows path-separator mismatch in two `startswith` assertions (`str(out)` → `out.as_posix()`); fixed literal-newline corruption in `features.py` `_load_news()` split; all 146 tests in `test_stockfit.py` + `test_marketfit.py` now passing |
 | 2026-06-09 (session 10) | Added `--debug` flag to `stockfit report`: zeroes signal thresholds, skips LLM, always timestamps output — for diagnosing filter issues without touching production config; added `:debug_stock` to `shockarb_workflows.bat`; added `_load_overrides()` to `fundamental_scanner.py` — reads `data/analyst_overrides.csv`, applied last (highest priority) over yfinance analyst targets; `overrides_path` param on `fetch_fundamentals()`; `_DEFAULT_OVERRIDES` constant honours `SHOCK_ARB_DATA_DIR`; 10 new tests (`TestLoadOverrides` + `TestFetchFundamentalsOverrides`) |
 | 2026-06-11 (session 11) | RVOL (relative volume) display feature, Option #1 (informational only — no change to ranking/gating/PCA factor model): `_compute_rvol()` in `stockfit/features.py` (dynamic 5-20 day trailing window), `rvol`/`rvol_window` fields on `StockVerdict` + RVOL column in `report.py`, sticky `set-rvol`/`show-rvol`/`--rvol`/`--no-rvol` CLI mirroring `shockarb`'s `.shockarb_regime` pattern (`STOCKFIT_RVOL_FILE` in `paths.py`); 21 new tests in `tests/test_stockfit_rvol.py` (full suite now 593/593 passing across 18 files); added `scripts/run_tests.bat` test-subset runner (13 groups, passthrough pytest args); updated `docs/PATHS.md` and `stockfit/cli.py` docstring |
+| 2026-06-18 | KLAC 10-for-1 stock split effective 2026-06-12; pre-split targets in `fundamentals.csv` (~$1,855) are now ~10× stale; post-split price ~$237, correct analyst target ~$185–195; run `python get_analyst_targets.py --tickers KLAC` to refresh |
 | 2026-06-08 (session 9) | Added `--tickers` / `-t` flag to `portfolio_sizer.py`: when set, bypasses CSV ranking entirely and sizes only the named tickers (designed for acting on the INCLUDE list from the stock report); `--top` and `--exclude` are ignored when `--tickers` is present; usage: `python utils/portfolio_sizer.py --tickers AMAT ADI ETN --capital 10000`; added `TestTickers` class (5 tests) to `test_portfolio_sizer.py` (now 10/10 passing); updated `docs/UTILS.md` arguments table |
 | 2026-06-11 (session 12) | Added `iran_shock` regime (`shockarb/regimes.py`) — US-Israel strike on Iran / Strait of Hormuz closure, 2026-02-24 → 2026-04-30, 19 ETFs / 80 stocks / 3 factors, preferred over `ukraine_shock` while the conflict is active; registry now 6 regimes, `test_regimes.py` count assertion `== 6`. Added `--intraday` flag to `stockfit report`: `_fetch_intraday_prices()` in `stockfit/features.py` (single batch yfinance call, period="1d"), `intraday_price`/`intraday_chg_pct` fields on `StockVerdict`, Intraday column in `report.py` table; off by default, no sticky setting; 14 new tests (`tests/test_stockfit_intraday.py`, full suite now 616/616 across 18 files). Diagnosed and fixed recurring Linux-sandbox-mount file corruption (6 files truncated mid-statement: `utils/marketfit/cli.py`, `utils/stockfit/features.py`, `utils/fundamental_scanner.py`, `tests/test_fundamental_scanner.py`, `tests/test_stockfit_rvol.py`, `shockarb/regimes.py`) via Windows-side Read + bash heredoc rewrite + `ast.parse` verification + `__pycache__` clear; documented full-repo `ast.parse` glob-scan detection technique in Known Design Debt. MANIFEST regenerated (84 files), bundle verified. |
+| 2026-06-18 (session 15) | Added `iran_extended` regime (calibration window extended to 2026-06-15; `supersedes="iran_shock"`; registry now 7 regimes; `test_regimes.py` count `== 7`). Made LLM default in both CLIs (`--no-llm` to suppress). Added `_check_cwd()` to `portfolio_sizer.py`. Added `:dual_eod` + `:compare_latest` targets to `shockarb_workflows.bat`; updated `:help`. Created `scripts/session_log.py` (LLM summarizer from shockarb.log, `--hours`/`--lines`/`--summarize`/`--save` flags). Training corpus: 33 `<!-- LEARN -->` reports now in `reports/` (exceeded 30 target; 11 market + 18 ukraine stock + 4 iran_shock). `reports/iran_shock/` subfolder established for non-sticky-regime reports. Designed `docs/RAG_DESIGN.md` (local RAG via sidecar `.meta.json` index + retriever; `narrative_theme` identified as highest-value metadata addition). Identified LLM ticker hallucination bug: `_build_prompt()` sends bare `[TICKER]` — fix is injecting `resolve_name()` from `shockarb/names.py` (not yet implemented). `paths_copy.py` added from D: SSD for comparison; C: `paths.py` is the more evolved file — discard `paths_copy.py`. MANIFEST regenerated (90 files, bundle `4012091a2f8a66582692af20`). |
+| 2026-06-18 (session 14) | First dual-regime scoring session (ukraine_shock + iran_shock). iran_shock first score dropped 6 tickers (BSX, CRM, MSFT, ROP, UAL, UNH) due to transient <80% coverage on live window — resolved by re-running `shockarb score --regime iran_shock`. Established `compare-reports` dual-regime workflow: score iran → `--out data/live_alpha_iran.csv` → `stockfit report --scores ... --save-verdicts` → `compare-reports *_verdicts.csv`. Regime selection guidance documented (see Regimes section). **Training corpus audit:** only 6/30 target LLM-annotated (`<!-- LEARN -->`) reports exist in `reports/`; `docs/corpus/` is empty. Need consistent `--llm --timestamp` daily to reach target in ~12 trading days. Workflow improvements planned (not yet implemented): `:dual_eod` bat target, `compare-latest` auto-discovery, `scripts/session_log.py` LLM summarizer, `portfolio_sizer.py` `_check_cwd()` guard. `get_analyst_targets.py --update-fundamentals` added (patches `data/fundamentals.csv` directly; documented in CHEATSHEET + UTILS.md). MSFT Stifel downgrade confirmed: $540→$392 on 2026-02-05; consensus still ~$561. |
 | 2026-06-12 (session 13) | Added `shockarb/report_compare.py` + `compare-reports` CLI subcommand: `ReportData`, `parse_report` (dispatch `.md`/`.csv` via `_PARSERS`, reads both rules-based `stock_report_*.md` and `--save-verdicts` CSVs), `build_comparison` (ticker × report MultiIndex table + tier-mismatch `flagged` Series), `_interesting_tickers` (act_on/watch in any report OR flagged — so consistently-excluded tickers are omitted), `print_comparison`/`write_comparison_md` (Stats sections add `fwd_pe` + exclusion `reason`). 21 new tests in `tests/test_report_compare.py` (652/657 passing project-wide across 21 files; the 5 failures are pre-existing/unrelated `test_pipeline.py` cases). Documented in `docs/API.md` (new `shockarb.report_compare` section) and `docs/CHEATSHEET.md` ("Comparing Reports Across Regimes/Dates"). MANIFEST regenerated (90 files, bundle `7f373e306b3b2f1254653d5e`). Resolves the session-12 `--save-verdicts` follow-up note (cross-report comparison can now read full-stat verdicts CSVs). |
+| 2026-06-18 (session 16) | **Multi-regime signal combination — design + Stage 1 diagnostic.** Closed the pending "ML/XGBoost regime-selection (Opus-level task)" item: chose a subspace/Grassmannian approach over BMA/Kalman/XGBoost (see Regimes § "Regime combination/selection — resolved"). Designed `docs/SUBSPACE_DISLOCATION.md` (combine = residual ⊥ union; select = symmetric-difference attribution; bias-correct via James–Stein) with a numerically-verified k=3 worked example; reasoning + rejected alternatives in `docs/Opus_KT.md`; information/coding-theory framing (regime detection as channel decoding; floor = Gaussian-channel MMSE; Cor 4 = subspace is the sufficient statistic) + a two-regime CUSUM next-experiment in `docs/channel_KT.md`. Built (Sonnet subagent) `shockarb/dislocation_geom.py` — pure module, zero I/O — with `projector()`, `factor_basis()` (extracts each model's basis from `_Vt`/`etf_columns`, QR-reorthonormalised), `principal_angles()`; plus `tests/test_dislocation_geom.py` (18 tests pass, incl. the rotation-invariance contract `‖Π(H)−Π(HR)‖<1e-12` and a reproduction of the doc's k=3 example). **Principal angles between the live `ukraine_shock` and `iran_shock` subspaces: 15.1°, 26.1°, 56.9°** (cosines 0.97, 0.90, 0.55) — two near-shared directions + one substantially regime-specific → selection has real content, Stage 2 justified. **Verified correction:** both active models share the same 19-ETF basket (see Regimes ETF-basis note). **Stage 2 (pending):** `robust_dislocation`, JSE columns, `pipeline.py`/`report_compare.py` wiring, leave-one-regime-out backtest. No existing files modified this session; 4 new files added (3 docs + module + tests). |

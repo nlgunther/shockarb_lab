@@ -12,6 +12,9 @@ utils/
 ├── eval_picks.py           Evaluate pick performance vs entry prices
 ├── csv_to_md.py            Convert a score CSV to a Markdown report
 └── score_history.py        Score any historical date (backtesting)
+
+get_analyst_targets.py      Fetch consensus analyst price targets from Finviz, yfinance,
+                            FMP, Finnhub, or Alpha Vantage (project root, not utils/)
 ```
 
 All scripts accept `--help` for a full argument listing.
@@ -186,6 +189,52 @@ python utils/portfolio_sizer.py --tickers AMAT ADI ETN --capital 10000
 - Take-profit target is the factor-model implied fair price, not a hard prediction. It represents where the stock *would* trade if the dislocation fully closed.
 - Only stocks with `confidence_delta > 0` are considered. Negative signals are excluded.
 - Tickers without a live price quote are skipped with a warning.
+
+---
+
+## get_analyst_targets.py
+
+Fetches consensus analyst price targets for a list of tickers from your choice of data provider. Lives in the **project root** (not `utils/`). Finviz is the default — no API key required.
+
+**Usage**
+
+```bash
+# Fetch targets for specific tickers (Finviz, no API key needed)
+python get_analyst_targets.py --tickers NOW MSFT CRM INTU IDXX CPRT
+
+# All tickers in fundamentals.csv (reads column 0 by default)
+python get_analyst_targets.py
+
+# Different provider
+python get_analyst_targets.py --tickers KLAC QCOM --provider yfinance
+
+# Different column index in the CSV
+python get_analyst_targets.py --file data/fundamentals.csv --column 0
+```
+
+Output is printed to console and saved to `{provider}_analyst_data.csv` in the project root (e.g. `finviz_analyst_data.csv`). Copy the `Target_Consensus` values into the `Analyst Tgt` column of `data/fundamentals.csv`.
+
+**Arguments**
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--tickers` / `-t` | — | One or more tickers. Mutually exclusive with `--file`. |
+| `--file` / `-f` | `fundamentals.csv` | CSV to read tickers from (if `--tickers` not given). |
+| `--column` / `-c` | `0` | Zero-indexed column containing tickers in the CSV. |
+| `--provider` / `-p` | `finviz` | Provider: `finviz`, `yfinance`, `fmp`, `finnhub`, `alpha_advantage`. |
+| `--update-fundamentals` / `-u` | — | Patch `Analyst Tgt` in `data/fundamentals.csv` automatically. Optionally supply a path: `--update-fundamentals path/to/fundamentals.csv`. |
+
+**Providers**
+
+| Provider | API Key Required | Data returned |
+|----------|-----------------|---------------|
+| `finviz` | No | `Target_Consensus` (single consensus figure) |
+| `yfinance` | No | Mean, median, high, low targets |
+| `fmp` | `FMP_API_KEY` | Consensus, median, high, low |
+| `finnhub` | `FINNHUB_API_KEY` | Mean, median, high, low (rate-limited: 60/min) |
+| `alpha_advantage` | `AV_API_KEY` | EPS estimates (not price targets) |
+
+**When to run:** after the stock report flags `analyst target below current price` (data quality exclusion), or after any stock split — targets become pre-split stale. Example: KLAC did a 10-for-1 split on 2026-06-12; its pre-split target of ~$1,855 must be divided by 10 (~$185) and updated in `fundamentals.csv`.
 
 ---
 

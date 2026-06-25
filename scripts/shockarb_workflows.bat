@@ -28,8 +28,8 @@ goto :%COMMAND% 2>nul || (echo Unknown command: %COMMAND% && goto :help)
 
 REM ── SCORE ───────────────────────────────────────────────────
 :score
-echo [ShockArb] Scoring against sticky regime...
-python -m shockarb score
+echo [ShockArb] Scoring against ukraine_shock regime...
+python -m shockarb score --regime ukraine_shock
 goto :end
 
 REM ── MARKET_REPORT ───────────────────────────────────────────
@@ -41,12 +41,12 @@ python -m marketfit report
 echo Done. Output: reports\market_report.md
 goto :end
 
-REM ── MARKET_REPORT_LLM ───────────────────────────────────────
+REM ── MARKET_REPORT_LLM (alias — LLM now default) ────────────
 :market_report_llm
 echo [MarketFit] Refreshing market snapshot...
 python utils\market_data.py
 echo [MarketFit] Generating LLM-enhanced timestamped report...
-python -m marketfit report --llm --timestamp
+python -m marketfit report --timestamp
 echo Done. Timestamped report written to reports\
 goto :end
 
@@ -55,15 +55,15 @@ REM ── MARKET_INTRADAY ─────────────────�
 echo [MarketFit] Fetching live intraday prices...
 python utils\market_data.py --intraday
 echo [MarketFit] Generating intraday report...
-python -m marketfit report --llm --timestamp
+python -m marketfit report --timestamp
 echo Done. Output: reports\market_report_intraday*.md
 goto :end
 
 REM ── SHOCKARB_SCORE  (canonical training-corpus run) ─────────
 :shockarb_score
 echo [ShockArb] Full scoring run (score + marketfit)...
-python -m shockarb score
-python -m marketfit report --llm --timestamp
+python -m shockarb score --regime ukraine_shock
+python -m marketfit report --timestamp
 goto :end
 
 REM ── NEWS ────────────────────────────────────────────────────
@@ -87,40 +87,89 @@ python -m stockfit report%EXTRA_ARGS%
 echo Done. Output: reports\stock_report.md
 goto :end
 
-REM ── STOCK_REPORT_LLM ─────────────────────────────────────────
+REM ── STOCK_REPORT_LLM (alias — LLM now default) ──────────────
 :stock_report_llm
-echo [StockFit] Generating LLM-enhanced stock report (timestamped)...
-python -m stockfit report --llm --timestamp%EXTRA_ARGS%
+echo [StockFit] Generating LLM stock report (timestamped)...
+python -m stockfit report --timestamp%EXTRA_ARGS%
 echo Done. Timestamped stock report written to reports\
 goto :end
 
 REM ── IRAN_REPORT (score + stock report under iran_shock regime) ─
 :iran_report
 echo [ShockArb] Scoring against iran_shock regime...
-if not exist data\iran_shock mkdir data\iran_shock
-if not exist reports\iran_shock mkdir reports\iran_shock
-python -m shockarb score --regime iran_shock --out data\iran_shock\live_alpha_us.csv
-echo [News] Refreshing fundamentals for iran_shock candidates...
-python utils\news_scanner.py --csv data\iran_shock\live_alpha_us.csv --top 20
-echo [StockFit] Generating LLM-enhanced stock report (iran_shock)...
-python -m stockfit report --scores data\iran_shock\live_alpha_us.csv --reports-dir reports\iran_shock --llm --timestamp%EXTRA_ARGS%
-echo Done. Output: reports\iran_shock\
+python -m shockarb score --regime iran_shock --out data\live_alpha_iran.csv
+echo [StockFit] Generating stock report (iran_shock)...
+python -m stockfit report --scores data\live_alpha_iran.csv --timestamp --save-verdicts --reports-dir reports\iran_shock%EXTRA_ARGS%
+echo Done. Output: reports\
 goto :end
 
-REM ── EOD (full end-of-day workflow) ───────────────────────────
+REM ── DUAL_EOD (both regimes scored + compared) ────────────────
+:dual_eod
+echo [DUAL EOD] Starting dual-regime end-of-day workflow...
+echo Step 1/7: Ukraine shock score
+python -m shockarb score --regime ukraine_shock --out data\live_alpha_us.csv
+echo Step 2/7: Iran shock score
+python -m shockarb score --regime iran_shock --out data\live_alpha_iran.csv
+echo Step 3/7: News + fundamentals
+python utils\news_scanner.py
+echo Step 4/7: Market snapshot
+python utils\market_data.py
+echo Step 5/7: MarketFit report (timestamped)
+python -m marketfit report --timestamp
+echo Step 6/7: Ukraine stock report (timestamped + verdicts)
+python -m stockfit report --timestamp --save-verdicts%EXTRA_ARGS%
+echo Step 7/7: Iran stock report (timestamped + verdicts)
+python -m stockfit report --scores data\live_alpha_iran.csv --timestamp --save-verdicts --reports-dir reports\iran_shock%EXTRA_ARGS%
+echo [DUAL EOD] Reports written. Running compare...
+call %~f0 compare_latest
+goto :end
+
+REM ── COMPARE_LATEST (auto-discover two newest verdicts CSVs) ──
+:compare_latest
+echo [Compare] Finding two most recent verdicts CSVs...
+set "F1="
+set "F2="
+for /f "delims=" %%A in ('dir /b /o-d reports\stock_report_*_verdicts.csv 2^>nul') do (
+    if not defined F1 (set "F1=reports\%%A") else if not defined F2 (set "F2=reports\%%A")
+)
+if not defined F1 (echo No verdicts CSVs found in reports\. Run with --save-verdicts first. && goto :end)
+if not defined F2 (echo Only one verdicts CSV found — need two to compare. && goto :end)
+echo Comparing: %F1%
+echo      with: %F2%
+python -m shockarb compare-reports "%F1%" "%F2%" --out reports\compare_latest.md
+echo Done. Output: reports\compare_latest.md
+goto :end
+
+REM ── EOD (full end-of-day workflow, single regime) ────────────
 :eod
 echo [EOD] Starting full end-of-day workflow...
 echo Step 1/5: ShockArb score
-python -m shockarb score
+python -m shockarb score --regime ukraine_shock
 echo Step 2/5: News + fundamentals
 python utils\news_scanner.py
 echo Step 3/5: Market snapshot
 python utils\market_data.py
-echo Step 4/5: MarketFit LLM report (timestamped)
-python -m marketfit report --llm --timestamp
-echo Step 5/5: StockFit LLM report (timestamped)
-python -m stockfit report --llm --timestamp%EXTRA_ARGS%
-echo [EOD] Complete. Check data\ for all outputs.
+echo Step 4/5: MarketFit report (timestamped, LLM default)
+python -m marketfit report --timestamp
+echo Step 5/5: StockFit report (timestamped, LLM default)
+python -m stockfit report --timestamp --save-verdicts%EXTRA_ARGS%
+echo [EOD] Complete. Check reports\ for all outputs.
+goto :end
+
+REM ── GLOBAL_EOD (global ADR universe, global_ukraine_shock regime) ──────────
+:global_eod
+echo [GLOBAL EOD] Starting global ADR end-of-day workflow...
+echo Step 1/5: Global universe score (global_ukraine_shock)
+python -m shockarb score --regime global_ukraine_shock --out data\live_alpha_global.csv
+echo Step 2/5: News + fundamentals
+python utils\news_scanner.py
+echo Step 3/5: Market snapshot
+python utils\market_data.py
+echo Step 4/5: MarketFit report (timestamped)
+python -m marketfit report --timestamp
+echo Step 5/5: Global stock report (timestamped + verdicts)
+python -m stockfit report --scores data\live_alpha_global.csv --timestamp --save-verdicts --reports-dir reports\global%EXTRA_ARGS%
+echo [GLOBAL EOD] Complete. Check reports\global\ for stock report.
 goto :end
 
 REM ── FULL (EOD alias) ─────────────────────────────────────────
@@ -146,31 +195,44 @@ echo  ShockArb Workflow Commands
 echo  ==========================
 echo  scripts\shockarb_workflows.bat ^<command^>
 echo.
+echo  NOTE: LLM is ON by default for all report commands.
+echo        Use --no-llm to get a fast rules-based report only.
+echo.
 echo  Commands:
 echo    score              Run shockarb score (sticky regime)
-echo    market_report      Refresh snapshot + rules-based marketfit report
-echo    market_report_llm  Refresh snapshot + LLM market report (timestamped)
-echo    market_intraday    Live intraday prices + LLM report (timestamped)
-echo    stock_report       Rules-based stock opportunity report
-echo    stock_report_llm   LLM-enhanced stock report (timestamped)
-echo    iran_report        Score + stock report under iran_shock regime (separate folder)
-echo    shockarb_score     score + market_report_llm combined
+echo    market_report      Refresh snapshot + market report (LLM default)
+echo    market_report_llm  Alias for market_report --timestamp
+echo    market_intraday    Live intraday prices + market report (timestamped)
+echo    stock_report       Stock opportunity report (LLM default)
+echo    stock_report_llm   Alias for stock_report --timestamp
+echo    iran_report        Score iran_shock + stock report (timestamped + verdicts)
+echo    dual_eod           BOTH regimes scored + compared (recommended daily)
+echo    compare_latest     Auto-compare two most recent verdicts CSVs in reports\
+echo    shockarb_score     score + market report combined
 echo    news               Fetch headlines + fundamentals
 echo    portfolio          Size positions from live_alpha_us.csv
+echo    global_eod         Global ADR EOD: score global_ukraine_shock + full report chain
 echo    eod / full         Full EOD: score + news + market + marketfit + stockfit
 echo    daily_scan         Run daily_scanner.py
 echo    build              Build/rebuild factor model
 echo.
-echo  Full EOD corpus run:
+echo  Recommended daily workflow (dual-regime):
+echo    scripts\shockarb_workflows.bat dual_eod
+echo.
+echo  Single-regime EOD:
 echo    scripts\shockarb_workflows.bat eod
 echo.
-echo  Stand-alone stock report with LLM:
-echo    python -m stockfit report --llm --timestamp
+echo  Compare latest two reports manually:
+echo    scripts\shockarb_workflows.bat compare_latest
+echo.
+echo  Rules-based only (no LLM, fast):
+echo    python -m stockfit report --no-llm
+echo    python -m marketfit report --no-llm
 echo.
 echo  Extra args after the command are forwarded to `stockfit report`
-echo  (stock_report, stock_report_llm, iran_report, eod/full), e.g.:
+echo  (stock_report, stock_report_llm, iran_report, eod/full, dual_eod), e.g.:
 echo    scripts\shockarb_workflows.bat eod --rvol
-echo    scripts\shockarb_workflows.bat stock_report_llm --rvol --intraday
+echo    scripts\shockarb_workflows.bat dual_eod --rvol --intraday
 echo.
 
 :end

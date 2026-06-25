@@ -24,8 +24,8 @@ Usage
 
 Options
 -------
-  --llm             Generate enhanced report with LLM narratives
-                    (requires ANTHROPIC_API_KEY or GOOGLE_API_KEY)
+  --no-llm          Disable LLM narratives; produce rules-based report only
+                    (LLM is ON by default; requires ANTHROPIC_API_KEY or GOOGLE_API_KEY)
   --timestamp       Save as stock_report_YYYYMMDD_HHMM.md — never overwrites;
                     builds archive for LLM training
   --reports-dir     Directory for report output (default ../reports)
@@ -232,11 +232,13 @@ def cmd_report(args) -> None:
         "min_conf_delta":   args.min_confidence,
         "min_upside":       args.min_upside,
     }
+    scores_name = Path(args.scores).name
+    source_str  = f"{scores_name} + fundamentals.csv + news.txt"
 
     if args.llm:
-        md = _build_with_llm(verdicts, now_str, thresholds)
+        md = _build_with_llm(verdicts, now_str, thresholds, source_str)
     else:
-        md = report.build(verdicts, date_str=now_str, thresholds=thresholds)
+        md = report.build(verdicts, date_str=now_str, thresholds=thresholds, source=source_str)
 
     out_path = _resolve_out(args.out, args.reports_dir, timestamp=args.timestamp)
 
@@ -273,7 +275,7 @@ def cmd_report(args) -> None:
             logger.error(f"Failed to save verdicts CSV: {exc}")
             print(f"❌  Verdicts save failed — check path and permissions: {verdicts_path}")
 
-    llm_note = " | LLM: enabled" if args.llm else ""
+    llm_note = " | LLM: enabled" if args.llm else " | LLM: disabled (--no-llm)"
     print(
         f"    Tickers: {include_n} INCLUDE | {watch_n} WATCH | {exclude_n} EXCLUDE{llm_note}"
     )
@@ -287,6 +289,7 @@ def _build_with_llm(
     verdicts:   list,
     date_str:   str,
     thresholds: dict,
+    source:     str = "live_alpha_us.csv + fundamentals.csv + news.txt",
 ) -> str:
     """Generate the enhanced report via LLM; fall back to basic if unavailable."""
     from stockfit.llm import StockfitLLMClient
@@ -296,18 +299,19 @@ def _build_with_llm(
     except RuntimeError as exc:
         logger.error(f"LLM not available: {exc}")
         logger.info("Falling back to basic report (no LLM).")
-        return report.build(verdicts, date_str=date_str, thresholds=thresholds)
+        return report.build(verdicts, date_str=date_str, thresholds=thresholds, source=source)
 
     narratives = client.generate_narratives(verdicts)
 
     if not narratives:
         logger.warning("LLM returned no narratives — falling back to basic report.")
-        return report.build(verdicts, date_str=date_str, thresholds=thresholds)
+        return report.build(verdicts, date_str=date_str, thresholds=thresholds, source=source)
 
     return report.build_enhanced(
         verdicts, narratives,
         date_str=date_str,
         thresholds=thresholds,
+        source=source,
     )
 
 
@@ -349,8 +353,8 @@ def main() -> None:
                    help=f"Directory for report output (default: {REPORTS_DIR})")
     p.add_argument("--out", "-o", default=None,
                    help="Exact output .md path; overrides --reports-dir (default: auto)")
-    p.add_argument("--llm", action="store_true",
-                   help="Enhanced report with LLM narratives (requires API key)")
+    p.add_argument("--no-llm", action="store_false", dest="llm",
+                   help="Disable LLM narratives; use rules-based report only")
     p.add_argument("--timestamp", action="store_true",
                    help="Save as stock_report_YYYYMMDD_HHMM.md — never overwrites")
     p.add_argument("--earnings-window", type=int, default=14,
@@ -377,7 +381,7 @@ def main() -> None:
     p.add_argument("--save-verdicts", action="store_true",
                    help="Also save full verdicts (all tiers, all stats) to a "
                         "<report>_verdicts.csv alongside the .md report")
-    p.set_defaults(func=cmd_report)
+    p.set_defaults(func=cmd_report, llm=True)
 
     p_set_rvol = sub.add_parser("set-rvol", help="Set sticky RVOL display on/off for future report runs")
     p_set_rvol.add_argument("state", choices=["on", "off"])

@@ -268,6 +268,33 @@ report's regime fits the ticker better right now.
 
 ---
 
+## Updating Analyst Targets
+
+Analyst targets in `data/fundamentals.csv` can go stale or become inverted after stock splits. Use `get_analyst_targets.py` to refresh them from Finviz (no API key required):
+
+```bash
+# Fetch and automatically update data/fundamentals.csv (recommended)
+python get_analyst_targets.py --tickers KLAC QCOM NOW MSFT --update-fundamentals
+
+# Custom path for fundamentals.csv
+python get_analyst_targets.py --tickers KLAC --update-fundamentals path/to/fundamentals.csv
+
+# Fetch only (print + save to finviz_analyst_data.csv, no auto-update)
+python get_analyst_targets.py --tickers KLAC QCOM NOW MSFT
+
+# Explicit provider
+python get_analyst_targets.py --tickers KLAC --provider yfinance --update-fundamentals
+
+# Fetch targets for all tickers in fundamentals.csv
+python get_analyst_targets.py --update-fundamentals
+```
+
+Output is printed to console and saved to `finviz_analyst_data.csv` (or `yfinance_analyst_data.csv` etc.) in the project root. With `--update-fundamentals`, the `Analyst Tgt` column in `data/fundamentals.csv` is patched automatically — no manual copy needed.
+
+**When to run:** whenever the stock report flags a data quality issue (`analyst target below current price`) or after a stock split (targets will be pre-split until refreshed). KLAC did a 10-for-1 split on 2026-06-12 — all pre-split targets need dividing by 10.
+
+---
+
 ## File Locations
 
 ```
@@ -298,8 +325,8 @@ reports/                         # Generated reports (default ./reports)
 To write reports to a different folder, pass `--reports-dir /your/path` to either CLI:
 
 ```bash
-cd utils && python -m marketfit report --llm --reports-dir C:\Users\me\Desktop\reports
-cd utils && python -m stockfit report --llm --reports-dir C:\Users\me\Desktop\reports
+python -m marketfit report --reports-dir C:\Users\me\Desktop\reports
+python -m stockfit report --reports-dir C:\Users\me\Desktop\reports
 ```
 
 **Ticker cache maintenance:**

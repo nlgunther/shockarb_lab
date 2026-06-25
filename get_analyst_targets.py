@@ -190,6 +190,51 @@ def _load_tickers(args: argparse.Namespace) -> list[str]:
     return tickers
 
 
+
+def _best_target(row: dict) -> float | None:
+    """Return the best available target price from a provider result dict."""
+    for key in ("Target_Consensus", "Target_Mean", "Target_Median"):
+        val = row.get(key)
+        if val is not None:
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                pass
+    return None
+
+
+def _update_fundamentals(results: list[dict], fundamentals_path: str) -> None:
+    """Patch the Analyst Tgt column in fundamentals.csv with freshly fetched targets."""
+    try:
+        fund_df = pd.read_csv(fundamentals_path)
+    except FileNotFoundError:
+        print(f"[Error] fundamentals.csv not found at: {fundamentals_path}")
+        return
+
+    if "Ticker" not in fund_df.columns or "Analyst Tgt" not in fund_df.columns:
+        print(f"[Error] Expected columns 'Ticker' and 'Analyst Tgt' in {fundamentals_path}")
+        return
+
+    updated = []
+    skipped = []
+    for row in results:
+        ticker = row.get("Symbol", "")
+        target = _best_target(row)
+        if target is None:
+            skipped.append(ticker)
+            continue
+        mask = fund_df["Ticker"].str.upper() == ticker.upper()
+        if mask.any():
+            fund_df.loc[mask, "Analyst Tgt"] = round(target, 2)
+            updated.append(ticker)
+        else:
+            logger.warning(f"{ticker} not found in {fundamentals_path} — row not updated")
+
+    fund_df.to_csv(fundamentals_path, index=False)
+    print(f"\nUpdated {len(updated)} ticker(s) in {fundamentals_path}: {updated}")
+    if skipped:
+        print(f"Skipped (no target value): {skipped}")
+
 def main():
     parser = argparse.ArgumentParser(description="Fetch consensus analyst data for a list of tickers.")
 
@@ -210,6 +255,16 @@ def main():
         choices=["yfinance", "fmp", "alpha_advantage", "finnhub", "finviz"],
         default="finviz",
         help="Data provider to use. Defaults to 'finviz' — the only provider that needs no API key.",
+    )
+    parser.add_argument(
+        "--update-fundamentals", "-u",
+        nargs="?",
+        const="data/fundamentals.csv",
+        metavar="PATH",
+        help=(
+            "Patch Analyst Tgt in fundamentals.csv with fetched targets. "
+            "Optionally supply a path (default: data/fundamentals.csv)."
+        ),
     )
 
     args = parser.parse_args()
@@ -250,6 +305,9 @@ def main():
         output_file = f"{args.provider}_analyst_data.csv"
         out_df.to_csv(output_file, index=False)
         print(f"\nSuccessfully saved data for {len(results)} tickers to '{output_file}'.")
+
+        if args.update_fundamentals:
+            _update_fundamentals(results, args.update_fundamentals)
     else:
         print("\nNo analyst data was retrieved.")
 

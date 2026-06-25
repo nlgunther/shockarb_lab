@@ -108,7 +108,7 @@ class _AnthropicBackend:
 
 
 class _GeminiBackend:
-    DEFAULT_MODEL = "gemini-2.5-flash-lite"
+    DEFAULT_MODEL = "gemini-2.5-flash"
 
     def __init__(self, api_key: str, model: str | None = None):
         self.api_key = api_key

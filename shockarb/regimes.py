@@ -398,6 +398,44 @@ IRAN_SHOCK = HistoricFactorModel(
     supersedes=None,
 )
 
+# Iran Extended -- Full conflict period including normalization (Feb-Jun 2026)
+# Refits on the complete conflict window rather than the acute onset only.
+# Better captures how stocks adapted to the sustained shock vs. initial panic.
+# Use in preference to iran_shock once conflict has been active for 6+ weeks.
+IRAN_EXTENDED = HistoricFactorModel(
+    name="iran_extended",
+    description="US-Israel / Strait closure — full conflict window (Feb-Jun 2026)",
+    narrative=(
+        "Extension of iran_shock to cover the full conflict period from the initial"
+        " US-Israel Operation Epic Fury (February 28, 2026) through the normalization"
+        " phase (calibrated through June 15, 2026). The wider window captures factor"
+        " dynamics across both the acute shock onset and the subsequent adjustment"
+        " period, giving more stable loadings for stocks that responded gradually"
+        " rather than spiking at onset. Particularly improves r² for tech/software"
+        " names (MSFT, CRM, NOW) whose Iran-conflict loadings only emerged over weeks."
+        " Use this regime in preference to iran_shock once 6+ weeks of conflict data"
+        " are available and initial panic dynamics have settled into a sustained regime."
+    ),
+    universe=UniverseConfig(
+        name="us_iran_ext",
+        market_etfs=_US_MACRO_ETFS,
+        individual_stocks=_US_STOCKS,
+        n_components=3,
+        start_date="2026-02-24",
+        end_date="2026-06-15",
+    ),
+    expected_dynamics={
+        "energy": "sustained elevated (oil >$90; volatility decreasing from peak)",
+        "defense": "elevated but normalizing (+10-15% vs SPY; initial spike fading)",
+        "tech": "recovering from initial sell-off; mean-reversion in progress",
+        "airlines": "depressed but recovering (fuel cost stabilizing)",
+        "staples": "mild outperformance (risk-off premium partially unwinding)",
+        "financials": "mixed (stagflation risk vs. credit normalization)",
+    },
+    tags=("geopolitical", "energy_shock", "strait_closure", "normalization"),
+    supersedes="iran_shock",
+)
+
 # Post-COVID reopening -- vaccine announcement to pre-taper tantrum (Nov 2020 - Feb 2021)
 # The cleanest risk-on regime of the last decade: VIX collapsed, cyclicals/energy surged,
 # bonds sold off, defensives lagged. Use to score days where macro tailwinds drive
@@ -450,6 +488,7 @@ REGIME_REGISTRY: Dict[str, HistoricFactorModel] = {
     "global_ukraine_shock":     GLOBAL_UKRAINE_SHOCK,
     "covid_reopening":          COVID_REOPENING,
     "iran_shock":               IRAN_SHOCK,
+    "iran_extended":            IRAN_EXTENDED,
 }
 
 
