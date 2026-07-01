@@ -91,6 +91,8 @@ no longer matters for path resolution.
 | `MARKET_REPORT_INTRADAY`  | `<project_root>/reports/market_report_intraday.md`   |
 | `STOCK_REPORT`            | `<project_root>/reports/stock_report.md`             |
 | `REPORTS_DIR`             | `<project_root>/reports/`                            |
+| `PRICE_TREND_DAILY`       | `<project_root>/data/price_trend_daily.csv`          |
+| `PRICE_TREND_SUMMARY`     | `<project_root>/data/price_trend.csv`                |
 | `STOCKFIT_RVOL_FILE`      | `<project_root>/data/.stockfit_rvol`                 |
 
 ---

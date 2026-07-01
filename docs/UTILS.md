@@ -9,6 +9,8 @@ utils/
 ├── fundamental_scanner.py  Fetch yfinance fundamentals table (imported by news_scanner);
 │                           analyst targets overridden by data/analyst_overrides.csv
 ├── portfolio_sizer.py      Size a conviction-weighted trade ticket
+├── price_trend.py          Trailing adj-close price history (reads shared parquet cache)
+├── refresh_prices.py       Top-up the daily OHLCV parquet cache (gap-analysis tail-fetch)
 ├── eval_picks.py           Evaluate pick performance vs entry prices
 ├── csv_to_md.py            Convert a score CSV to a Markdown report
 └── score_history.py        Score any historical date (backtesting)
@@ -27,6 +29,7 @@ All scripts accept `--help` for a full argument listing.
 4:00 pm  python -m shockarb score                   # score → data/live_alpha_us.csv (default)
      OR  python utils/daily_scanner.py              # score both US + Global universes
 4:05 pm  python utils/news_scanner.py               # headlines + fundamentals → data/news.txt, data/fundamentals.csv
+4:10 pm  python utils/price_trend.py --daily        # optional: 60-day adj-close matrix → data/price_trend_daily.csv
 4:15 pm  python utils/portfolio_sizer.py            # trade ticket → data/portfolio_sizer.csv (default)
          python utils/csv_to_md.py data/live_alpha_us.csv  # optional: shareable markdown report
 ```
@@ -177,7 +180,7 @@ python utils/portfolio_sizer.py --tickers AMAT ADI ETN --capital 10000
 | TICKER | Ticker symbol |
 | WEIGHT | Conviction-weighted share of capital |
 | ALLOCATION | Dollar amount allocated |
-| CURRENT | Live price fetched from yfinance |
+| CURRENT | Most recent adj_close from the shared parquet cache (same store as scoring pipeline) |
 | TARGET | Take-profit limit price = `current × (1 + delta_rel)` |
 | SHARES | Whole shares purchasable at current price |
 
@@ -188,7 +191,88 @@ python utils/portfolio_sizer.py --tickers AMAT ADI ETN --capital 10000
 - Allocation weight for each position = its `confidence_delta` / sum of all selected `confidence_delta` values.
 - Take-profit target is the factor-model implied fair price, not a hard prediction. It represents where the stock *would* trade if the dislocation fully closed.
 - Only stocks with `confidence_delta > 0` are considered. Negative signals are excluded.
-- Tickers without a live price quote are skipped with a warning.
+- Tickers without a current price in the cache are skipped with a warning.
+- Current prices are fetched via the DataCoordinator using a 7-day window, so results are correct across weekends and holidays. If prices were already cached by today's score run, no network call is made.
+
+---
+
+## price_trend.py
+
+Prints a trailing price trend table for one or more tickers and optionally saves the full adj-close matrix to CSV. Uses the DataCoordinator's shared parquet cache — if prices are already cached from today's score run, no network call is made.
+
+**Output files** (written to `data/`)
+
+| File | Contents |
+|------|----------|
+| `data/price_trend.csv` (with `--csv`) | Per-ticker summary: Start, End, Chg_pct |
+| `data/price_trend_daily.csv` (with `--daily`) | Full adj-close matrix (dates × tickers), suitable for upload to Claude |
+
+**Usage**
+
+```bash
+# All tickers in live_alpha_us.csv, 60-day window
+python utils/price_trend.py
+
+# Specific tickers
+python utils/price_trend.py --tickers MSFT BLK ORCL
+
+# 30-day window
+python utils/price_trend.py --tickers MSFT BLK --days 30
+
+# Save full daily matrix for upload
+python utils/price_trend.py --tickers MSFT BLK ORCL QCOM NOW --daily
+
+# Save both summary and matrix
+python utils/price_trend.py --csv --daily
+```
+
+**Arguments**
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--tickers` | *(all from live_alpha_us.csv)* | One or more tickers. |
+| `--days` | `60` | Trailing window in trading sessions. |
+| `--csv` | `False` | Save per-ticker summary to `data/price_trend.csv`. |
+| `--daily` | `False` | Save adj-close matrix to `data/price_trend_daily.csv`. |
+
+**Notes**
+
+- Prices come from the same DataCoordinator parquet cache as the scoring pipeline. After a score run, `price_trend.py` reads from cache at zero network cost.
+- The adj-close matrix saved by `--daily` can be uploaded to Claude for context alongside a ShockArb score CSV.
+
+---
+
+## refresh_prices.py
+
+Manually top-up the daily OHLCV parquet cache for specific tickers. The DataCoordinator's gap analysis means only missing dates are downloaded — already-current tickers generate zero network calls.
+
+Run this when you want to ensure prices are cached before running `price_trend.py` or `portfolio_sizer.py` outside of a normal score workflow.
+
+**Usage**
+
+```bash
+# Refresh specific tickers (last 30 days)
+python utils/refresh_prices.py ETN HON ISRG
+
+# Extend the window
+python utils/refresh_prices.py ETN HON ISRG --days 90
+
+# Refresh all tickers in live_alpha_us.csv
+python utils/refresh_prices.py
+```
+
+**Arguments**
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `tickers` | *(all from live_alpha_us.csv)* | Positional list of tickers to refresh. |
+| `--days` | `30` | Calendar days of history to ensure in the cache. |
+
+**Notes**
+
+- Writes to `data/prices/daily/{TICKER}.parquet` — the same files that the scoring pipeline, `price_trend.py`, and `portfolio_sizer.py` all read from.
+- Safe to run repeatedly; already-current files are skipped by the gap analyzer.
+- Output is one line per ticker: `{TICKER}: cache up to date through YYYY-MM-DD`.
 
 ---
 

@@ -40,6 +40,12 @@ The industry field in score reports is sourced from an external reference (likel
 
 - [ ] **MARKET-HOLIDAY-FLAG** — `market_data.py` fires a "⚠️ Market open — stale data" warning whenever the snapshot date doesn't match the fetch date, but it does not check for US market holidays. On Juneteenth 2026 (Fri Jun 19), the last US trade date was Thu Jun 18; the report generated Sun Jun 21 showed the warning incorrectly, as if data were missing. — Add a holiday calendar check (e.g. `pandas_market_calendars` or a static NYSE holiday list) so that when `last_date` is the last *trading* day (not just the last calendar day), the stale-data warning is suppressed and the report instead notes: "Last US trading session: {date} ({holiday name} — market closed {skipped date})."
 
+### Position Reconciliation: Entry-Price FIFO Match (2026-07-01)
+
+- [ ] **INTU-ENTRY-PRICE** — Cost basis $263.00/share (5 sh, positions.csv 2026-07-01) does not exactly match any `price` field in `stock_report_*_verdicts.csv` from 2026-06-01 through 2026-07-01 (closest: $261.00 on 07-01, $266.40 on 06-29/06-30 — both >$2 off). Entry likely predates the verdicts-CSV tracking window (first verdicts CSV is 2026-06-18) or was filled at an intraday price not captured by any EOD report snapshot. Verify against brokerage trade confirmation for the actual fill date.
+- [ ] **NOW-ENTRY-PRICE** — Cost basis $97.88/share (13 sh) does not exactly match any report price in the same window (closest: $99.28 on 07-01, off by $1.40). Same likely cause as INTU — pre-dates verdicts CSV history or intraday fill. Verify against brokerage records.
+- [ ] **SNPS-ENTRY-PRICE** — Cost basis $441.99/share (4 sh) does not match any report price 2026-06-01 to 2026-07-01 (closest $446.07, off by $4.08). Same caveat as above.
+
 ### Tooling / Workflow Enhancements (Backlog)
 
 - [ ] **NEWS-CACHE** — `[News] Refreshing fundamentals for ... candidates` re-downloads news/fundamentals (Yahoo Finance scan) on every `iran_report`/`shockarb_workflows` run, even when only re-debugging the scoring step. Ken wants an option to reuse `data/news.txt` / `data/fundamentals.csv` from a prior run instead of re-fetching, at least for debugging. — Likely a CLI flag (e.g. `--skip-news` / `--cached-news`) in the news-scan step of `shockarb_workflows.bat` / `stockfit.cli`.

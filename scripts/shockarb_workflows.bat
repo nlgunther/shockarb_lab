@@ -16,7 +16,7 @@ REM --intraday, --no-rvol) so they can be forwarded to `stockfit report`.
 set COMMAND=%1
 set EXTRA_ARGS=
 :collect_extra
-shift
+shift /1
 if "%1"=="" goto :after_collect
 set EXTRA_ARGS=%EXTRA_ARGS% %1
 goto :collect_extra

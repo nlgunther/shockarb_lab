@@ -48,9 +48,9 @@ def _write_alpha_csv(path: str, rows: list[dict] | None = None) -> str:
     return path
 
 
-def _mock_yf_prices(tickers: list[str], price: float = 100.0) -> pd.DataFrame:
-    idx = pd.DatetimeIndex(["2026-05-29"])
-    return pd.DataFrame({t: [price] for t in tickers}, index=idx)
+def _mock_prices(tickers: list[str], price: float = 100.0) -> pd.Series:
+    """Series of {ticker: price} — matches _fetch_current_prices() return type."""
+    return pd.Series({t: price for t in tickers})
 
 
 # =============================================================================
@@ -156,8 +156,8 @@ class TestPortfolioSizerOutFlag(OutFileContract):
         csv = tmp_path / "alpha.csv"
         _write_alpha_csv(str(csv))
         tickers = [r["Ticker"] for r in _ALPHA_ROWS]
-        with patch("portfolio_sizer.yf.download",
-                   return_value=_mock_yf_prices(tickers)):
+        with patch("portfolio_sizer._fetch_current_prices",
+                   return_value=_mock_prices(tickers)):
             generate_orders([str(csv)], capital=10_000, top_n=3, out=out_path)
 
     def test_csv_has_expected_columns(self, tmp_path):

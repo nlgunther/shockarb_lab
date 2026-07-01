@@ -37,6 +37,17 @@ STOCK_REPORT           = REPORTS / "stock_report.md"
 REPORTS_DIR            = REPORTS
 
 # ---------------------------------------------------------------------------
+# Price trend outputs
+# ---------------------------------------------------------------------------
+PRICE_TREND_DAILY   = DATA / "price_trend_daily.csv"   # adj-close matrix (dates × tickers)
+PRICE_TREND_SUMMARY = DATA / "price_trend.csv"          # per-ticker summary (start/end/chg%)
+
+# ---------------------------------------------------------------------------
+# Watchlist — user-maintained ticker list for the watchlist_news scanner
+# ---------------------------------------------------------------------------
+WATCHLIST = DATA / "watchlist.txt"
+
+# ---------------------------------------------------------------------------
 # Sticky CLI state
 # ---------------------------------------------------------------------------
 # Mirrors shockarb/cli.py's .shockarb_regime sticky-file pattern.

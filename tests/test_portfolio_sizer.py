@@ -1,7 +1,7 @@
 """
 Tests for utils/portfolio_sizer.py.
 
-Uses injected fakes for yfinance — no network calls.
+Uses injected fakes for price fetching — no network calls.
 --out tests are in tests/test_out_flag.py (TestPortfolioSizerOutFlag).
 """
 
@@ -28,10 +28,9 @@ def _write_alpha_csv(path: str, rows: list[dict]) -> None:
     pd.DataFrame(rows).to_csv(path, index=False)
 
 
-def _mock_price(tickers: list[str], price: float = 100.0) -> pd.DataFrame:
-    """Flat wide DataFrame indexed by one date, one price per ticker."""
-    idx = pd.DatetimeIndex(["2026-05-29"])
-    return pd.DataFrame({t: [price] for t in tickers}, index=idx)
+def _mock_prices(tickers: list[str], price: float = 100.0) -> pd.Series:
+    """Series of {ticker: price} — matches _fetch_current_prices() return type."""
+    return pd.Series({t: price for t in tickers})
 
 
 _ALPHA_ROWS = [
@@ -55,7 +54,7 @@ class TestExclude:
         _write_alpha_csv(str(csv), _ALPHA_ROWS)
         tickers = ["BLK", "TXN", "PH", "V"]
 
-        with patch("portfolio_sizer.yf.download", return_value=_mock_price(tickers)):
+        with patch("portfolio_sizer._fetch_current_prices", return_value=_mock_prices(tickers)):
             generate_orders([str(csv)], capital=10_000, top_n=5, exclude=["SNPS"])
 
         out = capsys.readouterr().out
@@ -67,7 +66,7 @@ class TestExclude:
         _write_alpha_csv(str(csv), _ALPHA_ROWS)
         tickers = ["BLK", "TXN", "PH", "V"]
 
-        with patch("portfolio_sizer.yf.download", return_value=_mock_price(tickers)):
+        with patch("portfolio_sizer._fetch_current_prices", return_value=_mock_prices(tickers)):
             generate_orders([str(csv)], capital=10_000, top_n=4, exclude=["SNPS"])
 
         out = capsys.readouterr().out
@@ -79,7 +78,7 @@ class TestExclude:
         _write_alpha_csv(str(csv), _ALPHA_ROWS)
         tickers = ["BLK", "TXN", "PH", "V"]
 
-        with patch("portfolio_sizer.yf.download", return_value=_mock_price(tickers)):
+        with patch("portfolio_sizer._fetch_current_prices", return_value=_mock_prices(tickers)):
             generate_orders([str(csv)], capital=10_000, top_n=5, exclude=["snps"])
 
         out = capsys.readouterr().out
@@ -91,7 +90,7 @@ class TestExclude:
         _write_alpha_csv(str(csv), _ALPHA_ROWS)
         tickers = ["BLK", "TXN", "SNPS", "PH", "V"]
 
-        with patch("portfolio_sizer.yf.download", return_value=_mock_price(tickers)):
+        with patch("portfolio_sizer._fetch_current_prices", return_value=_mock_prices(tickers)):
             generate_orders([str(csv)], capital=10_000, top_n=5, exclude=["BOGUS"])
 
         out = capsys.readouterr().out
@@ -103,7 +102,7 @@ class TestExclude:
         _write_alpha_csv(str(csv), _ALPHA_ROWS)
         all_tickers = [r["Ticker"] for r in _ALPHA_ROWS]
 
-        with patch("portfolio_sizer.yf.download", return_value=_mock_price(all_tickers)):
+        with patch("portfolio_sizer._fetch_current_prices", return_value=_mock_prices(all_tickers)):
             generate_orders([str(csv)], capital=10_000, top_n=5, exclude=all_tickers)
         # should complete without exception; output may be empty
 
@@ -119,7 +118,7 @@ class TestTickers:
         csv = tmp_path / "alpha.csv"
         _write_alpha_csv(str(csv), _ALPHA_ROWS)
 
-        with patch("portfolio_sizer.yf.download", return_value=_mock_price(["TXN", "PH"])):
+        with patch("portfolio_sizer._fetch_current_prices", return_value=_mock_prices(["TXN", "PH"])):
             generate_orders([str(csv)], capital=10_000, tickers=["TXN", "PH"])
 
         out = capsys.readouterr().out
@@ -133,7 +132,7 @@ class TestTickers:
         csv = tmp_path / "alpha.csv"
         _write_alpha_csv(str(csv), _ALPHA_ROWS)
 
-        with patch("portfolio_sizer.yf.download", return_value=_mock_price(["BLK", "TXN", "PH"])):
+        with patch("portfolio_sizer._fetch_current_prices", return_value=_mock_prices(["BLK", "TXN", "PH"])):
             generate_orders([str(csv)], capital=10_000, top_n=1, tickers=["BLK", "TXN", "PH"])
 
         out = capsys.readouterr().out
@@ -145,7 +144,7 @@ class TestTickers:
         csv = tmp_path / "alpha.csv"
         _write_alpha_csv(str(csv), _ALPHA_ROWS)
 
-        with patch("portfolio_sizer.yf.download", return_value=_mock_price(["BLK"])):
+        with patch("portfolio_sizer._fetch_current_prices", return_value=_mock_prices(["BLK"])):
             generate_orders([str(csv)], capital=10_000, tickers=["blk"])
 
         out = capsys.readouterr().out
@@ -156,7 +155,7 @@ class TestTickers:
         csv = tmp_path / "alpha.csv"
         _write_alpha_csv(str(csv), _ALPHA_ROWS)
 
-        with patch("portfolio_sizer.yf.download", return_value=_mock_price(["BLK", "TXN"])):
+        with patch("portfolio_sizer._fetch_current_prices", return_value=_mock_prices(["BLK", "TXN"])):
             generate_orders([str(csv)], capital=10_000, tickers=["BLK", "TXN"])
 
         out = capsys.readouterr().out
@@ -168,7 +167,7 @@ class TestTickers:
         csv = tmp_path / "alpha.csv"
         _write_alpha_csv(str(csv), _ALPHA_ROWS)
 
-        with patch("portfolio_sizer.yf.download", return_value=_mock_price(["BLK"])):
+        with patch("portfolio_sizer._fetch_current_prices", return_value=_mock_prices(["BLK"])):
             generate_orders([str(csv)], capital=10_000, tickers=["BLK", "BOGUS"])
 
         out = capsys.readouterr().out

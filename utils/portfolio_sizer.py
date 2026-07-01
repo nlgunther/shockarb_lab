@@ -5,6 +5,9 @@ Reads one or more ShockArb score CSVs, selects the top-N positive signals
 by conviction (confidence_delta), and prints a dollar-denominated trade
 ticket with allocation weights and take-profit limit prices.
 
+Current prices are fetched via the DataCoordinator (parquet cache + tail-fetch),
+so prices already cached from today's score run cost nothing to retrieve.
+
 Output is saved to data/portfolio_sizer.csv by default. Suppress with --no-out.
 
 Usage examples
@@ -13,12 +16,12 @@ Usage examples
     python utils/portfolio_sizer.py --csv data/live_alpha_us.csv --capital 100000
 
     # Merge US + Global into a single ticket
-    python utils/portfolio_sizer.py \
-        --csv data/live_alpha_us.csv data/live_alpha_global.csv \
+    python utils/portfolio_sizer.py \\
+        --csv data/live_alpha_us.csv data/live_alpha_global.csv \\
         --capital 50000 --top 8
 
     # Exclude specific tickers (output still saved to data/portfolio_sizer.csv by default)
-    python utils/portfolio_sizer.py --csv data/live_alpha_us.csv --capital 100000 \
+    python utils/portfolio_sizer.py --csv data/live_alpha_us.csv --capital 100000 \\
         --exclude SNPS BSX
 
     # Size only specific tickers (bypasses CSV ranking entirely)
@@ -28,7 +31,7 @@ Usage examples
     python utils/portfolio_sizer.py --csv data/live_alpha_us.csv --capital 100000 --no-out
 
     # Save to a custom path
-    python utils/portfolio_sizer.py --csv data/live_alpha_us.csv --capital 100000 \
+    python utils/portfolio_sizer.py --csv data/live_alpha_us.csv --capital 100000 \\
         --out data/ticket.csv
 """
 
@@ -40,7 +43,6 @@ import sys
 from pathlib import Path
 
 import pandas as pd
-import yfinance as yf
 from loguru import logger
 
 
@@ -60,6 +62,52 @@ def _check_cwd() -> None:
             f"    Current directory: {Path.cwd()}\n"
         )
         sys.exit(1)
+
+
+def _fetch_current_prices(tickers: list[str]) -> pd.Series:
+    """
+    Return the most recent adj_close for each ticker via the DataCoordinator.
+
+    Uses a 7-day window so the result is correct across weekends and holidays.
+    Data already in the parquet cache from today's score run is served without
+    a network call.
+
+    Imports are lazy so the module remains importable in test environments that
+    don't have the project root on sys.path (the function is patched in tests).
+
+    Example
+    -------
+        _fetch_current_prices(["MSFT", "BLK"])
+        # → pd.Series({"MSFT": 362.80, "BLK": 988.50})
+    """
+    from datetime import date, timedelta
+
+    _root = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(_root))
+
+    from shockarb.store import DataStore as _InnerStore
+    from datamgr.coordinator import DataCoordinator
+    from datamgr.stores.parquet import ParquetStore
+    from datamgr.providers.yfinance import YFinanceProvider
+    from datamgr.requests import DataRequest, Frequency
+
+    data  = _root / "data"
+    end   = date.today().isoformat()
+    start = (date.today() - timedelta(days=7)).isoformat()
+
+    inner = _InnerStore(data)
+    coord = DataCoordinator(ParquetStore(inner), provider=YFinanceProvider())
+    coord.register(DataRequest(
+        tickers   = tuple(tickers),
+        start     = start,
+        end       = end,
+        frequency = Frequency.DAILY,
+        retention = "permanent",
+        requester = "portfolio_sizer",
+    ))
+    results = coord.fulfill()
+    prices  = results.get("portfolio_sizer", pd.DataFrame())
+    return prices.iloc[-1] if not prices.empty else pd.Series(dtype=float)
 
 
 def generate_orders(
@@ -134,17 +182,10 @@ def generate_orders(
         logger.warning("No positive alpha signals found.")
         return
 
-    # Fetch live prices
+    # Fetch current prices via shared parquet cache
     ticker_list = buys["Ticker"].tolist()
-    logger.info(f"Fetching live prices for: {ticker_list}")
-    raw = yf.download(ticker_list, period="1d", progress=False, auto_adjust=False)
-
-    # Resolve price series robustly (MultiIndex or flat)
-    if isinstance(raw.columns, pd.MultiIndex):
-        price_col = "Adj Close" if "Adj Close" in raw.columns.get_level_values(0) else "Close"
-        current = raw[price_col].iloc[-1]
-    else:
-        current = raw.iloc[-1]
+    logger.info(f"Fetching current prices for: {ticker_list}")
+    current = _fetch_current_prices(ticker_list)
 
     # Conviction-weighted allocation
     total_conviction = buys["confidence_delta"].sum()
@@ -153,11 +194,11 @@ def generate_orders(
     buys["Dollar_Alloc"] = buys["Weight"] * capital
 
     # Print ticket
-    print("\n" + "=" * 100)
+    print("\n" + "=" * 122)
     print(f"  SHOCKARB TRADE TICKET  |  Capital: ${capital:,.2f}  |  Positions: {len(buys)}")
-    print("=" * 100)
-    print(f"  {'TICKER':<8}  {'WEIGHT':>8}  {'ALLOCATION':>14}  {'CURRENT':>10}  {'TARGET':>10}  SHARES")
-    print("-" * 100)
+    print("=" * 122)
+    print(f"  {'TICKER':<8}  {'WEIGHT':>8}  {'ALLOC':>14}  {'COST':>14}  {'CURRENT':>10}  {'TARGET':>10}  {'SHARES':>6}")
+    print("-" * 122)
 
     rows = []
     for _, row in buys.iterrows():
@@ -166,18 +207,20 @@ def generate_orders(
             logger.warning(f"No live price for {ticker} — skipping row.")
             continue
 
-        price  = float(current[ticker])
-        target = price * (1 + row["delta_rel"])
-        shares = int(row["Dollar_Alloc"] / price)
+        price    = float(current[ticker])
+        target   = price * (1 + row["delta_rel"])
+        shares   = int(row["Dollar_Alloc"] / price)
+        cost     = shares * price                        # actual dollars deployed (shares × price)
 
         print(
             f"  {ticker:<8}  {row['Weight']:>7.1%}  ${row['Dollar_Alloc']:>13,.2f}"
-            f"  ${price:>9.2f}  ${target:>9.2f}  {shares}"
+            f"  ${cost:>13,.2f}  ${price:>9.2f}  ${target:>9.2f}  {shares:>6}"
         )
         rows.append({
             "Ticker":           ticker,
             "Weight":           round(row["Weight"], 4),
-            "Dollar_Alloc":     round(row["Dollar_Alloc"], 2),
+            "Alloc":            round(row["Dollar_Alloc"], 2),
+            "Cost":             round(cost, 2),
             "Current":          round(price, 2),
             "Target":           round(target, 2),
             "Shares":           shares,
@@ -185,7 +228,12 @@ def generate_orders(
             "r_squared":        round(row.get("r_squared", float("nan")), 4),
         })
 
-    print("=" * 100)
+    total_alloc = sum(r["Alloc"] for r in rows)
+    total_cost  = sum(r["Cost"]  for r in rows)
+    print("-" * 122)
+    print(f"  {'TOTAL':<8}  {'':>8}  ${total_alloc:>13,.2f}  ${total_cost:>13,.2f}")
+    print("=" * 122)
+    print("  ALLOC = conviction-weighted target  |  COST = shares × price (actual spend)")
     print("  EXIT: Place GTC sell-limit orders at the Target price.")
     print()
 
