@@ -43,6 +43,7 @@ from loguru import logger
 
 from fundamental_scanner import fetch_fundamentals, print_fundamentals
 from paths import FUNDAMENTALS as _FUNDAMENTALS_PATH
+from paths import LIVE_ALPHA_US as _LIVE_ALPHA_US_PATH
 
 
 _DEFAULT_OUT_DIR = str(_FUNDAMENTALS_PATH.parent)
@@ -267,8 +268,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Default CSV if nothing else provided
+    # Absolute, via paths.py — cwd-independent, unlike a "./data/..." literal
+    # (this used to break whenever the script was run from utils/, as the
+    # docs instruct, rather than from the project root).
     if not args.tickers and not args.csv:
-        args.csv = ["./data/live_alpha_us.csv"]
+        args.csv = [str(_LIVE_ALPHA_US_PATH)]
 
     out_dir = None if args.no_out else args.out
 

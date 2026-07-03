@@ -53,6 +53,18 @@ WATCHLIST = DATA / "watchlist.txt"
 # Mirrors shockarb/cli.py's .shockarb_regime sticky-file pattern.
 STOCKFIT_RVOL_FILE = DATA / ".stockfit_rvol"
 
+# ---------------------------------------------------------------------------
+# ShockArb position tracking — portfolio_sizer.py --positions / --execute
+# ---------------------------------------------------------------------------
+# POSITION_MARK_OUT mirrors portfolio_sizer.py's own _DEFAULT_OUT: an
+# ephemeral snapshot, overwritten on every --positions run.
+# POSITION_LOG is the durable counterpart — append-only, never overwritten,
+# written only when --execute is passed. This is the audit trail that lets
+# you reconstruct "what did ShockArb say about this ticker the day I bought
+# it" without re-deriving it from archived reports.
+POSITION_MARK_OUT = DATA / "shockarb_position_mark.csv"
+POSITION_LOG       = DATA / "shockarb_position_log.csv"
+
 
 # ---------------------------------------------------------------------------
 # Reference data (ticker → company name/sector/industry resolution)

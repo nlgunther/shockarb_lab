@@ -164,7 +164,7 @@ class TestPortfolioSizerOutFlag(OutFileContract):
         out = tmp_path / "ticket.csv"
         self.invoke(str(out), tmp_path)
         df = pd.read_csv(str(out))
-        for col in ("Ticker", "Weight", "Dollar_Alloc", "Current", "Target", "Shares"):
+        for col in ("Ticker", "Weight", "Alloc", "Current", "Target", "Shares"):
             assert col in df.columns
 
     def test_csv_row_count_matches_top_n(self, tmp_path):

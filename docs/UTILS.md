@@ -159,6 +159,17 @@ python utils/portfolio_sizer.py \
 
 # Size only the tickers the stock report flagged INCLUDE (bypasses CSV ranking)
 python utils/portfolio_sizer.py --tickers AMAT ADI ETN --capital 10000
+
+# Mark your actual holdings against today's ShockArb fair value — not an
+# analyst target — using a brokerage positions export
+python utils/portfolio_sizer.py --positions data/Individual-Positions-2026-07-01-100821.csv
+
+# Same, but also append the read to the durable position log so it
+# survives future runs overwriting data/portfolio_sizer.csv
+python utils/portfolio_sizer.py --positions data/Individual-Positions-2026-07-01-100821.csv --execute
+
+# Log the entry context at the moment you actually place a trade
+python utils/portfolio_sizer.py --tickers AMAT ADI ETN --capital 10000 --execute
 ```
 
 **Arguments**
@@ -170,29 +181,49 @@ python utils/portfolio_sizer.py --tickers AMAT ADI ETN --capital 10000
 | `--top` | `5` | Number of positions. Ignored when `--tickers` is set. |
 | `--tickers` / `-t` | — | Size only these tickers. Bypasses CSV ranking, `--top`, and `--exclude`. Case-insensitive. Use this to act on the INCLUDE list from the stock report. |
 | `--exclude` / `-e` | — | Tickers to exclude before ranking (e.g. `--exclude SNPS BSX`). Case-insensitive. Ignored when `--tickers` is set. |
-| `--out` / `-o` | `./data/portfolio_sizer.csv` | Save ticket to CSV at this path. |
+| `--positions` | — | Path to a brokerage positions export (e.g. `data/Individual-Positions-*.csv`). Marks currently-held ShockArb-scored tickers against today's factor-model fair value using real shares/cost basis, instead of sizing a new ticket. Bypasses `--capital`, `--top`, `--exclude`, and `--tickers`. |
+| `--execute` | — | Append this run's rows to the durable `data/shockarb_position_log.csv` (never overwritten, unlike `--out`). Works with both a normal ticket and `--positions`. |
+| `--out` / `-o` | `./data/portfolio_sizer.csv` (ticket) or `./data/shockarb_position_mark.csv` (`--positions`) | Save output to CSV at this path. |
 | `--no-out` / `-sout` | — | Suppress CSV output. |
 
-**Output columns**
+**Output columns (ticket mode — `--tickers`/`--top`)**
 
 | Column | Description |
 |--------|-------------|
 | TICKER | Ticker symbol |
 | WEIGHT | Conviction-weighted share of capital |
-| ALLOCATION | Dollar amount allocated |
+| ALLOC | Conviction-weighted target dollar amount |
+| COST | Shares × price (actual dollars deployed) |
 | CURRENT | Most recent adj_close from the shared parquet cache (same store as scoring pipeline) |
 | TARGET | Take-profit limit price = `current × (1 + delta_rel)` |
 | SHARES | Whole shares purchasable at current price |
+
+A TOTAL row sums ALLOC and COST across all sized positions.
+
+**Output columns (mark mode — `--positions`)**
+
+| Column | Description |
+|--------|-------------|
+| ticker | Ticker symbol |
+| price | Current price |
+| delta_rel | Today's factor-model residual (relative) |
+| fair_price | ShockArb's own fair-value read = `price × (1 + delta_rel)` — **not** an analyst target |
+| confidence_delta | `delta_rel × r_squared` |
+| r_squared | Factor-model fit quality for this ticker today |
+| shares | Real shares held, from the positions export |
+| cost_basis | Real per-share cost basis, from the positions export |
 
 **Required CSV columns:** `confidence_delta`, `delta_rel`.
 
 **Notes**
 
 - Allocation weight for each position = its `confidence_delta` / sum of all selected `confidence_delta` values.
-- Take-profit target is the factor-model implied fair price, not a hard prediction. It represents where the stock *would* trade if the dislocation fully closed.
-- Only stocks with `confidence_delta > 0` are considered. Negative signals are excluded.
+- Take-profit target / fair price is the factor-model implied fair price, not a hard prediction, and **not** the same thing as `analyst_target` in `fundamentals.csv`/`data/analyst_overrides.csv`. It represents where the stock *would* trade if today's factor-implied residual fully closed — a short-horizon, model-only number, deliberately independent of analyst opinion.
+- Only stocks with `confidence_delta > 0` are considered for a new ticket (`--tickers`/`--top`). `--positions` has no such filter — it marks whatever you hold that ShockArb scored today, regardless of sign.
 - Tickers without a current price in the cache are skipped with a warning.
 - Current prices are fetched via the DataCoordinator using a 7-day window, so results are correct across weekends and holidays. If prices were already cached by today's score run, no network call is made.
+- `--positions` expects the brokerage export's native shape: an account-title line, a blank line, then the real header row, with `Cost Basis` as a dollar/comma-formatted **total** (divided by `Qty` internally to get a per-share figure). Only rows with `Asset Type == "Equity"` are considered; ETFs and cash lines are ignored automatically. A ticker only appears in the mark if it's both held **and** present in today's `--csv` — no ShockArb ticker universe is hardcoded in `portfolio_sizer.py` itself.
+- `data/shockarb_position_log.csv` (written only with `--execute`) is append-only and never overwritten — the durable counterpart to the ephemeral `--out` file. Every row is tagged `event` = `"ticket"` (from a sizing run, `cost_basis` blank) or `"mark"` (from `--positions`, real `cost_basis`), sharing one fixed column schema (`timestamp, ticker, event, price, delta_rel, fair_price, confidence_delta, r_squared, shares, cost_basis, csv_source`) so the two event types never produce a ragged CSV.
 
 ---
 

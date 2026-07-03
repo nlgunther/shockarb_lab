@@ -50,11 +50,18 @@ import pandas as pd
 import yfinance as yf
 from loguru import logger
 
+from paths import DATA as _PROJECT_DATA_DIR
+
 # Suppress noisy per-ticker debug lines — callers see INFO and above only.
 logger.disable("fundamental_scanner")
 
-# Default paths — both honour SHOCK_ARB_DATA_DIR if set
-_DATA_DIR          = Path(os.environ.get("SHOCK_ARB_DATA_DIR", "./data"))
+# Default paths — both honour SHOCK_ARB_DATA_DIR if set.
+# Falls back to paths.py's project-root-anchored DATA dir (not a "./data"
+# literal) so this resolves correctly regardless of cwd — matching the
+# pattern already used in market_data.py. A bare "./data" default here used
+# to silently resolve to utils/data/ (and load no overrides at all) whenever
+# this was run from utils/, as the docs instruct, rather than the project root.
+_DATA_DIR          = Path(os.environ.get("SHOCK_ARB_DATA_DIR", str(_PROJECT_DATA_DIR)))
 _DEFAULT_CACHE     = _DATA_DIR / "fundamentals_cache.json"
 _DEFAULT_OVERRIDES = _DATA_DIR / "analyst_overrides.csv"
 

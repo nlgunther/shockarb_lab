@@ -147,4 +147,17 @@ def principal_angles(
 
     # Clip to [-1, 1] before arccos to guard against floating-point overshoot
     cosines = np.clip(sv, -1.0, 1.0)
+
+    # arccos is ill-conditioned near cosine = +/-1: d/dx arccos(x) = -1/sqrt(1-x^2)
+    # diverges there, so ordinary SVD roundoff (~1e-16) on a truly-shared
+    # direction (cosine == 1 in exact arithmetic) gets amplified to angles on
+    # the order of sqrt(eps) ~ 1e-8 rad (~1e-6 deg) instead of exactly 0.
+    # 1e-9 is comfortably above float64 SVD roundoff for these matrix sizes
+    # but far below the smallest genuine angle this module cares about (the
+    # live ukraine_shock/iran_shock subspaces differ by 15 deg at minimum —
+    # see docs/KT.md session 16), so this cannot mask a real angle.
+    _NEAR_PARALLEL_TOL = 1e-9
+    cosines = np.where(np.abs(1.0 - cosines) < _NEAR_PARALLEL_TOL, 1.0, cosines)
+    cosines = np.where(np.abs(-1.0 - cosines) < _NEAR_PARALLEL_TOL, -1.0, cosines)
+
     return np.arccos(cosines)
