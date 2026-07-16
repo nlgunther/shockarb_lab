@@ -88,6 +88,58 @@ def _extract_article(article: dict) -> tuple[str, str, int | None]:
 
 
 # =============================================================================
+# Severity tagging
+# =============================================================================
+
+# Headlines matching these keywords get flagged and prioritized ahead of
+# unflagged headlines when trimming to _MAX_HEADLINES. Categories are checked
+# in order; a headline is tagged with the first category that matches.
+#
+# Curated from real misses where a materially significant story (an analyst
+# downgrade, a CEO transition, a demand/margin warning) got crowded out by
+# generic same-day headlines under the old "most recent 3, no ranking" logic.
+_SEVERITY_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "RATING": (
+        "downgrade", "upgrade", "price target cut", "price target raised",
+        "initiates coverage", "sector weight", "outperform", "underperform",
+    ),
+    "LEADERSHIP": (
+        "ceo", "cfo", "resigns", "resignation", "steps down", "stepping down",
+        "successor", "appoints", "appointed", "names new", "executive transition",
+    ),
+    "GUIDANCE": (
+        "guidance", "margin", "cuts forecast", "misses estimates", "outlook",
+        "cooling demand", "yield hurdle", "yield issue",
+    ),
+    "LEGAL": (
+        "lawsuit", "investigation", "probe", "recall", "sec filing", "subpoena",
+    ),
+}
+
+# Keep in sync with the mirrored cap in utils/stockfit/features.py::_load_news
+# (headlines[:N]) — no shared constant module exists between the two files.
+_MAX_HEADLINES = 5
+
+
+def _flag_severity(title: str) -> str | None:
+    """
+    Return a severity category if the headline matches a known high-signal
+    keyword, else None.
+
+    Example:
+        _flag_severity("KeyBanc downgrades Salesforce to Sector Weight")
+        # → "RATING"
+        _flag_severity("Copart posts quarterly revenue in line with estimates")
+        # → None
+    """
+    lowered = title.lower()
+    for category, keywords in _SEVERITY_KEYWORDS.items():
+        if any(kw in lowered for kw in keywords):
+            return category
+    return None
+
+
+# =============================================================================
 # Core scanner
 # =============================================================================
 
@@ -189,15 +241,26 @@ def scan_news(
             if not news:
                 _emit("   > No recent news on Yahoo Finance.")
             else:
-                for article in news[:3]:
-                    title, publisher, ts = _extract_article(article)
+                # Rank flagged (high-severity) headlines ahead of unflagged
+                # ones, newest first within each group, then trim. Previously
+                # this just took the first 3 as returned by yfinance, which
+                # could bury a real story (e.g. an analyst downgrade) behind
+                # generic same-day headlines.
+                parsed = [_extract_article(a) for a in news]
+                ranked = sorted(
+                    parsed,
+                    key=lambda a: (_flag_severity(a[0]) is None, -(a[2] or 0)),
+                )
+                for title, publisher, ts in ranked[:_MAX_HEADLINES]:
                     date_str = (
                         datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
                         if isinstance(ts, (int, float))
                         else "Unknown date"
                     )
+                    category = _flag_severity(title)
+                    marker = f"[{category}] " if category else ""
                     _emit(f"   > {date_str}  |  {publisher}")
-                    _emit(f"     {title}")
+                    _emit(f"     {marker}{title}")
         except Exception as exc:
             _emit(f"   > Error fetching news: {exc}")
 

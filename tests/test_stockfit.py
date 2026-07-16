@@ -798,12 +798,12 @@ class TestCliLoaders:
         result = self._load_news(str(tmp_path / "missing.txt"))
         assert result == {}
 
-    def test_load_news_max_three_headlines(self, tmp_path):
+    def test_load_news_max_five_headlines(self, tmp_path):
         sep = "-" * 87
         block = "[ETN  ]  signal: +2.83%\n"
-        for i in range(5):
+        for i in range(7):
             block += f"   > 2026-06-05 0{i}:00  |  Source\n     Headline {i}\n"
         path = tmp_path / "news.txt"
         path.write_text(block, encoding="utf-8")
         result = self._load_news(str(path))
-        assert len(result.get("ETN", [])) <= 3
+        assert len(result.get("ETN", [])) == 5

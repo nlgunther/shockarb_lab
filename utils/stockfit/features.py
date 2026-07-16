@@ -159,7 +159,9 @@ def _load_news(path: str) -> dict[str, list[str]]:
                     nxt = file_lines[i + 1]
                     if not nxt.startswith(">") and not nxt.startswith("["):
                         headlines.append(nxt)
-            result[ticker] = headlines[:3]
+            # Keep in sync with news_scanner.py::_MAX_HEADLINES — no shared
+            # constant module exists between the two files.
+            result[ticker] = headlines[:5]
     except FileNotFoundError:
         pass
     return result

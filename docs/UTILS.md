@@ -83,7 +83,9 @@ python utils\daily_scanner.py --data-dir /path/to/data
 
 ## news_scanner.py
 
-Fetches the three most recent Yahoo Finance headlines for each target. Useful for quickly checking whether a large delta is explained by a known catalyst (earnings miss, downgrade, FDA decision) or is a genuine unexplained dislocation.
+Fetches up to five Yahoo Finance headlines per target. Useful for quickly checking whether a large delta is explained by a known catalyst (earnings miss, downgrade, FDA decision) or is a genuine unexplained dislocation.
+
+Headlines are ranked, not just taken as the newest 3 (the old behavior): any headline matching a high-signal keyword — an analyst rating action, a leadership change, a guidance/margin warning, or a legal/regulatory story — is tagged with a category (`[RATING]`, `[LEADERSHIP]`, `[GUIDANCE]`, `[LEGAL]`) and prioritized ahead of unflagged headlines when trimming to the cap, newest-first within each group. This exists because several real stories (an analyst downgrade, a CEO transition) were getting crowded out of the old top-3 by generic same-day headlines. See `_SEVERITY_KEYWORDS` in `news_scanner.py` for the exact keyword list — it's a heuristic, not exhaustive, so absence of a `[TAG]` doesn't guarantee there's no material story; treat it as a filter that catches more than before, not a complete one.
 
 Targets are selected in priority order:
 
