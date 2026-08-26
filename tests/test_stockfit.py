@@ -273,10 +273,24 @@ class TestRulesEngine:
         assert v[0].tier == "INCLUDE"
 
     def test_low_r2_excluded(self):
-        f = _make_features("CDNS", r2=0.50, conf_delta=0.030)
+        f = _make_features("CDNS", r2=0.30, conf_delta=0.030)
         v = self._eval([f])
         assert v[0].tier == "EXCLUDE"
         assert "r²" in v[0].reason
+
+    def test_low_confidence_tier_between_watch_floor_and_include_bar(self):
+        """r² in [0.45, 0.65) with conf.Δ/upside both clearing their gates → LOW_CONFIDENCE."""
+        f = _make_features("ISRG", r2=0.52, conf_delta=0.030, price=374.48, analyst_target=570.36)
+        v = self._eval([f])
+        assert v[0].tier == "LOW_CONFIDENCE"
+        assert "0.45" in v[0].reason
+
+    def test_r2_below_watch_floor_still_excluded(self):
+        """r² below MIN_R2_WATCH (0.45) never reaches LOW_CONFIDENCE, even with strong conf.Δ/upside."""
+        f = _make_features("WMT", r2=0.19, conf_delta=0.030, price=103.84, analyst_target=137.95)
+        v = self._eval([f])
+        assert v[0].tier == "EXCLUDE"
+        assert "0.45" in v[0].reason
 
     def test_low_confidence_delta_excluded(self):
         f = _make_features("HON", r2=0.70, conf_delta=0.001)
@@ -318,21 +332,31 @@ class TestRulesEngine:
 
     def test_sort_order_include_before_watch_before_exclude(self):
         feats = [
-            _make_features("EXC", r2=0.50,  conf_delta=0.03),                   # EXCLUDE r2
+            _make_features("EXC", r2=0.30,  conf_delta=0.03),                   # EXCLUDE r2 (below watch floor)
+            _make_features("LOW", r2=0.50,  conf_delta=0.03, price=300.0, analyst_target=340.0),  # LOW_CONFIDENCE
             _make_features("WAT", r2=0.70,  conf_delta=0.03, price=300.0, analyst_target=312.0),  # WATCH thin upside
             _make_features("INC", r2=0.70,  conf_delta=0.03, price=300.0, analyst_target=340.0),  # INCLUDE
         ]
         verdicts = self._eval(feats)
         tiers = [v.tier for v in verdicts]
-        assert tiers.index("INCLUDE") < tiers.index("WATCH") < tiers.index("EXCLUDE")
+        assert (tiers.index("INCLUDE") < tiers.index("LOW_CONFIDENCE")
+                < tiers.index("WATCH") < tiers.index("EXCLUDE"))
 
     def test_threshold_overrides_respected(self):
-        """Higher --min-r2 threshold excludes a ticker that would otherwise pass."""
+        """Raising --min-r2 above a ticker's r² demotes it to LOW_CONFIDENCE (still
+        above the watch floor), not straight to EXCLUDE — that's the point of the
+        two-tier design (see HIL_todo.md, R2-GATE-NEAR-MISS, 2026-08-21)."""
         f = _make_features("ETN", r2=0.65, conf_delta=0.03, price=396.0, analyst_target=452.0)
         v_default = rules.evaluate_all([f], min_r2=0.65)
         v_strict  = rules.evaluate_all([f], min_r2=0.70)
         assert v_default[0].tier == "INCLUDE"
-        assert v_strict[0].tier  == "EXCLUDE"
+        assert v_strict[0].tier  == "LOW_CONFIDENCE"
+
+    def test_threshold_overrides_below_watch_floor_excludes(self):
+        """Raising --min-r2-watch above a ticker's r² does exclude it outright."""
+        f = _make_features("ETN", r2=0.50, conf_delta=0.03, price=396.0, analyst_target=452.0)
+        v = rules.evaluate_all([f], min_r2=0.65, min_r2_watch=0.55)
+        assert v[0].tier == "EXCLUDE"
 
     def test_verdict_has_reason(self):
         f = _make_features("ETN")
@@ -428,6 +452,17 @@ class TestReportBuild:
     def test_exclude_header_present(self):
         md = self._build([_make_features("ETN")])
         assert "❌ Excluded" in md
+
+    def test_low_confidence_header_present(self):
+        md = self._build([_make_features("ETN")])
+        assert "🔎 Lower-Confidence Candidates" in md
+
+    def test_low_confidence_ticker_appears_in_own_table(self):
+        f = _make_features("ISRG", r2=0.52, conf_delta=0.030, price=374.48, analyst_target=570.36)
+        md = self._build([f])
+        lowconf_section = md.split("🔎 Lower-Confidence Candidates")[1].split("## ⚠️ Watch")[0]
+        assert "ISRG" in lowconf_section
+        assert "0.45" in md and "0.65" in md  # threshold line shows both bars
 
     def test_include_count_in_header(self):
         feats = [
@@ -556,6 +591,18 @@ class TestReportEnhanced:
         md = self._build(narr, features_list=feats)
         assert "wait for stabilisation" in md
 
+    def test_low_confidence_section_present_without_narrative(self):
+        feats = [_make_features("ISRG", r2=0.52, conf_delta=0.030, price=374.48, analyst_target=570.36)]
+        md = self._build({"executive_summary": "x"}, features_list=feats)
+        assert "🔎 Lower-Confidence Candidates" in md
+        assert "ISRG" in md
+
+    def test_low_confidence_notes_injected(self):
+        feats = [_make_features("ISRG", r2=0.52, conf_delta=0.030, price=374.48, analyst_target=570.36)]
+        narr = {"low_confidence_notes": "ISRG's dislocation is real but the factor fit is only moderate."}
+        md = self._build(narr, features_list=feats)
+        assert "factor fit is only moderate" in md
+
     def test_risk_factors_injected(self):
         narr = {"risk_factors": "Fed rate hike fears could continue compressing semis."}
         md = self._build(narr)
@@ -585,6 +632,57 @@ class TestReportEnhanced:
     def test_risk_factors_section_absent_when_not_provided(self):
         md = self._build({"executive_summary": "X"})
         assert "Risk Factors" not in md
+
+    # -------------------------------------------------------------------
+    # Narrative-omission flags — CPRT-MISSING-FUNDAMENTAL-CONTEXT (HON case)
+    #
+    # The headline was correctly attached (tag intact), but the LLM built
+    # its narrative around unrelated positive headlines instead of engaging
+    # with the flagged one. Distinct from the news_flags.py cross-attachment
+    # bug — this catches "attached but ignored", not "never attached".
+    # -------------------------------------------------------------------
+
+    def test_flagged_headline_missing_from_narrative_is_reported(self):
+        feats = [_make_features("HON", news=[
+            "[GUIDANCE] Honeywell Slides 5% As Growth Guidance Disappoints"
+        ])]
+        narr = {"picks_analysis": {
+            "HON": "Honeywell looks undervalued after the Aerospace spinoff."
+        }}
+        md = self._build(narr, features_list=feats)
+        assert "Data Quality Flags" in md
+        assert "HON" in md
+        assert "GUIDANCE" in md
+
+    def test_narrative_covering_flagged_headline_not_reported(self):
+        feats = [_make_features("HON", news=[
+            "[GUIDANCE] Honeywell Slides 5% As Growth Guidance Disappoints"
+        ])]
+        narr = {"picks_analysis": {
+            "HON": "Honeywell's growth guidance disappointed investors this week."
+        }}
+        md = self._build(narr, features_list=feats)
+        assert "doesn't mention a flagged headline" not in md
+
+    def test_untagged_headline_never_flagged(self):
+        feats = [_make_features("HON", news=["Honeywell announces new product line"])]
+        narr = {"picks_analysis": {"HON": "Honeywell looks like a solid pick."}}
+        md = self._build(narr, features_list=feats)
+        assert "doesn't mention a flagged headline" not in md
+
+    def test_no_narrative_at_all_does_not_false_flag(self):
+        """
+        A ticker with no picks_analysis entry (LLM didn't write it up at
+        all) is a different failure mode than "narrative silent on the
+        flagged point" — flagged_headlines_missing_from_narrative() guards
+        on empty narrative and skips the check rather than guessing. Not
+        the bug this fix targets; asserting the guard doesn't misfire.
+        """
+        feats = [_make_features("HON", news=[
+            "[LEGAL] Honeywell faces antitrust probe over recent acquisition"
+        ])]
+        md = self._build({}, features_list=feats)
+        assert "doesn't mention a flagged headline" not in md
 
 
 # =============================================================================
@@ -639,7 +737,7 @@ class TestVerdictsCsv:
     def _verdicts(self) -> list[StockVerdict]:
         include = self._eval("ETN", r2=0.723, conf_delta=0.0260, price=393.64,
                               analyst_target=451.73)
-        exclude = self._eval("CDNS", r2=0.50, conf_delta=0.030)
+        exclude = self._eval("CDNS", r2=0.30, conf_delta=0.030)
         return rules.evaluate_all([include, exclude])
 
     def _eval(self, ticker, **kw) -> dict:
@@ -660,7 +758,7 @@ class TestVerdictsCsv:
         excluded = next(r for r in rows if r["tier"] == "EXCLUDE")
         # Unlike the markdown report, the CSV retains r_squared/confidence_delta
         # for EXCLUDE tickers, not just the reason string.
-        assert excluded["r_squared"] == pytest.approx(0.50)
+        assert excluded["r_squared"] == pytest.approx(0.30)
         assert excluded["confidence_delta"] == pytest.approx(0.030)
         assert excluded["reason"]
 

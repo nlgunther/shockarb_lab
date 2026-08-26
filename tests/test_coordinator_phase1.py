@@ -595,3 +595,235 @@ class TestGapAnalyseHeadMiss:
         assert len(provider.calls) == 0, (
             "Cache fully covers the request window — provider should not be called."
         )
+
+
+# =============================================================================
+# Batch-failure retry — MARKET-REPORT-PARTIAL-FETCH-GAP fix
+# =============================================================================
+
+class TestDownloadAndCommitRetry:
+    """
+    _download_and_commit() batches tickers purely by identical cache-gap
+    span — an accident of cache state, not a real relationship between the
+    tickers. Regression coverage for the 2026-08-18 incident where one bad
+    ticker in a batch blanked unrelated tickers that shared its gap span
+    (QQQ, IWM, XLI, XLU, XLB, HYG, GLD, ^HSI all missing the same day).
+    See HIL_todo.md, MARKET-REPORT-PARTIAL-FETCH-GAP.
+    """
+
+    def _batch_provider_raising_once(self, bad_tickers: set[str]):
+        """
+        FakeProvider whose batch call raises if the request includes any
+        ticker in bad_tickers, but succeeds for individual-ticker retries
+        of the good tickers (and keeps failing for the bad one).
+        """
+        class FlakyProvider:
+            def fetch(self, tickers, start, end, frequency):
+                if len(tickers) > 1 and (set(tickers) & bad_tickers):
+                    raise RuntimeError("simulated batch failure (rate limit)")
+                if set(tickers) & bad_tickers:
+                    raise RuntimeError("simulated persistent failure for bad ticker")
+                idx = pd.bdate_range(start=start, end=end)
+                if idx.empty:
+                    return pd.DataFrame()
+                cols = pd.MultiIndex.from_product([["adj_close"], tickers])
+                return pd.DataFrame(100.0, index=idx, columns=cols)
+        return FlakyProvider()
+
+    def test_batch_exception_falls_back_to_individual_retry(self):
+        """
+        Three tickers share a gap span (same cache state) so they batch
+        together. The batch call raises because one ticker (BAD) is
+        problematic. The two good tickers must still get committed via
+        the per-ticker retry — they should not be collateral damage.
+        """
+        store = FakeStore()
+        # No seed — all three are full cache misses, same gap span.
+        provider = self._batch_provider_raising_once({"BAD"})
+        c = DataCoordinator(store, provider=provider)
+        c.register(_daily_req(["GOOD1", "BAD", "GOOD2"], requester="test.retry"))
+        c.fulfill()
+
+        written_keys = {call["key"] for call in store.write_calls}
+        assert "daily/GOOD1" in written_keys
+        assert "daily/GOOD2" in written_keys
+        assert "daily/BAD" not in written_keys, (
+            "BAD should fail even on individual retry — it must not be "
+            "committed, but must also not prevent GOOD1/GOOD2 from being."
+        )
+
+    def test_batch_empty_result_falls_back_to_individual_retry(self):
+        """Same as above, but the batch call returns an empty frame instead
+        of raising — must also trigger the individual-retry fallback."""
+        class EmptyThenGoodProvider:
+            def fetch(self, tickers, start, end, frequency):
+                if len(tickers) > 1:
+                    return pd.DataFrame()  # simulated empty batch response
+                idx = pd.bdate_range(start=start, end=end)
+                cols = pd.MultiIndex.from_product([["adj_close"], tickers])
+                return pd.DataFrame(100.0, index=idx, columns=cols)
+
+        store = FakeStore()
+        c = DataCoordinator(store, provider=EmptyThenGoodProvider())
+        c.register(_daily_req(["GOOD1", "GOOD2"], requester="test.retry_empty"))
+        c.fulfill()
+
+        written_keys = {call["key"] for call in store.write_calls}
+        assert "daily/GOOD1" in written_keys
+        assert "daily/GOOD2" in written_keys
+
+    def test_all_individual_retries_fail_no_crash(self):
+        """If every ticker in the batch also fails individually, fulfill()
+        must not raise — it just commits nothing for that span."""
+        store = FakeStore()
+        provider = self._batch_provider_raising_once({"BAD1", "BAD2"})
+        c = DataCoordinator(store, provider=provider)
+        c.register(_daily_req(["BAD1", "BAD2"], requester="test.all_bad"))
+        results = c.fulfill()  # must not raise
+
+        assert len(store.write_calls) == 0
+        assert "test.all_bad" in results
+
+
+# =============================================================================
+# NaN-close row rejection — NAN-CLOSE-CACHE-CORRUPTION fix
+# =============================================================================
+
+class TestCommitTickerNaNRowRejection:
+    """
+    _commit_ticker() must never write a row with no closing price to the
+    permanent cache. Regression coverage for the 2026-08-19 incident: every
+    ukraine_shock ticker picked up a real-looking-but-NaN-close row dated
+    2026-08-17 (open/high/low/volume present, close/adj_close NaN — a
+    partial/in-progress bar, almost certainly mis-dated by yfinance). That
+    row got committed, coverage() then lied that 2026-08-17 was fully
+    cached, and pipeline.py's ffill().pct_change() silently turned the NaN
+    close into a fake 0.000% return for every ticker — suppressing
+    confidence_delta across the whole universe and producing two straight
+    days of "no recommendations". See HIL_todo.md, NAN-CLOSE-CACHE-CORRUPTION.
+    """
+
+    @staticmethod
+    def _multiindex_df(ticker: str, dates: list[str], closes: list[float | None]) -> pd.DataFrame:
+        """Build a normalised-shape batch result (matches YFinanceProvider._normalise() output)."""
+        idx = pd.to_datetime(dates)
+        data = {
+            ("open", ticker):       [100.0] * len(dates),
+            ("high", ticker):       [101.0] * len(dates),
+            ("low", ticker):        [99.0] * len(dates),
+            ("close", ticker):      closes,
+            ("adj_close", ticker):  closes,
+            ("adj_factor", ticker): [1.0 if c is not None else None for c in closes],
+            ("volume", ticker):     [1_000_000] * len(dates),
+        }
+        df = pd.DataFrame(data, index=idx)
+        df.columns = pd.MultiIndex.from_tuples(df.columns)
+        return df
+
+    def test_nan_close_row_not_committed(self):
+        """A trailing NaN-close row (the partial-bar case) is dropped; the
+        good rows ahead of it still get written."""
+        store = FakeStore()
+
+        class OneShotProvider:
+            def fetch(self, tickers, start, end, frequency):
+                return TestCommitTickerNaNRowRejection._multiindex_df(
+                    "MSFT",
+                    ["2026-08-13", "2026-08-14", "2026-08-17"],
+                    [496.88, 495.40, None],
+                )
+
+        c = DataCoordinator(store, provider=OneShotProvider())
+        c.register(_daily_req(["MSFT"], requester="test.nan_row"))
+        c.fulfill()
+
+        assert len(store.write_calls) == 1
+        written = store.write_calls[0]
+        assert written["rows"] == 2, "the NaN-close row must not be counted/committed"
+        committed_df = store._daily[written["key"]]
+        assert pd.Timestamp("2026-08-17") not in committed_df.index
+
+    def test_coverage_does_not_advance_past_bad_date(self):
+        """coverage() must not report the bad date as cached — otherwise
+        gap analysis would never re-fetch it."""
+        store = FakeStore()
+
+        class OneShotProvider:
+            def fetch(self, tickers, start, end, frequency):
+                return TestCommitTickerNaNRowRejection._multiindex_df(
+                    "MSFT",
+                    ["2026-08-13", "2026-08-14", "2026-08-17"],
+                    [496.88, 495.40, None],
+                )
+
+        c = DataCoordinator(store, provider=OneShotProvider())
+        c.register(_daily_req(["MSFT"], requester="test.coverage"))
+        c.fulfill()
+
+        earliest, latest = store.coverage("daily/MSFT")
+        assert latest == "2026-08-14", (
+            "the NaN row must not advance coverage() to 2026-08-17 — a bar "
+            "with no close is not a completed trading day"
+        )
+
+    def test_all_nan_rows_result_in_no_commit(self):
+        """If every row in the batch is NaN-close, nothing is written and
+        fulfill() does not crash."""
+        store = FakeStore()
+
+        class AllNanProvider:
+            def fetch(self, tickers, start, end, frequency):
+                return TestCommitTickerNaNRowRejection._multiindex_df(
+                    "MSFT", ["2026-08-17"], [None],
+                )
+
+        c = DataCoordinator(store, provider=AllNanProvider())
+        c.register(_daily_req(["MSFT"], requester="test.all_nan"))
+        results = c.fulfill()  # must not raise
+
+        assert len(store.write_calls) == 0
+        assert "test.all_nan" in results
+
+    def test_nan_row_in_one_ticker_does_not_affect_sibling(self):
+        """A NaN-close row for one ticker in a batch must not affect a
+        clean sibling ticker fetched in the same call."""
+        store = FakeStore()
+
+        class MixedProvider:
+            def fetch(self, tickers, start, end, frequency):
+                bad = TestCommitTickerNaNRowRejection._multiindex_df(
+                    "MSFT", ["2026-08-14", "2026-08-17"], [495.40, None],
+                )
+                good = TestCommitTickerNaNRowRejection._multiindex_df(
+                    "AAPL", ["2026-08-14", "2026-08-17"], [220.0, 221.5],
+                )
+                return pd.concat([bad, good], axis=1)
+
+        c = DataCoordinator(store, provider=MixedProvider())
+        c.register(_daily_req(["MSFT", "AAPL"], requester="test.mixed"))
+        c.fulfill()
+
+        assert store.coverage("daily/MSFT")[1] == "2026-08-14"
+        assert store.coverage("daily/AAPL")[1] == "2026-08-17"
+
+    def test_intermediate_nan_row_dropped_not_just_trailing(self):
+        """The filter is a row-level notna() mask, not "trim the tail" — a
+        NaN in the middle of the batch is dropped too, not just a trailing one."""
+        store = FakeStore()
+
+        class GappyProvider:
+            def fetch(self, tickers, start, end, frequency):
+                return TestCommitTickerNaNRowRejection._multiindex_df(
+                    "MSFT",
+                    ["2026-08-12", "2026-08-13", "2026-08-14"],
+                    [500.0, None, 495.40],
+                )
+
+        c = DataCoordinator(store, provider=GappyProvider())
+        c.register(_daily_req(["MSFT"], requester="test.gap"))
+        c.fulfill()
+
+        committed_df = store._daily["daily/MSFT"]
+        assert pd.Timestamp("2026-08-13") not in committed_df.index
+        assert pd.Timestamp("2026-08-12") in committed_df.index
+        assert pd.Timestamp("2026-08-14") in committed_df.index

@@ -31,7 +31,8 @@ Options
   --reports-dir     Directory for report output (default ../reports)
   --earnings-window Days ahead to treat earnings as imminent (default 14)
   --include-earnings Do not exclude tickers with imminent earnings (default: exclude)
-  --min-r2          Minimum r² threshold (default 0.65)
+  --min-r2          Minimum r² threshold for the Act-on (INCLUDE) tier (default 0.65)
+  --min-r2-watch    Minimum r² threshold for the Lower-Confidence tier (default 0.45)
   --min-confidence  Minimum confidence_delta threshold (default 0.020)
   --min-upside      Minimum analyst upside fraction (default 0.05 = 5%)
   --scores          Path to live_alpha_us.csv (default ../data/live_alpha_us.csv)
@@ -221,6 +222,7 @@ def cmd_report(args) -> None:
     verdicts = rules.evaluate_all(
         feats,
         min_r2           = args.min_r2,
+        min_r2_watch     = args.min_r2_watch,
         min_conf_delta   = args.min_confidence,
         min_upside       = args.min_upside,
         earnings_exclude = not args.include_earnings,
@@ -229,6 +231,7 @@ def cmd_report(args) -> None:
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     thresholds = {
         "min_r2":           args.min_r2,
+        "min_r2_watch":     args.min_r2_watch,
         "min_conf_delta":   args.min_confidence,
         "min_upside":       args.min_upside,
     }
@@ -252,9 +255,10 @@ def cmd_report(args) -> None:
 
     print(md)
 
-    include_n = sum(1 for v in verdicts if v.tier == "INCLUDE")
-    watch_n   = sum(1 for v in verdicts if v.tier == "WATCH")
-    exclude_n = sum(1 for v in verdicts if v.tier == "EXCLUDE")
+    include_n  = sum(1 for v in verdicts if v.tier == "INCLUDE")
+    lowconf_n  = sum(1 for v in verdicts if v.tier == "LOW_CONFIDENCE")
+    watch_n    = sum(1 for v in verdicts if v.tier == "WATCH")
+    exclude_n  = sum(1 for v in verdicts if v.tier == "EXCLUDE")
 
     if save_ok:
         print(f"\n\U0001f4c1  Saved to: {out_path}")
@@ -277,11 +281,12 @@ def cmd_report(args) -> None:
 
     llm_note = " | LLM: enabled" if args.llm else " | LLM: disabled (--no-llm)"
     print(
-        f"    Tickers: {include_n} INCLUDE | {watch_n} WATCH | {exclude_n} EXCLUDE{llm_note}"
+        f"    Tickers: {include_n} INCLUDE | {lowconf_n} LOW_CONFIDENCE | "
+        f"{watch_n} WATCH | {exclude_n} EXCLUDE{llm_note}"
     )
     print(
-        f"    Thresholds: r2>={args.min_r2:.2f} | conf.D>={args.min_confidence:.3f} "
-        f"| upside>={args.min_upside * 100:.0f}%"
+        f"    Thresholds: r2>={args.min_r2:.2f} (Act-on) | r2>={args.min_r2_watch:.2f} (Lower-Confidence) "
+        f"| conf.D>={args.min_confidence:.3f} | upside>={args.min_upside * 100:.0f}%"
     )
 
 
@@ -360,7 +365,11 @@ def main() -> None:
     p.add_argument("--earnings-window", type=int, default=14,
                    help="Days ahead to treat earnings as imminent and exclude (default: 14)")
     p.add_argument("--min-r2", type=float, default=0.65,
-                   help="Minimum r2 threshold (default: 0.65)")
+                   help="Minimum r2 threshold for the Act-on (INCLUDE) tier (default: 0.65)")
+    p.add_argument("--min-r2-watch", type=float, default=0.45,
+                   help="Minimum r2 threshold for the Lower-Confidence tier (default: 0.45); "
+                        "tickers with r2 in [min-r2-watch, min-r2) that still clear "
+                        "conf.delta/upside land in LOW_CONFIDENCE instead of EXCLUDE")
     p.add_argument("--min-confidence", type=float, default=0.020,
                    help="Minimum confidence_delta threshold (default: 0.020)")
     p.add_argument("--min-upside", type=float, default=0.05,

@@ -36,6 +36,14 @@ Analyst target priority
 
     Blank or non-numeric rows are silently skipped.
     Override file path can be changed via the ``overrides_path`` argument.
+
+Retries
+-------
+    Network calls (.info, .earnings_dates) retry up to 3 times (4 attempts
+    total) with exponential backoff + jitter before a ticker is given up on
+    and written as an "ERR" row. Tune via _MAX_RETRIES / _RETRY_BACKOFF_BASE
+    / _RETRY_JITTER. See HIL_todo.md, FUNDAMENTALS-CSV-PARTIAL-COVERAGE
+    (2026-08-26), for the incident this was added to guard against.
 """
 
 from __future__ import annotations
@@ -43,6 +51,8 @@ from __future__ import annotations
 import csv as _csv
 import json
 import os
+import random
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -69,6 +79,23 @@ _DEFAULT_OVERRIDES = _DATA_DIR / "analyst_overrides.csv"
 # artifacts (e.g. pre-suspension data for companies that no longer pay dividends).
 _MAX_EX_DIV_AGE_DAYS = 730
 
+# Retry tuning for yfinance network calls (.info, .earnings_dates), which fail
+# transiently under Yahoo Finance rate-limiting or brief network blips far more
+# often than they fail permanently — see HIL_todo.md, FUNDAMENTALS-CSV-PARTIAL-
+# COVERAGE (2026-08-26): an entire scheduled batch came back "ERR" for every
+# ticker, then a manual re-run minutes later succeeded cleanly with no code
+# change. 3 retries (4 attempts total) with exponential backoff, not a bigger
+# flat count: backoff is what actually rides out a rate-limit window (seen to
+# clear within seconds), whereas more raw attempts fired back-to-back just
+# hammers the same limit harder without spacing them out. A real multi-minute
+# outage isn't fixed by retrying more either way — only by trying again later,
+# same as happened manually this time — so there's little value pushing past
+# a handful of spaced-out attempts.
+_MAX_RETRIES        = 3
+_RETRY_BACKOFF_BASE = 1.0   # seconds; delay = base * 2**attempt + jitter
+_RETRY_JITTER       = 0.5   # seconds, randomized per attempt (avoids every
+                             # failed ticker retrying in lockstep)
+
 # Fields pulled from yf.Ticker.info — mapped to display names
 _INFO_FIELDS: dict[str, str] = {
     "currentPrice":       "Price",
@@ -90,6 +117,53 @@ def _safe_get(d: dict, key: str, fmt: str = "") -> str:
         return str(val)
 
 
+def _call_with_retry(fn, description: str):
+    """
+    Call fn() with exponential-backoff retry on any exception.
+
+    Attempts up to _MAX_RETRIES + 1 times total. Delay between attempts is
+    _RETRY_BACKOFF_BASE * 2**attempt plus random jitter, so retries spread
+    out instead of hammering the same rate limit in lockstep. Re-raises the
+    last exception if every attempt fails — callers decide what "give up"
+    means (fetch_fundamentals turns it into an ERR row rather than crashing
+    the whole batch).
+
+    Example
+    -------
+        info = _call_with_retry(lambda: yf.Ticker("AAPL").info, "AAPL .info")
+    """
+    last_exc: Exception | None = None
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            return fn()
+        except Exception as exc:
+            last_exc = exc
+            if attempt < _MAX_RETRIES:
+                delay = _RETRY_BACKOFF_BASE * (2 ** attempt) + random.uniform(0, _RETRY_JITTER)
+                logger.warning(
+                    f"[Fundamentals] {description}: attempt {attempt + 1}/{_MAX_RETRIES + 1} "
+                    f"failed ({exc}); retrying in {delay:.1f}s"
+                )
+                time.sleep(delay)
+    raise last_exc
+
+
+def _fetch_ticker_info(symbol: str) -> tuple[yf.Ticker, dict]:
+    """
+    Construct a yf.Ticker and fetch its .info, retrying transient failures.
+
+    Returns (ticker_obj, info_dict). info_dict is {} if yfinance returns a
+    falsy .info on a fully successful call (e.g. a genuinely thin/obscure
+    ticker) — that's a legitimate "sparse data" result, not a failure, so it
+    is NOT retried; only exceptions trigger a retry.
+    """
+    def _attempt():
+        t = yf.Ticker(symbol)
+        info = t.info or {}
+        return t, info
+    return _call_with_retry(_attempt, f"{symbol} .info")
+
+
 def _next_earnings(ticker_obj: yf.Ticker) -> tuple[str, str]:
     """
     Return (date_str, est_eps_str) for the next earnings event.
@@ -98,7 +172,7 @@ def _next_earnings(ticker_obj: yf.Ticker) -> tuple[str, str]:
     'EPS Estimate' and 'Reported EPS'. Future dates have Reported EPS = NaN.
     """
     try:
-        df = ticker_obj.earnings_dates
+        df = _call_with_retry(lambda: ticker_obj.earnings_dates, "earnings_dates")
         if df is None or df.empty:
             return "—", "—"
         future = df[df["Reported EPS"].isna()]
@@ -254,8 +328,7 @@ def fetch_fundamentals(
     rows = []
     for symbol in tickers:
         try:
-            t    = yf.Ticker(symbol)
-            info = t.info or {}
+            t, info = _fetch_ticker_info(symbol)
 
             earn_date, earn_est = _next_earnings(t)
             ex_date, div_amt    = _next_dividend(info)

@@ -38,10 +38,13 @@ from __future__ import annotations
 
 import csv
 import os
+import re
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+from news_flags import cross_attach_headlines
 
 # All paths centralised in paths.py. See docs/PATHS.md for design rationale.
 from paths import DATA, LIVE_ALPHA_US, FUNDAMENTALS, NEWS
@@ -142,12 +145,18 @@ def _load_fundamentals(path: str) -> dict[str, dict[str, Any]]:
 def _load_news(path: str) -> dict[str, list[str]]:
     """
     Parse news.txt into {ticker: [headline, ...]} dict.
-    Same separator format as catalyst_feed.txt — 87-dash blocks.
+
+    Ticker blocks are separated by a run of dashes; news_scanner.py currently
+    emits 95 of them, but that width isn't a contract either module has ever
+    agreed to, so match any run of 20+ rather than hardcoding an exact count.
+    A previous hardcoded 87-dash split silently dropped every ticker except
+    the first in the file — real news existed but never reached the LLM
+    (root-caused 2026-08-06; see HIL_todo.md).
     """
     result: dict[str, list[str]] = {}
     try:
         content = Path(path).read_text(encoding="utf-8", errors="replace")
-        chunks  = content.split("---" * 29)   # 87-dash separator
+        chunks  = re.split(r"-{20,}", content)
         for chunk in chunks:
             file_lines = [l.strip() for l in chunk.strip().split("\n") if l.strip()]
             if not file_lines or not file_lines[0].startswith("["):
@@ -306,7 +315,7 @@ def extract_all(
     """
     scores       = _load_scores(scores_path)
     fundamentals = _load_fundamentals(fundamentals_path)
-    news         = _load_news(news_path)
+    news         = cross_attach_headlines(_load_news(news_path))
 
     store = None
     if compute_rvol:

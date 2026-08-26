@@ -10,6 +10,8 @@ import os
 from typing import Any
 import pandas as pd
 
+from trading_calendar import market_open_at_fetch
+
 
 def _fmt(val: float | None, decimals: int = 2, prefix: str = "") -> str:
     if val is None or pd.isna(val):
@@ -36,32 +38,6 @@ def _overseas_status(label: str, fetched_hour_et: int) -> str:
     return "likely open"
 
 
-def _market_open_at_fetch(snapshot: dict) -> bool:
-    """
-    Return True if the snapshot was fetched during NYSE trading hours (ET).
-
-    Uses fetched_at (UTC ISO string) — unambiguous regardless of the machine
-    timezone that produced fetched_at_local.  Accounts for EDT/EST automatically.
-    NYSE: Mon–Fri 09:30–16:00 ET (UTC-4 in summer, UTC-5 in winter).
-    """
-    from datetime import datetime, timezone, timedelta
-    fetched_at = snapshot.get("fetched_at")
-    if not fetched_at:
-        return False
-    try:
-        utc_dt = datetime.fromisoformat(fetched_at)
-        if utc_dt.tzinfo is None:
-            utc_dt = utc_dt.replace(tzinfo=timezone.utc)
-        # Determine ET offset: EDT (UTC-4) Mar 2nd Sun – Nov 1st Sun; EST otherwise.
-        # Simple approximation: months 3–10 inclusive are UTC-4, rest UTC-5.
-        et_offset = -4 if 3 <= utc_dt.month <= 10 else -5
-        et_dt = utc_dt + timedelta(hours=et_offset)
-        minutes_et = et_dt.hour * 60 + et_dt.minute
-        return 9 * 60 + 30 <= minutes_et < 16 * 60
-    except Exception:
-        return False
-
-
 def _baseline_note(snapshot: dict[str, Any]) -> str:
     mode          = snapshot.get("mode", "daily")
     baseline_date = snapshot.get("baseline_date")
@@ -70,7 +46,7 @@ def _baseline_note(snapshot: dict[str, Any]) -> str:
     if mode == "intraday":
         return f"⚡ **Intraday** — live prices{baseline_str}"
 
-    if _market_open_at_fetch(snapshot):
+    if market_open_at_fetch(snapshot):
         return (
             f"⚠️ Market open — showing current price{baseline_str}. "
             "Run `market_data.py --intraday` for an explicit intraday fetch."
@@ -127,7 +103,8 @@ def build(
         r = row(ticker)
         if r.get("status") == "error" or r.get("chg_pct") is None:
             return "—"
-        return _chg(r["chg_pct"])
+        suffix = f" (stale {r['last_date']})" if r.get("stale") else ""
+        return _chg(r["chg_pct"]) + suffix
 
     sector_tickers = ["XLK","XLF","XLE","XLV","XLI","XLY","XLP","XLU","XLRE","XLB","XLC"]
     sector_labels  = {

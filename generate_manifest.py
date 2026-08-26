@@ -43,7 +43,8 @@ def main() -> None:
         files += find_py(pkg)
     files += [
         "scripts/run_tests.bat", "scripts/shockarb_workflows.bat",
-        "verify_install.py", "generate_manifest.py",
+        "verify_install.py", "generate_manifest.py", "run_dual_eod.bat",
+        "fix_spreadsheet_numbers.py", "combine_reports_to_pdf.py",
     ]
     files = sorted(set(files))
 
@@ -77,9 +78,7 @@ def main() -> None:
 
     lines += [
         "#",
-        "# Tests: 652 passing, 5 pre-existing failures in test_pipeline.py "
-        "(TestSyntheticPrices/TestAddAssets — unrelated to report_compare; "
-        "pytest tests/ -q); 21 test files",
+        "# Tests: 871 passing, 0 known failures (pytest tests/ -q); 30 test files",
     ]
 
     with open("MANIFEST.txt", "w") as f:
