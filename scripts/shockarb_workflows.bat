@@ -106,22 +106,52 @@ goto :end
 REM ── DUAL_EOD (both regimes scored + compared) ────────────────
 :dual_eod
 echo [DUAL EOD] Starting dual-regime end-of-day workflow...
+set /a DUAL_EOD_FAILURES=0
+set DUAL_EOD_VERDICTS_OK=1
+
 echo Step 1/7: Ukraine shock score
 python -m shockarb score --regime ukraine_shock --out data\live_alpha_us.csv
+if errorlevel 1 (echo [DUAL EOD] Step 1/7 FAILED - see traceback above & set /a DUAL_EOD_FAILURES+=1)
+
 echo Step 2/7: Iran shock score
 python -m shockarb score --regime iran_shock --out data\live_alpha_iran.csv
+if errorlevel 1 (echo [DUAL EOD] Step 2/7 FAILED - see traceback above & set /a DUAL_EOD_FAILURES+=1)
+
 echo Step 3/7: News + fundamentals
 python utils\news_scanner.py
+if errorlevel 1 (echo [DUAL EOD] Step 3/7 FAILED - see traceback above & set /a DUAL_EOD_FAILURES+=1)
+
 echo Step 4/7: Market snapshot
 python utils\market_data.py
+if errorlevel 1 (echo [DUAL EOD] Step 4/7 FAILED - see traceback above & set /a DUAL_EOD_FAILURES+=1)
+
 echo Step 5/7: MarketFit report (timestamped)
 python -m marketfit report --timestamp
+if errorlevel 1 (echo [DUAL EOD] Step 5/7 FAILED - see traceback above & set /a DUAL_EOD_FAILURES+=1)
+
 echo Step 6/7: Ukraine stock report (timestamped + verdicts)
 python -m stockfit report --timestamp --save-verdicts%EXTRA_ARGS%
+if errorlevel 1 (echo [DUAL EOD] Step 6/7 FAILED - see traceback above & set /a DUAL_EOD_FAILURES+=1 & set DUAL_EOD_VERDICTS_OK=0)
+
 echo Step 7/7: Iran stock report (timestamped + verdicts)
 python -m stockfit report --scores data\live_alpha_iran.csv --timestamp --save-verdicts --reports-dir reports\iran_shock%EXTRA_ARGS%
+if errorlevel 1 (echo [DUAL EOD] Step 7/7 FAILED - see traceback above & set /a DUAL_EOD_FAILURES+=1 & set DUAL_EOD_VERDICTS_OK=0)
+
+if %DUAL_EOD_FAILURES% GTR 0 (
+    echo [DUAL EOD] %DUAL_EOD_FAILURES% of 7 steps FAILED. Reports are missing or incomplete — see errors above.
+    if "%DUAL_EOD_VERDICTS_OK%"=="0" (
+        echo [DUAL EOD] Skipping compare — one or both verdicts CSVs were not written this run.
+        exit /b 1
+    )
+)
+
 echo [DUAL EOD] Reports written. Running compare...
 call %~f0 compare_latest
+if errorlevel 1 (
+    echo [DUAL EOD] compare_latest failed.
+    exit /b 1
+)
+if %DUAL_EOD_FAILURES% GTR 0 exit /b 1
 goto :end
 
 REM ── COMPARE_LATEST (auto-discover two newest verdicts CSVs) ──
