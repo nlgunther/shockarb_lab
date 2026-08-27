@@ -453,6 +453,40 @@ path = pipeline.find_latest_model("us")
 
 ---
 
+### `score_universe(universe, model, exec_config=None, force_daily=False, from_open=False) → tuple[pd.DataFrame, ScoreProvenance]`
+
+Score a universe using a single shared `DataCoordinator` instance. A thin dispatcher: resolves ETF/stock tickers (preferring the model's live columns, falling back to `universe.market_etfs` / `individual_stocks`), opens one coordinator and a base `ScoreProvenance`, then delegates to `_score_intraday()` or `_score_daily()` depending on market state and `force_daily`.
+
+```python
+model = pipeline.load_model(path)
+scores, prov = pipeline.score_universe(universe, model)
+print(prov.summary())
+```
+
+**Parameters:**
+
+- `universe: UniverseConfig` — defines the ticker universe and date range
+- `model: FactorModel` — already-loaded, fitted model
+- `exec_config: ExecutionConfig` — optional
+- `force_daily: bool` — force the daily path regardless of market state (CLI: `--use-prior-close` / `-p`)
+- `from_open: bool` — intraday path only: use today's session open as the denominator instead of yesterday's close (CLI: `--from-open` / `-o`); ignored on the daily path
+
+**Returns:** `(pd.DataFrame, ScoreProvenance)` — per-ticker scores and a full provenance record of how they were computed.
+
+**Raises:**
+
+- `ValueError` — if the coordinator returns empty data for either the ETF or stock leg.
+
+#### `_score_intraday(universe, model, coordinator, prov, etf_tickers, stock_tickers, from_open) → tuple[pd.DataFrame, ScoreProvenance]`
+
+Internal helper for the intraday path (market open, `force_daily=False`). Registers a daily `DataRequest` for the prior-close denominator (skipped if `from_open=True`) and an ephemeral, uncached 15-minute `DataRequest` for current intraday bars, computes returns via `_open_prices_from_frame` / `_intraday_returns_from_frame`, and scores via `model.score(...)`. Not part of the public API — called only by `score_universe()`.
+
+#### `_score_daily(universe, model, coordinator, prov, etf_tickers, stock_tickers, force_daily) → tuple[pd.DataFrame, ScoreProvenance]`
+
+Internal helper for the daily, close-to-close path (market closed, or `force_daily=True`). Registers daily `DataRequest`s for both ETF and stock legs, aligns both to their common date index, converts to returns via `prices_to_returns`, and scores via `model.score(...)`. Not part of the public API — called only by `score_universe()`.
+
+---
+
 ### `add_assets(tickers, model, universe, exec_config=None) → pd.DataFrame`
 
 Download calibration-window data for new tickers and add them to an existing model in-place. Fetches ETF prices (to reconstruct the factor return series) and the new ticker prices, then calls `model.add_asset()` for each. Saving with `save_model()` afterwards persists the change.

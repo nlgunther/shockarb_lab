@@ -3,7 +3,7 @@
 *Updated after each session. Captures decisions and context not derivable from reading the code.  
 For API details see API.md; for quick commands see CHEATSHEET.md.*
 
-> Last updated: 2026-06-12T12:00 | Trigger: manual (\ukt) | Staleness: Fresh (session 13)
+> Last updated: 2026-06-12T12:00 | Trigger: manual (\ukt) | Staleness: Fresh (session 13); pipeline.py refactor added session 14 (light-touch, see Test Suite section)
 
 ---
 
@@ -192,6 +192,8 @@ PYTHONPYCACHEPREFIX=/tmp/shockarb_pycache python -m pytest tests/test_stockfit.p
 ```
 
 **Full suite (2026-06-12, session 13): `pytest tests/ -q` — 652/657 passing**, across 21 test files (up from 616/616 across 18 — added `tests/test_report_compare.py`, 21 tests). The 5 failures are pre-existing and unrelated (`TestSyntheticPrices`/`TestAddAssets` in `test_pipeline.py`). (The earlier "372 passing, 49 failing" figure was specific to a transient pre-RVOL state and is no longer current.)
+
+**Session 14 (2026-06-12): `pipeline.score_universe` refactor.** The 320-line `score_universe` (mixing a "Path A daily" and "Path B intraday" branch in one function) was split into a thin dispatcher plus two single-path helpers: `_score_intraday(...)` and `_score_daily(...)`. `score_universe()` remains the only public entry point and its signature/behavior is unchanged — see `docs/API.md`. Added `tests/test_pipeline.py::TestScoreUniverseDispatch` (4 tests, routing logic only, mocks both helpers). Full suite now **658/662 passing** — the 4 failures are the same pre-existing network-dependent `TestSyntheticPrices`/`TestFetchPrices` cases (sandbox has no internet); the prior `TestAddAssets` failure noted above no longer reproduces.
 
 **Running subsets:** use `scripts\run_tests.bat <group>` instead of memorising file lists — e.g. `scripts\run_tests.bat rvol`, `scripts\run_tests.bat stockfit -v`, `scripts\run_tests.bat all -k rvol`. Run `scripts\run_tests.bat help` for the full group list (stockfit, rvol, marketfit, report, cli, engine, pipeline, regimes, cache, config, portfolio, fundamentals, all).
 

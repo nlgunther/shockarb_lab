@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
@@ -470,6 +470,68 @@ class TestScoreUniverse:
 
 
 # =============================================================================
+# score_universe() — dispatch to _score_intraday / _score_daily
+# =============================================================================
+
+class TestScoreUniverseDispatch:
+    """
+    score_universe() is a thin dispatcher: it resolves tickers, builds one
+    coordinator + ScoreProvenance, then delegates to _score_intraday() or
+    _score_daily(). These tests check the *routing* decision in isolation,
+    without exercising either path's full body.
+    """
+
+    _UNIVERSE = TestScoreUniverse._UNIVERSE
+
+    def _sentinel(self, label):
+        return (pd.DataFrame({"x": [1]}), pipeline.ScoreProvenance(path=label))
+
+    def test_market_closed_routes_to_daily(self, fitted_model):
+        with patch.object(pipeline, "_coordinator", return_value=MagicMock()), \
+             patch.object(pipeline, "_market_is_open", return_value=False), \
+             patch.object(pipeline, "_score_daily", return_value=self._sentinel("daily")) as daily, \
+             patch.object(pipeline, "_score_intraday") as intraday:
+            scores, prov = pipeline.score_universe(self._UNIVERSE, fitted_model)
+
+        daily.assert_called_once()
+        intraday.assert_not_called()
+        assert prov.path == "daily"
+
+    def test_market_open_routes_to_intraday(self, fitted_model):
+        with patch.object(pipeline, "_coordinator", return_value=MagicMock()), \
+             patch.object(pipeline, "_market_is_open", return_value=True), \
+             patch.object(pipeline, "_score_intraday", return_value=self._sentinel("intraday")) as intraday, \
+             patch.object(pipeline, "_score_daily") as daily:
+            scores, prov = pipeline.score_universe(self._UNIVERSE, fitted_model)
+
+        intraday.assert_called_once()
+        daily.assert_not_called()
+        assert prov.path == "intraday"
+
+    def test_force_daily_overrides_open_market(self, fitted_model):
+        with patch.object(pipeline, "_coordinator", return_value=MagicMock()), \
+             patch.object(pipeline, "_market_is_open", return_value=True), \
+             patch.object(pipeline, "_score_daily", return_value=self._sentinel("daily (forced via --use-prior-close)")) as daily, \
+             patch.object(pipeline, "_score_intraday") as intraday:
+            scores, prov = pipeline.score_universe(self._UNIVERSE, fitted_model, force_daily=True)
+
+        daily.assert_called_once()
+        intraday.assert_not_called()
+        assert prov.path == "daily (forced via --use-prior-close)"
+
+    def test_from_open_passed_through_to_intraday(self, fitted_model):
+        with patch.object(pipeline, "_coordinator", return_value=MagicMock()), \
+             patch.object(pipeline, "_market_is_open", return_value=True), \
+             patch.object(pipeline, "_score_intraday", return_value=self._sentinel("intraday (from open)")) as intraday, \
+             patch.object(pipeline, "_score_daily"):
+            pipeline.score_universe(self._UNIVERSE, fitted_model, from_open=True)
+
+        # from_open is the last positional arg passed to _score_intraday
+        _, args, kwargs = intraday.mock_calls[0]
+        assert args[-1] is True or kwargs.get("from_open") is True
+
+
+# =============================================================================
 # score_universe() — intraday path (Step 2b)
 # =============================================================================
 
@@ -918,6 +980,8 @@ class TestSaveLiveTape:
         path = os.path.join(temp_dir, "tapes", "test.parquet")
         pipeline.save_live_tape(["VOO"], ["AAPL"], path)
         assert mock_dl.call_args[1].get("auto_adjust") is False
+
+
 
 
 
