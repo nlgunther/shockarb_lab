@@ -21,6 +21,8 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "utils"))
 
 from fundamental_scanner import (
+    _call_with_retry,
+    _fetch_ticker_info,
     _load_overrides,
     _next_dividend,
     _next_earnings,
@@ -264,14 +266,18 @@ class TestFetchFundamentals:
         assert len(rows) == 3
         assert [r["Ticker"] for r in rows] == ["A", "B", "C"]
 
+    @patch("fundamental_scanner.time.sleep")
     @patch("fundamental_scanner.yf.Ticker")
-    def test_exception_yields_err_row(self, mock_ticker_cls):
-        """A failing ticker produces an ERR row, not an exception."""
+    def test_exception_yields_err_row(self, mock_ticker_cls, mock_sleep):
+        """A ticker that fails on every retry produces an ERR row, not an exception."""
         mock_ticker_cls.side_effect = RuntimeError("network error")
         rows = fetch_fundamentals(["BAD"])
         assert len(rows) == 1
         assert rows[0]["Price"] == "ERR"
         assert rows[0]["Ticker"] == "BAD"
+        # 4 attempts total (1 + 3 retries) -> 3 sleeps between them
+        assert mock_ticker_cls.call_count == 4
+        assert mock_sleep.call_count == 3
 
     @patch("fundamental_scanner.yf.Ticker")
     def test_missing_info_fields_become_dashes(self, mock_ticker_cls):
@@ -290,6 +296,103 @@ class TestFetchFundamentals:
         rows = fetch_fundamentals([])
         assert rows == []
         mock_ticker_cls.assert_not_called()
+
+    @patch("fundamental_scanner.time.sleep")
+    @patch("fundamental_scanner.yf.Ticker")
+    def test_transient_failure_then_success_yields_real_row(self, mock_ticker_cls, mock_sleep):
+        """A ticker that fails twice then succeeds gets real data, not an ERR row."""
+        good = self._make_ticker_mock("FLAKY", price=250.0)
+        mock_ticker_cls.side_effect = [RuntimeError("429"), RuntimeError("429"), good]
+        rows = fetch_fundamentals(["FLAKY"])
+        assert rows[0]["Price"] == "250.00"
+        assert rows[0]["Ticker"] == "FLAKY"
+        assert mock_ticker_cls.call_count == 3
+        assert mock_sleep.call_count == 2
+
+    @patch("fundamental_scanner.yf.Ticker")
+    def test_empty_info_not_retried(self, mock_ticker_cls):
+        """A genuinely thin ticker (empty .info, no exception) is not treated as a failure."""
+        t = MagicMock()
+        t.info = {}
+        t.earnings_dates = None
+        mock_ticker_cls.return_value = t
+        rows = fetch_fundamentals(["THIN"])
+        assert rows[0]["Price"] == "—"
+        assert mock_ticker_cls.call_count == 1   # no retry triggered
+
+
+# =============================================================================
+# Retry helper
+# =============================================================================
+
+class TestCallWithRetry:
+    """_call_with_retry: exponential-backoff retry wrapper."""
+
+    def test_succeeds_first_try_no_sleep(self):
+        with patch("fundamental_scanner.time.sleep") as mock_sleep:
+            result = _call_with_retry(lambda: 42, "test")
+        assert result == 42
+        mock_sleep.assert_not_called()
+
+    def test_succeeds_after_failures(self):
+        calls = {"n": 0}
+
+        def flaky():
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise RuntimeError("boom")
+            return "ok"
+
+        with patch("fundamental_scanner.time.sleep") as mock_sleep:
+            result = _call_with_retry(flaky, "test")
+        assert result == "ok"
+        assert calls["n"] == 3
+        assert mock_sleep.call_count == 2
+
+    def test_raises_last_exception_after_exhausting_retries(self):
+        def always_fails():
+            raise ValueError("persistent failure")
+
+        with patch("fundamental_scanner.time.sleep"):
+            with pytest.raises(ValueError, match="persistent failure"):
+                _call_with_retry(always_fails, "test")
+
+    def test_backoff_is_exponential(self):
+        delays = []
+
+        def capture_sleep(seconds):
+            delays.append(seconds)
+
+        with patch("fundamental_scanner.time.sleep", side_effect=capture_sleep):
+            with pytest.raises(RuntimeError):
+                _call_with_retry(lambda: (_ for _ in ()).throw(RuntimeError("x")), "test")
+        # 3 retries -> delays roughly 1x, 2x, 4x the base (plus jitter up to 0.5s)
+        assert len(delays) == 3
+        assert delays[0] < delays[1] < delays[2]
+
+
+class TestFetchTickerInfo:
+    """_fetch_ticker_info: retries the constructor+.info call as one unit."""
+
+    @patch("fundamental_scanner.time.sleep")
+    @patch("fundamental_scanner.yf.Ticker")
+    def test_returns_ticker_and_info_on_success(self, mock_ticker_cls, mock_sleep):
+        t = MagicMock()
+        t.info = {"currentPrice": 99.0}
+        mock_ticker_cls.return_value = t
+        result_t, info = _fetch_ticker_info("AAPL")
+        assert result_t is t
+        assert info == {"currentPrice": 99.0}
+        mock_sleep.assert_not_called()
+
+    @patch("fundamental_scanner.time.sleep")
+    @patch("fundamental_scanner.yf.Ticker")
+    def test_none_info_becomes_empty_dict(self, mock_ticker_cls, mock_sleep):
+        t = MagicMock()
+        t.info = None
+        mock_ticker_cls.return_value = t
+        _, info = _fetch_ticker_info("AAPL")
+        assert info == {}
 
 
 # =============================================================================

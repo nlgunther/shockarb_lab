@@ -67,6 +67,11 @@ Writing style — strictly enforced:
 - Reference news headlines when relevant to the thesis (positive catalyst or absence of negative).
 - 3–5 sentences per stock. Cluster-risk tickers get one additional sentence on the caveat.
 - Do not repeat numbers already in the summary table.
+- Any headline prefixed with a tag in brackets (e.g. "[GUIDANCE]", "[RATING]", "[LEADERSHIP]",
+  "[LEGAL]") was flagged as a real, material catalyst — not routine noise. If a ticker has one,
+  the narrative MUST explicitly address what it says, even if the overall thesis still holds.
+  Never build the case around other, more flattering headlines while silently omitting a tagged
+  one — that is a reporting failure, not an editorial choice.
 
 Return ONLY a JSON object with these keys:
   "executive_summary"  — 3-4 sentences: today's overall ShockArb opportunity set
@@ -108,7 +113,7 @@ class _AnthropicBackend:
 
 
 class _GeminiBackend:
-    DEFAULT_MODEL = "gemini-2.5-flash-lite"
+    DEFAULT_MODEL = "gemini-2.5-flash"
 
     def __init__(self, api_key: str, model: str | None = None):
         self.api_key = api_key
@@ -218,18 +223,36 @@ def _build_prompt(verdicts: list[StockVerdict]) -> str:
 # Response parser
 # ---------------------------------------------------------------------------
 
+def _try_json_object(text: str) -> dict[str, Any] | None:
+    """Parse text as a JSON object; return None (not {}) on any failure."""
+    try:
+        result = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return result if isinstance(result, dict) else None
+
+
 def _parse_narratives(text: str) -> dict[str, Any]:
+    """
+    Parse the LLM's JSON response into a narratives dict.
+    Returns {} if malformed — LLM failures must never crash the pipeline.
+
+    Tries the full trimmed text first. If the model added preamble or
+    trailing commentary around the JSON — a common formatting slip that
+    gets more likely as the prompt grows (e.g. a large news-headline
+    block) — falls back to the first {...} span in the text before
+    giving up.
+    """
     text = text.strip()
     if text.startswith("```"):
         text = re.sub(r"^```[a-z]*\n?", "", text)
         text = re.sub(r"\n?```$", "", text)
-    try:
-        result = json.loads(text)
-    except json.JSONDecodeError:
-        return {}
-    if not isinstance(result, dict):
-        return {}
-    return result
+
+    result = _try_json_object(text)
+    if result is None:
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        result = _try_json_object(match.group(0)) if match else None
+    return result if result is not None else {}
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +330,13 @@ class StockfitLLMClient:
                 f"LLM returned {len(narratives)} sections"
                 + (f" (est. ${cost:.4f})" if cost > 0 else "")
             )
+            if not narratives:
+                # A clean API call that didn't parse to any usable section is
+                # otherwise a black box — the report just silently falls back
+                # to build(). Log what actually came back so a recurrence is
+                # diagnosable instead of another guessing exercise.
+                preview = raw_text[:500].replace("\n", " ")
+                logger.warning(f"LLM response had no usable sections — raw text (first 500 chars): {preview!r}")
             if self.call_pause > 0:
                 time.sleep(self.call_pause)
             return narratives

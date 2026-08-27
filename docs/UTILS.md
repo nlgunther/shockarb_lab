@@ -9,9 +9,14 @@ utils/
 ├── fundamental_scanner.py  Fetch yfinance fundamentals table (imported by news_scanner);
 │                           analyst targets overridden by data/analyst_overrides.csv
 ├── portfolio_sizer.py      Size a conviction-weighted trade ticket
+├── price_trend.py          Trailing adj-close price history (reads shared parquet cache)
+├── refresh_prices.py       Top-up the daily OHLCV parquet cache (gap-analysis tail-fetch)
 ├── eval_picks.py           Evaluate pick performance vs entry prices
 ├── csv_to_md.py            Convert a score CSV to a Markdown report
 └── score_history.py        Score any historical date (backtesting)
+
+get_analyst_targets.py      Fetch consensus analyst price targets from Finviz, yfinance,
+                            FMP, Finnhub, or Alpha Vantage (project root, not utils/)
 ```
 
 All scripts accept `--help` for a full argument listing.
@@ -24,6 +29,7 @@ All scripts accept `--help` for a full argument listing.
 4:00 pm  python -m shockarb score                   # score → data/live_alpha_us.csv (default)
      OR  python utils/daily_scanner.py              # score both US + Global universes
 4:05 pm  python utils/news_scanner.py               # headlines + fundamentals → data/news.txt, data/fundamentals.csv
+4:10 pm  python utils/price_trend.py --daily        # optional: 60-day adj-close matrix → data/price_trend_daily.csv
 4:15 pm  python utils/portfolio_sizer.py            # trade ticket → data/portfolio_sizer.csv (default)
          python utils/csv_to_md.py data/live_alpha_us.csv  # optional: shareable markdown report
 ```
@@ -77,7 +83,9 @@ python utils\daily_scanner.py --data-dir /path/to/data
 
 ## news_scanner.py
 
-Fetches the three most recent Yahoo Finance headlines for each target. Useful for quickly checking whether a large delta is explained by a known catalyst (earnings miss, downgrade, FDA decision) or is a genuine unexplained dislocation.
+Fetches up to five Yahoo Finance headlines per target. Useful for quickly checking whether a large delta is explained by a known catalyst (earnings miss, downgrade, FDA decision) or is a genuine unexplained dislocation.
+
+Headlines are ranked, not just taken as the newest 3 (the old behavior): any headline matching a high-signal keyword — an analyst rating action, a leadership change, a guidance/margin warning, or a legal/regulatory story — is tagged with a category (`[RATING]`, `[LEADERSHIP]`, `[GUIDANCE]`, `[LEGAL]`) and prioritized ahead of unflagged headlines when trimming to the cap, newest-first within each group. This exists because several real stories (an analyst downgrade, a CEO transition) were getting crowded out of the old top-3 by generic same-day headlines. See `_SEVERITY_KEYWORDS` in `news_scanner.py` for the exact keyword list — it's a heuristic, not exhaustive, so absence of a `[TAG]` doesn't guarantee there's no material story; treat it as a filter that catches more than before, not a complete one.
 
 Targets are selected in priority order:
 
@@ -153,6 +161,17 @@ python utils/portfolio_sizer.py \
 
 # Size only the tickers the stock report flagged INCLUDE (bypasses CSV ranking)
 python utils/portfolio_sizer.py --tickers AMAT ADI ETN --capital 10000
+
+# Mark your actual holdings against today's ShockArb fair value — not an
+# analyst target — using a brokerage positions export
+python utils/portfolio_sizer.py --positions data/Individual-Positions-2026-07-01-100821.csv
+
+# Same, but also append the read to the durable position log so it
+# survives future runs overwriting data/portfolio_sizer.csv
+python utils/portfolio_sizer.py --positions data/Individual-Positions-2026-07-01-100821.csv --execute
+
+# Log the entry context at the moment you actually place a trade
+python utils/portfolio_sizer.py --tickers AMAT ADI ETN --capital 10000 --execute
 ```
 
 **Arguments**
@@ -164,28 +183,175 @@ python utils/portfolio_sizer.py --tickers AMAT ADI ETN --capital 10000
 | `--top` | `5` | Number of positions. Ignored when `--tickers` is set. |
 | `--tickers` / `-t` | — | Size only these tickers. Bypasses CSV ranking, `--top`, and `--exclude`. Case-insensitive. Use this to act on the INCLUDE list from the stock report. |
 | `--exclude` / `-e` | — | Tickers to exclude before ranking (e.g. `--exclude SNPS BSX`). Case-insensitive. Ignored when `--tickers` is set. |
-| `--out` / `-o` | `./data/portfolio_sizer.csv` | Save ticket to CSV at this path. |
+| `--positions` | — | Path to a brokerage positions export (e.g. `data/Individual-Positions-*.csv`). Marks currently-held ShockArb-scored tickers against today's factor-model fair value using real shares/cost basis, instead of sizing a new ticket. Bypasses `--capital`, `--top`, `--exclude`, and `--tickers`. |
+| `--execute` | — | Append this run's rows to the durable `data/shockarb_position_log.csv` (never overwritten, unlike `--out`). Works with both a normal ticket and `--positions`. |
+| `--out` / `-o` | `./data/portfolio_sizer.csv` (ticket) or `./data/shockarb_position_mark.csv` (`--positions`) | Save output to CSV at this path. |
 | `--no-out` / `-sout` | — | Suppress CSV output. |
 
-**Output columns**
+**Output columns (ticket mode — `--tickers`/`--top`)**
 
 | Column | Description |
 |--------|-------------|
 | TICKER | Ticker symbol |
 | WEIGHT | Conviction-weighted share of capital |
-| ALLOCATION | Dollar amount allocated |
-| CURRENT | Live price fetched from yfinance |
+| ALLOC | Conviction-weighted target dollar amount |
+| COST | Shares × price (actual dollars deployed) |
+| CURRENT | Most recent adj_close from the shared parquet cache (same store as scoring pipeline) |
 | TARGET | Take-profit limit price = `current × (1 + delta_rel)` |
 | SHARES | Whole shares purchasable at current price |
+
+A TOTAL row sums ALLOC and COST across all sized positions.
+
+**Output columns (mark mode — `--positions`)**
+
+| Column | Description |
+|--------|-------------|
+| ticker | Ticker symbol |
+| price | Current price |
+| delta_rel | Today's factor-model residual (relative) |
+| fair_price | ShockArb's own fair-value read = `price × (1 + delta_rel)` — **not** an analyst target |
+| confidence_delta | `delta_rel × r_squared` |
+| r_squared | Factor-model fit quality for this ticker today |
+| shares | Real shares held, from the positions export |
+| cost_basis | Real per-share cost basis, from the positions export |
 
 **Required CSV columns:** `confidence_delta`, `delta_rel`.
 
 **Notes**
 
 - Allocation weight for each position = its `confidence_delta` / sum of all selected `confidence_delta` values.
-- Take-profit target is the factor-model implied fair price, not a hard prediction. It represents where the stock *would* trade if the dislocation fully closed.
-- Only stocks with `confidence_delta > 0` are considered. Negative signals are excluded.
-- Tickers without a live price quote are skipped with a warning.
+- Take-profit target / fair price is the factor-model implied fair price, not a hard prediction, and **not** the same thing as `analyst_target` in `fundamentals.csv`/`data/analyst_overrides.csv`. It represents where the stock *would* trade if today's factor-implied residual fully closed — a short-horizon, model-only number, deliberately independent of analyst opinion.
+- Only stocks with `confidence_delta > 0` are considered for a new ticket (`--tickers`/`--top`). `--positions` has no such filter — it marks whatever you hold that ShockArb scored today, regardless of sign.
+- Tickers without a current price in the cache are skipped with a warning.
+- Current prices are fetched via the DataCoordinator using a 7-day window, so results are correct across weekends and holidays. If prices were already cached by today's score run, no network call is made.
+- `--positions` expects the brokerage export's native shape: an account-title line, a blank line, then the real header row, with `Cost Basis` as a dollar/comma-formatted **total** (divided by `Qty` internally to get a per-share figure). Only rows with `Asset Type == "Equity"` are considered; ETFs and cash lines are ignored automatically. A ticker only appears in the mark if it's both held **and** present in today's `--csv` — no ShockArb ticker universe is hardcoded in `portfolio_sizer.py` itself.
+- `data/shockarb_position_log.csv` (written only with `--execute`) is append-only and never overwritten — the durable counterpart to the ephemeral `--out` file. Every row is tagged `event` = `"ticket"` (from a sizing run, `cost_basis` blank) or `"mark"` (from `--positions`, real `cost_basis`), sharing one fixed column schema (`timestamp, ticker, event, price, delta_rel, fair_price, confidence_delta, r_squared, shares, cost_basis, csv_source`) so the two event types never produce a ragged CSV.
+
+---
+
+## price_trend.py
+
+Prints a trailing price trend table for one or more tickers and optionally saves the full adj-close matrix to CSV. Uses the DataCoordinator's shared parquet cache — if prices are already cached from today's score run, no network call is made.
+
+**Output files** (written to `data/`)
+
+| File | Contents |
+|------|----------|
+| `data/price_trend.csv` (with `--csv`) | Per-ticker summary: Start, End, Chg_pct |
+| `data/price_trend_daily.csv` (with `--daily`) | Full adj-close matrix (dates × tickers), suitable for upload to Claude |
+
+**Usage**
+
+```bash
+# All tickers in live_alpha_us.csv, 60-day window
+python utils/price_trend.py
+
+# Specific tickers
+python utils/price_trend.py --tickers MSFT BLK ORCL
+
+# 30-day window
+python utils/price_trend.py --tickers MSFT BLK --days 30
+
+# Save full daily matrix for upload
+python utils/price_trend.py --tickers MSFT BLK ORCL QCOM NOW --daily
+
+# Save both summary and matrix
+python utils/price_trend.py --csv --daily
+```
+
+**Arguments**
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--tickers` | *(all from live_alpha_us.csv)* | One or more tickers. |
+| `--days` | `60` | Trailing window in trading sessions. |
+| `--csv` | `False` | Save per-ticker summary to `data/price_trend.csv`. |
+| `--daily` | `False` | Save adj-close matrix to `data/price_trend_daily.csv`. |
+
+**Notes**
+
+- Prices come from the same DataCoordinator parquet cache as the scoring pipeline. After a score run, `price_trend.py` reads from cache at zero network cost.
+- The adj-close matrix saved by `--daily` can be uploaded to Claude for context alongside a ShockArb score CSV.
+
+---
+
+## refresh_prices.py
+
+Manually top-up the daily OHLCV parquet cache for specific tickers. The DataCoordinator's gap analysis means only missing dates are downloaded — already-current tickers generate zero network calls.
+
+Run this when you want to ensure prices are cached before running `price_trend.py` or `portfolio_sizer.py` outside of a normal score workflow.
+
+**Usage**
+
+```bash
+# Refresh specific tickers (last 30 days)
+python utils/refresh_prices.py ETN HON ISRG
+
+# Extend the window
+python utils/refresh_prices.py ETN HON ISRG --days 90
+
+# Refresh all tickers in live_alpha_us.csv
+python utils/refresh_prices.py
+```
+
+**Arguments**
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `tickers` | *(all from live_alpha_us.csv)* | Positional list of tickers to refresh. |
+| `--days` | `30` | Calendar days of history to ensure in the cache. |
+
+**Notes**
+
+- Writes to `data/prices/daily/{TICKER}.parquet` — the same files that the scoring pipeline, `price_trend.py`, and `portfolio_sizer.py` all read from.
+- Safe to run repeatedly; already-current files are skipped by the gap analyzer.
+- Output is one line per ticker: `{TICKER}: cache up to date through YYYY-MM-DD`.
+
+---
+
+## get_analyst_targets.py
+
+Fetches consensus analyst price targets for a list of tickers from your choice of data provider. Lives in the **project root** (not `utils/`). Finviz is the default — no API key required.
+
+**Usage**
+
+```bash
+# Fetch targets for specific tickers (Finviz, no API key needed)
+python get_analyst_targets.py --tickers NOW MSFT CRM INTU IDXX CPRT
+
+# All tickers in fundamentals.csv (reads column 0 by default)
+python get_analyst_targets.py
+
+# Different provider
+python get_analyst_targets.py --tickers KLAC QCOM --provider yfinance
+
+# Different column index in the CSV
+python get_analyst_targets.py --file data/fundamentals.csv --column 0
+```
+
+Output is printed to console and saved to `{provider}_analyst_data.csv` in the project root (e.g. `finviz_analyst_data.csv`). Copy the `Target_Consensus` values into the `Analyst Tgt` column of `data/fundamentals.csv`.
+
+**Arguments**
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--tickers` / `-t` | — | One or more tickers. Mutually exclusive with `--file`. |
+| `--file` / `-f` | `fundamentals.csv` | CSV to read tickers from (if `--tickers` not given). |
+| `--column` / `-c` | `0` | Zero-indexed column containing tickers in the CSV. |
+| `--provider` / `-p` | `finviz` | Provider: `finviz`, `yfinance`, `fmp`, `finnhub`, `alpha_advantage`. |
+| `--update-fundamentals` / `-u` | — | Patch `Analyst Tgt` in `data/fundamentals.csv` automatically. Optionally supply a path: `--update-fundamentals path/to/fundamentals.csv`. |
+
+**Providers**
+
+| Provider | API Key Required | Data returned |
+|----------|-----------------|---------------|
+| `finviz` | No | `Target_Consensus` (single consensus figure) |
+| `yfinance` | No | Mean, median, high, low targets |
+| `fmp` | `FMP_API_KEY` | Consensus, median, high, low |
+| `finnhub` | `FINNHUB_API_KEY` | Mean, median, high, low (rate-limited: 60/min) |
+| `alpha_advantage` | `AV_API_KEY` | EPS estimates (not price targets) |
+
+**When to run:** after the stock report flags `analyst target below current price` (data quality exclusion), or after any stock split — targets become pre-split stale. Example: KLAC did a 10-for-1 split on 2026-06-12; its pre-split target of ~$1,855 must be divided by 10 (~$185) and updated in `fundamentals.csv`.
 
 ---
 

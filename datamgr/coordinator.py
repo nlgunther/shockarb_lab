@@ -284,7 +284,8 @@ class DataCoordinator:
                     frequency = merged_req.frequency,
                 )
             except Exception as exc:
-                logger.error(f"[Coordinator] Provider fetch failed: {exc}")
+                logger.error(f"[Coordinator] Batch fetch failed for {tickers}: {exc}")
+                self._retry_individually(tickers, gap_start, gap_end, merged_req)
                 continue
 
             if raw is None or raw.empty:
@@ -292,10 +293,53 @@ class DataCoordinator:
                     f"[Coordinator] Provider returned empty for "
                     f"{tickers} {gap_start}->{gap_end}"
                 )
+                self._retry_individually(tickers, gap_start, gap_end, merged_req)
                 continue
 
             for ticker in tickers:
                 self._commit_ticker(ticker, raw, merged_req)
+
+    def _retry_individually(
+        self,
+        tickers: List[str],
+        gap_start: str,
+        gap_end: str,
+        merged_req: DataRequest,
+    ) -> None:
+        """
+        Fall back to one provider.fetch() call per ticker after a batch fails.
+
+        _download_and_commit() batches tickers purely by identical gap span
+        (same cached_end date) — an accident of cache state, not a real
+        relationship between the tickers. A single bad or rate-limited
+        ticker (or a transient network blip) can therefore fail the whole
+        batch and blank out unrelated tickers that would have fetched fine
+        on their own. Root-caused 2026-08-18: QQQ, IWM, XLI, XLU, XLB, HYG,
+        GLD, and ^HSI all rendered blank in the same report despite no
+        relationship to each other beyond sharing a cache-gap span; VIX and
+        the rest of the overseas/bond tickers, fetched via separate batches,
+        were unaffected. See HIL_todo.md, MARKET-REPORT-PARTIAL-FETCH-GAP.
+
+        Best-effort: a ticker that still fails individually is simply left
+        uncommitted (existing cached data, if any, is untouched) and the
+        caller falls back further to the last cached value.
+        """
+        logger.info(f"[Coordinator] Retrying {len(tickers)} ticker(s) individually")
+        for ticker in tickers:
+            try:
+                raw = self._provider.fetch(
+                    tickers   = [ticker],
+                    start     = gap_start,
+                    end       = gap_end,
+                    frequency = merged_req.frequency,
+                )
+            except Exception as exc:
+                logger.warning(f"[Coordinator] Individual retry failed for {ticker}: {exc}")
+                continue
+            if raw is None or raw.empty:
+                logger.warning(f"[Coordinator] Individual retry empty for {ticker}")
+                continue
+            self._commit_ticker(ticker, raw, merged_req)
 
     def _commit_ticker(
         self,
@@ -309,6 +353,24 @@ class DataCoordinator:
         Merges with any cached data (keeping new rows for overlapping dates
         so adj_factor restatements are applied), then writes the combined
         result.
+
+        Rows with no closing price are dropped before commit. Root-caused
+        2026-08-19: every ticker in the ukraine_shock universe picked up a
+        row dated 2026-08-17 with real open/high/low/volume but a NaN
+        close/adj_close — almost certainly yfinance handing back a
+        partial/in-progress bar (fetched pre-market) mis-dated to the prior
+        session. Because this method used to commit whatever the provider
+        returned unconditionally, that NaN row got written to the permanent
+        cache and `coverage()` then reported 2026-08-17 as fully covered —
+        so gap analysis never re-fetched it. Downstream, `pipeline.py`'s
+        `prices.ffill().pct_change()` silently forward-filled the NaN close
+        from the prior day, producing a fake 0.000% return for every ticker
+        on that date and suppressing confidence_delta across the whole
+        universe — the actual cause of two consecutive "no recommendations"
+        days (see HIL_todo.md, NAN-CLOSE-CACHE-CORRUPTION). A bar without a
+        close is never a valid completed trading day; refusing to commit it
+        means the manifest keeps reporting a real gap, so the next run
+        re-fetches instead of building on bad data.
         """
         # Extract ticker slice from MultiIndex batch result
         if isinstance(raw.columns, pd.MultiIndex):
@@ -326,6 +388,23 @@ class DataCoordinator:
                 new_df = raw[[ticker]].copy().rename(columns={ticker: "adj_close"})
             else:
                 new_df = raw.copy()
+
+        price_col = "adj_close" if "adj_close" in new_df.columns else (
+            "close" if "close" in new_df.columns else None)
+        if price_col is not None:
+            valid = new_df[price_col].notna()
+            n_dropped = int((~valid).sum())
+            if n_dropped:
+                bad_dates = list(new_df.index[~valid].strftime("%Y-%m-%d"))
+                logger.warning(
+                    f"[Coordinator] {ticker}: dropping {n_dropped} incomplete row(s) "
+                    f"with no {price_col} ({bad_dates}) — not committing partial/"
+                    f"in-progress bars to the permanent cache"
+                )
+                new_df = new_df[valid]
+            if new_df.empty:
+                logger.warning(f"[Coordinator] {ticker}: no valid rows after filtering — nothing to commit")
+                return
 
         key      = f"{req.frequency}/{ticker}"
         existing = self._store.read(key, start="1900-01-01", end="2100-01-01")

@@ -6,13 +6,23 @@ of StockVerdict objects. No I/O, no randomness.
 
 Verdict tiers
 -------------
-  INCLUDE  — meets all quality gates; act on this signal
-  WATCH    — signal is valid but secondary concern warrants caution; monitor
-  EXCLUDE  — disqualified; do not trade (reason documented)
+  INCLUDE        — meets all quality gates including the full r² bar; act on this signal
+  LOW_CONFIDENCE — conf.Δ and analyst upside both clear their gates, but r² sits in the
+                   band between MIN_R2_WATCH and MIN_R2: a real, statistically
+                   meaningful factor-model fit (see HIL_todo.md R2-GATE-NEAR-MISS,
+                   2026-08-21) but weaker than the action bar — review before acting,
+                   don't auto-trade
+  WATCH          — signal is valid but secondary concern (thin upside / missing
+                   analyst target) warrants caution; monitor
+  EXCLUDE        — disqualified; do not trade (reason documented)
 
 Threshold defaults (override via evaluate_all kwargs)
 -------------------------------------------------------
-  MIN_R2              0.65   — model must explain ≥65% of variance
+  MIN_R2              0.65   — model must explain ≥65% of variance to INCLUDE
+  MIN_R2_WATCH        0.45   — floor for LOW_CONFIDENCE; below this, r² is treated as
+                                too weak a fit to trust at all (still statistically
+                                "significant" at n=46/k=3, but not economically
+                                meaningful — see the 2026-08-21 r²-cutoff analysis)
   MIN_CONF_DELTA      0.020  — signal strength floor
   MIN_ANALYST_UPSIDE  0.05   — analyst must see ≥5% upside from current price
   EARNINGS_EXCLUDE    True   — exclude any ticker with next_earnings set
@@ -41,6 +51,7 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 MIN_R2             = 0.65
+MIN_R2_WATCH       = 0.45
 MIN_CONF_DELTA     = 0.020
 MIN_ANALYST_UPSIDE = 0.05
 
@@ -116,6 +127,7 @@ class StockVerdict:
 def _evaluate_one(
     feats:            dict[str, Any],
     min_r2:           float,
+    min_r2_watch:     float,
     min_conf_delta:   float,
     min_upside:       float,
     earnings_exclude: bool,
@@ -156,10 +168,16 @@ def _evaluate_one(
         )
 
     # --- Signal strength gates ---
-    if r2 < min_r2:
+    # Below MIN_R2_WATCH the factor-model fit is too weak to trust at all (it may
+    # still be "statistically significant" in a bare F-test sense, but not
+    # economically meaningful — see the r²-cutoff analysis in HIL_todo.md,
+    # R2-GATE-NEAR-MISS, 2026-08-21). Between MIN_R2_WATCH and MIN_R2, a ticker
+    # can still qualify for the LOW_CONFIDENCE tier below if conf.Δ and upside
+    # both clear their normal gates.
+    if r2 < min_r2_watch:
         return StockVerdict(
             ticker=ticker, tier="EXCLUDE",
-            reason=f"r²={r2:.3f} below threshold ({min_r2:.2f}) — model fit too weak",
+            reason=f"r²={r2:.3f} below threshold ({min_r2_watch:.2f}) — model fit too weak",
             r_squared=r2, confidence_delta=cd, analyst_upside=upside,
             price=feats.get("price"), analyst_target=feats.get("analyst_target"),
             fwd_pe=feats.get("fwd_pe"), news_headlines=feats.get("news_headlines", []),
@@ -212,10 +230,23 @@ def _evaluate_one(
             intraday_chg_pct=feats.get("intraday_chg_pct"),
         )
 
-    # --- INCLUDE ---
+    # --- INCLUDE vs. LOW_CONFIDENCE ---
+    # conf.Δ and upside both cleared their gates above; r² decides which of the
+    # two action tiers this lands in.
+    if r2 >= min_r2:
+        tier   = "INCLUDE"
+        reason = f"r²={r2:.3f}, conf.Δ={cd:+.4f}, analyst upside {upside * 100:+.1f}% — all gates pass"
+    else:
+        tier = "LOW_CONFIDENCE"
+        reason = (
+            f"r²={r2:.3f} is below the {min_r2:.2f} action threshold but above the "
+            f"{min_r2_watch:.2f} floor — conf.Δ={cd:+.4f} and analyst upside "
+            f"{upside * 100:+.1f}% both clear their gates; weaker model fit means "
+            "lower confidence this is a macro-driven dislocation rather than noise"
+        )
     return StockVerdict(
-        ticker=ticker, tier="INCLUDE",
-        reason=f"r²={r2:.3f}, conf.Δ={cd:+.4f}, analyst upside {upside * 100:+.1f}% — all gates pass",
+        ticker=ticker, tier=tier,
+        reason=reason,
         r_squared=r2, confidence_delta=cd, analyst_upside=upside,
         price=feats.get("price"), analyst_target=feats.get("analyst_target"),
         fwd_pe=feats.get("fwd_pe"), news_headlines=feats.get("news_headlines", []),
@@ -233,6 +264,7 @@ def _evaluate_one(
 def evaluate_all(
     feature_list:     list[dict[str, Any]],
     min_r2:           float = MIN_R2,
+    min_r2_watch:     float = MIN_R2_WATCH,
     min_conf_delta:   float = MIN_CONF_DELTA,
     min_upside:       float = MIN_ANALYST_UPSIDE,
     earnings_exclude: bool  = True,
@@ -240,20 +272,25 @@ def evaluate_all(
     """
     Evaluate all tickers and return a sorted verdict list.
 
-    Sorting: INCLUDE (by confidence_delta desc) → WATCH (by confidence_delta desc) → EXCLUDE.
-    Cluster-risk annotations are added to INCLUDE verdicts when ≥2 names share a cluster.
+    Sorting: INCLUDE → LOW_CONFIDENCE → WATCH → EXCLUDE, each by confidence_delta desc.
+    Cluster-risk annotations are added within INCLUDE and, separately, within
+    LOW_CONFIDENCE when ≥2 names in that same tier share a cluster — the two
+    tiers are counted independently so a lower-confidence pick never inflates
+    an action-tier cluster warning or vice versa.
 
     Parameters
     ----------
     feature_list     : output of features.extract_all()
-    min_r2           : minimum R² (default 0.65)
+    min_r2           : minimum R² to reach INCLUDE (default 0.65)
+    min_r2_watch     : minimum R² to reach LOW_CONFIDENCE; below this, EXCLUDE
+                        regardless of conf.Δ/upside (default 0.45)
     min_conf_delta   : minimum confidence_delta (default 0.020)
     min_upside       : minimum analyst upside fraction (default 0.05 = 5%)
     earnings_exclude : exclude tickers with imminent earnings (default True)
 
     Returns
     -------
-    list[StockVerdict] — all tickers, sorted INCLUDE → WATCH → EXCLUDE.
+    list[StockVerdict] — all tickers, sorted INCLUDE → LOW_CONFIDENCE → WATCH → EXCLUDE.
 
     Example
     -------
@@ -263,27 +300,28 @@ def evaluate_all(
         print(f"{len(include)} candidates to act on")
     """
     verdicts = [
-        _evaluate_one(f, min_r2, min_conf_delta, min_upside, earnings_exclude)
+        _evaluate_one(f, min_r2, min_r2_watch, min_conf_delta, min_upside, earnings_exclude)
         for f in feature_list
     ]
 
-    # Annotate cluster risk for INCLUDE tickers
-    include_verdicts = [v for v in verdicts if v.tier == "INCLUDE"]
-    cluster_counts: dict[str, int] = {}
-    for v in include_verdicts:
-        if v.cluster:
-            cluster_counts[v.cluster] = cluster_counts.get(v.cluster, 0) + 1
+    # Annotate cluster risk within each actionable tier separately.
+    for tier_name in ("INCLUDE", "LOW_CONFIDENCE"):
+        tier_verdicts = [v for v in verdicts if v.tier == tier_name]
+        cluster_counts: dict[str, int] = {}
+        for v in tier_verdicts:
+            if v.cluster:
+                cluster_counts[v.cluster] = cluster_counts.get(v.cluster, 0) + 1
 
-    for v in include_verdicts:
-        if v.cluster and cluster_counts[v.cluster] >= 2:
-            count = cluster_counts[v.cluster]
-            v.warnings.append(
-                f"Cluster risk: {count} names from '{v.cluster}' cluster in INCLUDE tier — "
-                "consider limiting to 1–2 names from this group"
-            )
+        for v in tier_verdicts:
+            if v.cluster and cluster_counts[v.cluster] >= 2:
+                count = cluster_counts[v.cluster]
+                v.warnings.append(
+                    f"Cluster risk: {count} names from '{v.cluster}' cluster in "
+                    f"{tier_name} tier — consider limiting to 1–2 names from this group"
+                )
 
-    # Sort: INCLUDE → WATCH → EXCLUDE, each by confidence_delta desc
-    _order = {"INCLUDE": 0, "WATCH": 1, "EXCLUDE": 2}
+    # Sort: INCLUDE → LOW_CONFIDENCE → WATCH → EXCLUDE, each by confidence_delta desc
+    _order = {"INCLUDE": 0, "LOW_CONFIDENCE": 1, "WATCH": 2, "EXCLUDE": 3}
     verdicts.sort(key=lambda v: (_order[v.tier], -(v.confidence_delta or 0)))
     return verdicts
 

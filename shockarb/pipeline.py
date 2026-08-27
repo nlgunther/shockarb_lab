@@ -382,6 +382,27 @@ def _market_is_open() -> bool:
     return market_open <= now <= market_close
 
 
+def _market_status_phrase() -> str:
+    """
+    Human-readable phrase for why the intraday path is active, for logging only.
+
+    _market_is_open() (above) intentionally returns True for both the regular
+    session AND the 4:00-5:00 PM ET post-close grace window — but a log line
+    that just says "Market is open" at, say, 4:43 PM ET is flatly false and
+    reads as a bug. This distinguishes the two cases in what gets printed,
+    without changing _market_is_open()'s boolean logic (tests patch that
+    function directly and are unaffected by this).
+
+    Example:
+        _market_status_phrase()
+        # → "Market is open" (before 4:00 PM ET)
+        # → "Post-close grace period (until 5:00 PM ET)" (4:00-5:00 PM ET)
+    """
+    now = _now_et()
+    actual_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
+    return "Market is open" if now <= actual_close else "Post-close grace period (until 5:00 PM ET)"
+
+
 def _intraday_returns_from_frame(
     raw: pd.DataFrame, prev_adj_close: pd.Series,
 ) -> Tuple[pd.Series, str, str, pd.Series, int]:
@@ -624,7 +645,7 @@ def score_universe(
     use_intraday = _market_is_open() and not force_daily
     if force_daily and _market_is_open():
         logger.info(
-            "Market is open but --use-prior-close is set — "
+            f"{_market_status_phrase()} but --use-prior-close is set — "
             "using daily close-to-close returns."
         )
 
@@ -689,10 +710,10 @@ def _score_intraday(
     all_tickers = etf_tickers + stock_tickers
 
     if from_open:
-        logger.info("Market is open — using intraday path (--from-open: today's open as denominator).")
+        logger.info(f"{_market_status_phrase()} — using intraday path (--from-open: today's open as denominator).")
         prov.path = "intraday (from open)"
     else:
-        logger.info("Market is open — using intraday coordinator path.")
+        logger.info(f"{_market_status_phrase()} — using intraday coordinator path.")
         prov.path = "intraday"
     prov.interval     = "15m"
     prov.fetch_period = "1d"

@@ -246,12 +246,12 @@ def main() -> None:
         epilog=__doc__,
     )
     parser.add_argument(
-        "--cache", default="./data/ticker_reference_cache.json",
-        help="Path to the ticker reference cache JSON (default: ./data/ticker_reference_cache.json)",
+        "--cache", default=str(_project_root / "data" / "ticker_reference_cache.json"),
+        help="Path to the ticker reference cache JSON (default: <project_root>/data/ticker_reference_cache.json)",
     )
     parser.add_argument(
-        "--ref-dir", default="./data",
-        help="Directory containing NYSE/NASDAQ reference CSVs (default: ./data)",
+        "--ref-dir", default=str(_project_root / "data"),
+        help="Directory containing NYSE/NASDAQ reference CSVs (default: <project_root>/data)",
     )
     parser.add_argument(
         "--update", action="store_true",

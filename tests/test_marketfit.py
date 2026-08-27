@@ -41,6 +41,7 @@ def _make_snapshot(
     tlt_chg: float = 0.0,
     sector_chgs: dict | None = None,
     baseline_date: str = "2026-06-03",
+    session_date: str | None = None,
     mode: str = "daily",
     fetched_at_local: str | None = None,
     fetched_at_utc: str | None = None,
@@ -79,13 +80,16 @@ def _make_snapshot(
                 "ticker": f"^OV{i}", "label": f"Overseas {i}", "group": "overseas",
                 "close": 1000.0, "prev": 1000.0, "chg_pct": chg, "status": "ok",
             })
-    return {
+    snap = {
         "fetched_at":       fetched_at_utc or "2026-06-03T21:00:00+00:00",
         "fetched_at_local": fetched_at_local or "2026-06-03 17:00",
         "baseline_date":    baseline_date,
         "mode":             mode,
         "tickers":          tickers,
     }
+    if session_date is not None:
+        snap["session_date"] = session_date
+    return snap
 
 
 # =============================================================================
@@ -322,6 +326,34 @@ class TestReportBuild:
     def test_source_noted_in_footer(self):
         md = self._build()
         assert "rules" in md
+
+
+class TestReportStaleTickerMarker:
+    """
+    A ticker served via market_data.py's last-known-value fallback (see
+    tests/test_market_data.py) is status="ok" with stale=True — the report
+    must render it normally (not blank) but visibly flag the staleness, so
+    a reader isn't misled into thinking QQQ's chg_pct is today's number.
+    See HIL_todo.md, MARKET-REPORT-PARTIAL-FETCH-GAP.
+    """
+
+    def test_stale_ticker_shows_marker_with_its_real_date(self):
+        snap = _make_snapshot()
+        for t in snap["tickers"]:
+            if t["ticker"] == "QQQ":
+                t["stale"] = True
+                t["last_date"] = "2026-08-14"
+        feats = features.extract(snap)
+        v = rules.evaluate(feats)
+        md = report.build(snap, v)
+        assert "(stale 2026-08-14)" in md
+
+    def test_non_stale_ticker_has_no_marker(self):
+        snap = _make_snapshot()
+        feats = features.extract(snap)
+        v = rules.evaluate(feats)
+        md = report.build(snap, v)
+        assert "(stale" not in md
 
 
 # =============================================================================
@@ -639,3 +671,89 @@ class TestCliLoaders:
 
     def test_missing_fetched_at_is_stale(self):
         assert self._is_stale({}) is True
+
+
+# =============================================================================
+# TestBuildPromptSessionLabel — _build_prompt()/_describe_session() surface
+# SESSION_LABEL/SESSION_DATE/MARKET_STATUS correctly (2026-08-07 fix: an LLM
+# narrative asserted "closed lower today" on a premarket report describing
+# the prior session).
+# =============================================================================
+
+class TestBuildPromptSessionLabel:
+    def setup_method(self):
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "utils"))
+        from marketfit.llm import _build_prompt, _describe_session
+        self._build_prompt    = _build_prompt
+        self._describe_session = _describe_session
+
+    def _verdict(self):
+        v = _make_snapshot()
+        return rules.evaluate(features.extract(v))
+
+    def test_premarket_report_labels_prior_session_yesterday(self):
+        """The exact bug: 07:46 ET premarket fetch describing the prior
+        close must say 'yesterday', never 'today'."""
+        snap = _make_snapshot(
+            mode="daily",
+            session_date="2026-08-06",
+            fetched_at_utc="2026-08-07T11:46:00+00:00",  # 07:46 ET, premarket
+        )
+        desc, status = self._describe_session(snap)
+        assert desc == "yesterday"
+        assert status == "CLOSED"
+
+    def test_monday_premarket_labels_friday_yesterday(self):
+        """Monday premarket describing Friday's close — must not be flagged
+        stale, and must still say 'yesterday', not 'Friday' or '3 days ago'."""
+        snap = _make_snapshot(
+            mode="daily",
+            session_date="2026-08-07",  # Friday
+            fetched_at_utc="2026-08-10T11:46:00+00:00",  # Monday, premarket
+        )
+        desc, status = self._describe_session(snap)
+        assert desc == "yesterday"
+        assert status == "CLOSED"
+
+    def test_post_close_same_day_labels_today(self):
+        snap = _make_snapshot(
+            mode="daily",
+            session_date="2026-08-07",
+            fetched_at_utc="2026-08-07T21:00:00+00:00",  # 17:00 ET, after close
+        )
+        desc, status = self._describe_session(snap)
+        assert desc == "today"
+        assert status == "CLOSED"
+
+    def test_stale_multi_session_gap_is_flagged(self):
+        snap = _make_snapshot(
+            mode="daily",
+            session_date="2026-08-04",
+            fetched_at_utc="2026-08-07T11:46:00+00:00",
+        )
+        desc, _ = self._describe_session(snap)
+        assert "STALE" in desc
+
+    def test_intraday_mode_always_today_in_progress(self):
+        """Intraday overlays live prices on the last cached daily close, so
+        session_date (from that cache) does not describe what's shown —
+        intraday numbers are always 'today, in progress' regardless."""
+        snap = _make_snapshot(
+            mode="intraday",
+            session_date="2026-08-06",  # stale cached date — must be ignored
+            fetched_at_utc="2026-08-07T15:00:00+00:00",
+        )
+        desc, status = self._describe_session(snap)
+        assert desc == "today (live, in progress)"
+        assert "OPEN" in status
+
+    def test_session_label_appears_in_built_prompt(self):
+        snap = _make_snapshot(
+            mode="daily",
+            session_date="2026-08-06",
+            fetched_at_utc="2026-08-07T11:46:00+00:00",
+        )
+        prompt = self._build_prompt(snap, self._verdict())
+        assert "SESSION_LABEL: yesterday" in prompt
+        assert "MARKET_STATUS: CLOSED" in prompt

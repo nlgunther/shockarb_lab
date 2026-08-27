@@ -105,12 +105,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--data-dir", default=None,
-        help="Override data directory (default: ./data)",
+        help="Override data directory (default: <project_root>/data)",
     )
     args = parser.parse_args()
 
     exec_cfg = ExecutionConfig(
-        data_dir=args.data_dir or os.path.join(os.getcwd(), "data"),
+        data_dir=args.data_dir or str(_project_root / "data"),
         log_to_file=False,
     )
 

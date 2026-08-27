@@ -29,9 +29,12 @@ import os
 import re
 import time
 from dataclasses import dataclass
+from datetime import date, datetime
 from typing import Any, Protocol
 
 from loguru import logger
+
+from trading_calendar import session_label, market_open_at_fetch, et_datetime
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +72,15 @@ Writing style — strictly enforced:
 - Always close the ShockArb-relevant sections with a sentence on what the conditions
   mean for finding dislocated picks — positive or negative.
 - Do not repeat numbers that are already in the table above the section.
+- The input gives SESSION_LABEL ("today" or "yesterday") for which trading session
+  the numbers describe. Use that exact word — never say "today" unless SESSION_LABEL
+  says "today". If MARKET_STATUS is not "OPEN", never describe the session as still
+  in progress or use present-tense phrasing like "is falling" — it has already closed.
+- Any catalyst headline prefixed with a tag in brackets (e.g. "[GUIDANCE]", "[RATING]",
+  "[LEADERSHIP]", "[LEGAL]") was flagged as a real, material story, not routine noise.
+  If catalyst_summary covers that ticker at all, it must reflect what the tagged
+  headline actually says rather than a more flattering unrelated headline for the
+  same name.
 
 Return ONLY a JSON object mapping section names to narrative strings.
 No markdown fences, no extra keys, no preamble. Example structure:
@@ -131,7 +143,7 @@ class _GeminiBackend:
     Retries on 429/503, honouring the API's reported retry delay.
     Cost: treated as $0 on free tier; update if billing applies.
     """
-    DEFAULT_MODEL = "gemini-2.5-flash-lite"
+    DEFAULT_MODEL = "gemini-2.5-flash"
 
     def __init__(self, api_key: str, model: str | None = None):
         self.api_key = api_key
@@ -199,6 +211,41 @@ class _DailyBudget:
 # Prompt builder
 # ---------------------------------------------------------------------------
 
+def _describe_session(snapshot: dict[str, Any]) -> tuple[str, str]:
+    """
+    Return (session_label, market_status) describing which trading session
+    this snapshot's numbers are from and whether the market was open at
+    fetch time — the two facts the LLM needs to avoid asserting a session
+    is "today" when it's actually a completed prior session (the bug this
+    exists to prevent; root-caused 2026-08-07).
+
+    Intraday mode is a special case: live prices are overlaid on top of the
+    last cached daily close, so session_date (from the daily cache) does NOT
+    describe what's actually being shown — the live numbers are always
+    "today, in progress" regardless of what session_date says.
+
+    Example:
+        _describe_session({"mode": "daily", "session_date": "2026-08-06",
+                            "fetched_at": "2026-08-07T11:46:00+00:00"})
+        # -> ("yesterday", "CLOSED")
+    """
+    if snapshot.get("mode") == "intraday":
+        return "today (live, in progress)", "OPEN (intraday snapshot)"
+
+    session_desc = "unknown"
+    try:
+        fetched_at    = snapshot.get("fetched_at")
+        session_date  = snapshot.get("session_date")
+        if fetched_at and session_date:
+            today_et = et_datetime(datetime.fromisoformat(fetched_at)).date()
+            session_desc = session_label(date.fromisoformat(session_date), today_et)
+    except Exception:
+        pass
+
+    market_status = "OPEN" if market_open_at_fetch(snapshot) else "CLOSED"
+    return session_desc, market_status
+
+
 def _build_prompt(
     snapshot:        dict[str, Any],
     verdict:         Any,
@@ -242,10 +289,15 @@ def _build_prompt(
     vix_level  = vix_row.get("close", "N/A")
     vix_chg_v  = vix_row.get("chg_pct", "N/A")
 
+    session_desc, market_status = _describe_session(snapshot)
+
     parts = [
         f"DATE: {snapshot.get('fetched_at_local', 'unknown')}  "
         f"MODE: {snapshot.get('mode','daily')}  "
         f"BASELINE: {snapshot.get('baseline_date','unknown')}",
+        f"SESSION_LABEL: {session_desc}  "
+        f"SESSION_DATE: {snapshot.get('session_date', 'unknown')}  "
+        f"MARKET_STATUS: {market_status}",
         "",
         "BROAD MARKET:",
         f"  SPY: {chg('SPY')}  QQQ: {chg('QQQ')}  DIA: {chg('DIA')}  IWM: {chg('IWM')}",
@@ -308,7 +360,7 @@ def _build_prompt(
         '  "executive_summary"          — 3–4 sentences: day\'s story, what\'s driving it, ShockArb relevance',
         '  "broad_market_interpretation" — 2–3 sentences: what the index spread tells us',
         '  "sector_rotation_story"       — 3–5 sentences: why sectors moved as they did, ShockArb implications',
-        '  "bond_signal_interpretation"  — 2–3 sentences: what the bond complex signals today',
+        '  "bond_signal_interpretation"  — 2–3 sentences: what the bond complex signals (use SESSION_LABEL, not "today")',
         '  "overseas_read"               — 2–3 sentences: global picture, any factor risks for US picks',
         '  "risk_gauge_read"             — 2–3 sentences: VIX/Gold/Oil as a combined signal',
         '  "shockarb_fit_analysis"       — 3–5 sentences: deeper ShockArb conditions read',
@@ -333,26 +385,45 @@ def _rel(by_ticker: dict, a: str, b: str) -> float:
 # Response parser
 # ---------------------------------------------------------------------------
 
+def _try_json_object(text: str) -> dict | None:
+    """Parse text as a JSON object; return None (not {}) on any failure."""
+    try:
+        result = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return result if isinstance(result, dict) else None
+
+
 def _parse_narratives(text: str) -> dict[str, str]:
     """
     Parse LLM JSON response into {section_name: narrative_text}.
     Returns {} if malformed — LLM failures must never crash the pipeline.
 
+    Tries the full trimmed text first. If the model added preamble or
+    trailing commentary around the JSON — a common formatting slip that
+    gets more likely as the prompt grows (e.g. a large catalyst-headline
+    block) — falls back to the first {...} span in the text before
+    giving up.
+
     Example:
         _parse_narratives('{"executive_summary": "Stocks fell on...", ...}')
         # → {"executive_summary": "Stocks fell on...", ...}
+        _parse_narratives('Here is the report:\\n{"executive_summary": "..."}')
+        # → {"executive_summary": "..."}  (preamble stripped)
     """
     text = text.strip()
     # Strip markdown code fences if present
     if text.startswith("```"):
         text = re.sub(r"^```[a-z]*\n?", "", text)
         text = re.sub(r"\n?```$", "", text)
-    try:
-        result = json.loads(text)
-    except json.JSONDecodeError:
+
+    result = _try_json_object(text)
+    if result is None:
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        result = _try_json_object(match.group(0)) if match else None
+    if result is None:
         return {}
-    if not isinstance(result, dict):
-        return {}
+
     # Keep only string values
     return {k: v for k, v in result.items() if isinstance(v, str) and v.strip()}
 
@@ -443,6 +514,13 @@ class MarketfitLLMClient:
                 f"LLM returned {len(narratives)} sections"
                 + (f" (est. ${cost:.4f})" if cost > 0 else "")
             )
+            if not narratives:
+                # A clean API call that didn't parse to any usable section is
+                # otherwise a black box — the report just silently falls back
+                # to build(). Log what actually came back so a recurrence is
+                # diagnosable instead of another guessing exercise.
+                preview = raw_text[:500].replace("\n", " ")
+                logger.warning(f"LLM response had no usable sections — raw text (first 500 chars): {preview!r}")
             if self.call_pause > 0:
                 time.sleep(self.call_pause)
             return narratives

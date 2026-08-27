@@ -131,16 +131,22 @@ ALL_TICKERS: dict[str, tuple[str, str]] = {
 # Coordinator wiring
 # ---------------------------------------------------------------------------
 
-def _build_coordinator(data_dir: str) -> DataCoordinator:
+def _build_store(data_dir: str) -> ParquetStore:
+    """Build the ParquetStore alone — used both by the coordinator and by
+    the direct last-known-value fallback in _fetch_daily()."""
+    from shockarb.store import DataStore as ShockArbStore  # local import — avoids circular on startup
+    inner = ShockArbStore(data_dir)
+    return ParquetStore(inner)
+
+
+def _build_coordinator(data_dir: str, store: Optional[ParquetStore] = None) -> DataCoordinator:
     """
     Build a DataCoordinator backed by the shared ShockArb parquet cache.
 
     Mirrors pipeline._coordinator() so market_data reads from the same cache
     that `shockarb score` writes — no duplicate downloads for shared tickers.
     """
-    from shockarb.store import DataStore as ShockArbStore  # local import — avoids circular on startup
-    inner = ShockArbStore(data_dir)
-    store = ParquetStore(inner)
+    store = store or _build_store(data_dir)
     return DataCoordinator(store, provider=YFinanceProvider(downloader=yf.download))
 
 
@@ -149,7 +155,7 @@ def _build_coordinator(data_dir: str) -> DataCoordinator:
 # ---------------------------------------------------------------------------
 
 def _row_ok(ticker: str, label: str, group: str,
-            close: float, prev: float, last_date: str) -> dict:
+            close: float, prev: float, last_date: str, stale: bool = False) -> dict:
     return {
         "ticker":    ticker,
         "label":     label,
@@ -159,6 +165,7 @@ def _row_ok(ticker: str, label: str, group: str,
         "chg_pct":   round((close - prev) / prev * 100, 4),
         "last_date": last_date,
         "status":    "ok",
+        "stale":     stale,
     }
 
 
@@ -166,7 +173,7 @@ def _row_error(ticker: str, label: str, group: str) -> dict:
     return {
         "ticker": ticker, "label": label, "group": group,
         "close": None, "prev": None, "chg_pct": None,
-        "last_date": None, "status": "error",
+        "last_date": None, "status": "error", "stale": False,
     }
 
 
@@ -200,7 +207,7 @@ def _fetch_vix(current_price: Optional[float] = None) -> dict:
 # Daily fetch via coordinator
 # ---------------------------------------------------------------------------
 
-def _fetch_daily(data_dir: str) -> tuple[dict[str, dict], str]:
+def _fetch_daily(data_dir: str) -> tuple[dict[str, dict], str, str, set[str]]:
     """
     Fetch latest two daily closes for all coordinator tickers.
 
@@ -208,11 +215,18 @@ def _fetch_daily(data_dir: str) -> tuple[dict[str, dict], str]:
     -------
     prices : dict  ticker → {close, prev, last_date}
     baseline_date : str  YYYY-MM-DD date of the prev_close row
+    session_date  : str  YYYY-MM-DD date of the most recent close row —
+                    the actual trading day this snapshot's numbers describe.
+                    Distinct from "today" (the fetch date): a premarket
+                    fetch's session_date is the prior completed session.
+    stale_tickers : set[str]  tickers served from _last_known_value() rather
+                    than a fresh fetch — see that function's docstring.
     """
     start = (date.today() - timedelta(days=_HISTORY_DAYS)).isoformat()
     end   = (date.today() + timedelta(days=1)).isoformat()
 
-    coordinator = _build_coordinator(data_dir)
+    store       = _build_store(data_dir)
+    coordinator = _build_coordinator(data_dir, store=store)
     coordinator.register(DataRequest(
         tickers   = tuple(_COORDINATOR_TICKERS.keys()),
         start     = start,
@@ -225,26 +239,68 @@ def _fetch_daily(data_dir: str) -> tuple[dict[str, dict], str]:
     df = results.get("market_data")
 
     prices: dict[str, dict] = {}
+    stale_tickers: set[str] = set()
     baseline_date = (date.today() - timedelta(days=1)).isoformat()  # fallback
+    session_date  = date.today().isoformat()  # fallback
 
     if df is not None:
         for ticker in _COORDINATOR_TICKERS:
-            if ticker not in df.columns:
-                continue
-            col = df[ticker].dropna()
-            if len(col) < 2:
+            col = df[ticker].dropna() if ticker in df.columns else None
+            if col is None or len(col) < 2:
+                fallback = _last_known_value(store, ticker)
+                if fallback is not None:
+                    prices[ticker] = fallback
+                    stale_tickers.add(ticker)
                 continue
             prices[ticker] = {
                 "close":     float(col.iloc[-1]),
                 "prev":      float(col.iloc[-2]),
                 "last_date": col.index[-1].strftime("%Y-%m-%d"),
             }
-            # baseline_date = the date of the second-to-last row (the prev close).
-            # Use SPY as representative; all tickers share the same trading calendar.
+            # baseline_date/session_date = the dates of the prev-close and
+            # last-close rows. Use SPY as representative; all tickers share
+            # the same trading calendar.
             if ticker == "SPY":
                 baseline_date = col.index[-2].strftime("%Y-%m-%d")
+                session_date  = col.index[-1].strftime("%Y-%m-%d")
 
-    return prices, baseline_date
+    return prices, baseline_date, session_date, stale_tickers
+
+
+def _last_known_value(store: ParquetStore, ticker: str) -> Optional[dict]:
+    """
+    Fall back to the most recent cached close for *ticker*, ignoring the
+    normal _HISTORY_DAYS window, when today's fetch came back empty.
+
+    Root cause (2026-08-18, HIL_todo.md MARKET-REPORT-PARTIAL-FETCH-GAP):
+    DataCoordinator._download_and_commit() batches tickers by identical
+    cache-gap span, so one bad/rate-limited ticker (or a transient network
+    blip) can fail an entire batch of otherwise-unrelated tickers. Even
+    with the batch-retry fallback added in coordinator.py, a ticker can
+    still legitimately fail — this is the second line of defense: show the
+    last real price we have rather than a bare blank, matching how the
+    narrative already self-flags overall snapshot staleness. Only kicks in
+    when the store has at least 2 rows (need both close and prev).
+
+    Returns None if the store has no usable history for this ticker either
+    (a genuine first-time miss, not a stale-but-known value).
+    """
+    try:
+        df = store.read(f"daily/{ticker}", start="1900-01-01", end="2100-01-01")
+    except Exception as exc:
+        logger.warning(f"{ticker}: last-known-value fallback read failed: {exc}")
+        return None
+    if df is None or df.empty:
+        return None
+    col_name = "adj_close" if "adj_close" in df.columns else ticker if ticker in df.columns else df.columns[0]
+    col = df[col_name].dropna()
+    if len(col) < 2:
+        return None
+    return {
+        "close":     float(col.iloc[-1]),
+        "prev":      float(col.iloc[-2]),
+        "last_date": col.index[-1].strftime("%Y-%m-%d"),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -311,7 +367,12 @@ def fetch_snapshot(out_path: str = _DEFAULT_OUT,
     logger.info(f"Fetching market snapshot ({len(ALL_TICKERS)} tickers, mode={mode})…")
 
     # --- Step 1: get prev_close (and daily close) from coordinator cache ---
-    daily_prices, baseline_date = _fetch_daily(data_dir)
+    daily_prices, baseline_date, session_date, stale_tickers = _fetch_daily(data_dir)
+    if stale_tickers:
+        logger.warning(
+            f"  {len(stale_tickers)} ticker(s) served from last-known cache "
+            f"(today's fetch failed): {sorted(stale_tickers)}"
+        )
 
     # --- Step 2: optionally overlay live current prices ---
     if intraday:
@@ -347,12 +408,14 @@ def fetch_snapshot(out_path: str = _DEFAULT_OUT,
             close     = close_val,
             prev      = cached["prev"],
             last_date = cached["last_date"],
+            stale     = ticker in stale_tickers,
         ))
 
     snapshot = {
         "fetched_at":       datetime.now(timezone.utc).isoformat(),
         "fetched_at_local": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "baseline_date":    baseline_date,
+        "session_date":     session_date,
         "mode":             mode,
         "tickers":          data,
     }

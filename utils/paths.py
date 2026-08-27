@@ -37,10 +37,33 @@ STOCK_REPORT           = REPORTS / "stock_report.md"
 REPORTS_DIR            = REPORTS
 
 # ---------------------------------------------------------------------------
+# Price trend outputs
+# ---------------------------------------------------------------------------
+PRICE_TREND_DAILY   = DATA / "price_trend_daily.csv"   # adj-close matrix (dates × tickers)
+PRICE_TREND_SUMMARY = DATA / "price_trend.csv"          # per-ticker summary (start/end/chg%)
+
+# ---------------------------------------------------------------------------
+# Watchlist — user-maintained ticker list for the watchlist_news scanner
+# ---------------------------------------------------------------------------
+WATCHLIST = DATA / "watchlist.txt"
+
+# ---------------------------------------------------------------------------
 # Sticky CLI state
 # ---------------------------------------------------------------------------
 # Mirrors shockarb/cli.py's .shockarb_regime sticky-file pattern.
 STOCKFIT_RVOL_FILE = DATA / ".stockfit_rvol"
+
+# ---------------------------------------------------------------------------
+# ShockArb position tracking — portfolio_sizer.py --positions / --execute
+# ---------------------------------------------------------------------------
+# POSITION_MARK_OUT mirrors portfolio_sizer.py's own _DEFAULT_OUT: an
+# ephemeral snapshot, overwritten on every --positions run.
+# POSITION_LOG is the durable counterpart — append-only, never overwritten,
+# written only when --execute is passed. This is the audit trail that lets
+# you reconstruct "what did ShockArb say about this ticker the day I bought
+# it" without re-deriving it from archived reports.
+POSITION_MARK_OUT = DATA / "shockarb_position_mark.csv"
+POSITION_LOG       = DATA / "shockarb_position_log.csv"
 
 
 # ---------------------------------------------------------------------------

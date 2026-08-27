@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +38,7 @@ from pathlib import Path
 from loguru import logger
 
 from marketfit import features, rules, report
+from news_flags import cross_attach_headlines
 
 # All paths centralised in paths.py. See docs/PATHS.md for design rationale.
 from paths import MARKET_SNAPSHOT, LIVE_ALPHA_US, FUNDAMENTALS, NEWS, REPORTS_DIR
@@ -115,13 +117,19 @@ def _load_fundamentals(path: str):
 def _load_news(path: str) -> dict[str, list[str]]:
     """
     Parse news.txt into {ticker: [headline, ...]} dict.
-    Same format as catalyst_feed.txt — [TICKER] blocks separated by dashes.
+
+    Ticker blocks are separated by a run of dashes; news_scanner.py currently
+    emits 95 of them, but that width isn't a contract either module has ever
+    agreed to, so match any run of 20+ rather than hardcoding an exact count.
+    A previous hardcoded 87-dash split silently dropped every ticker except
+    the first in the file — real news existed but never reached the LLM
+    (root-caused 2026-08-06; see HIL_todo.md).
     """
     if not os.path.exists(path):
         return {}
     try:
         content = Path(path).read_text(encoding="utf-8", errors="replace")
-        chunks  = content.split("---" * 29)   # 87-dash separator
+        chunks  = re.split(r"-{20,}", content)
         result  = {}
         for chunk in chunks:
             file_lines = [l.strip() for l in chunk.strip().split("\n") if l.strip()]
@@ -188,7 +196,7 @@ def cmd_report(args) -> None:
     print(f"    Snapshot:  {snapshot.get('fetched_at_local', 'unknown')}")
     print(f"    Baseline:  {snapshot.get('baseline_date', '(unknown — re-run market_data.py)')}")
     print(f"    Mode:      {snapshot.get('mode', 'daily')}")
-    llm_note = " | LLM: enabled" if args.llm else ""
+    llm_note = " | LLM: enabled" if args.llm else " | LLM: disabled (--no-llm)"
     print(f"    Verdict:   {verdict.overall}  (score {verdict.score}/11){llm_note}")
 
 
@@ -208,7 +216,7 @@ def _build_with_llm(snapshot: dict, verdict, stale: bool) -> str:
 
     picks_df        = _load_picks(str(LIVE_ALPHA_US))
     fundamentals_df = _load_fundamentals(str(FUNDAMENTALS))
-    news_dict       = _load_news(str(NEWS))
+    news_dict       = cross_attach_headlines(_load_news(str(NEWS)))
 
     if picks_df is not None:
         logger.info(f"Loaded {len(picks_df)} picks from live_alpha_us.csv")
@@ -253,11 +261,11 @@ def main() -> None:
                    help=f"Directory for report output (default: {REPORTS_DIR})")
     p.add_argument("--out", "-o", default=None,
                    help="Exact output .md path; overrides --reports-dir (default: auto)")
-    p.add_argument("--llm", action="store_true",
-                   help="Generate enhanced report with LLM narratives (requires GOOGLE_API_KEY or ANTHROPIC_API_KEY)")
+    p.add_argument("--no-llm", action="store_false", dest="llm",
+                   help="Disable LLM narratives; use rules-based report only")
     p.add_argument("--timestamp", action="store_true",
                    help="Save as market_report_YYYYMMDD_HHMM.md — never overwrites; builds archive for LLM training")
-    p.set_defaults(func=cmd_report)
+    p.set_defaults(func=cmd_report, llm=True)
 
     args = parser.parse_args()
     args.func(args)
