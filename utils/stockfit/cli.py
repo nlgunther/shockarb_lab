@@ -130,10 +130,21 @@ def _resolve_rvol(args) -> bool:
 
 
 def _check_cwd() -> None:
-    """Exit with a clear error if not run from the utils/ directory."""
-    if not Path("../data").is_dir():
+    """Exit with a clear error unless run from either the utils/ directory
+    (interactive use: ../data resolves to <project_root>/data) or the
+    project root itself (automated use via `shockarb_workflows.bat`, which
+    runs `python -m stockfit ...` from <project_root> with utils/ added to
+    PYTHONPATH, and passes --scores/--reports-dir as paths relative to
+    <project_root>, e.g. data\\live_alpha_iran.csv). Both are valid; only
+    reject a cwd where neither location makes sense.
+    2026-08-30: widened from an interactive-only check that rejected every
+    automated run from shockarb_workflows.bat, even though those runs were
+    otherwise working correctly.
+    """
+    if not Path("../data").is_dir() and not Path("data").is_dir():
         print(
-            "\n❌  This command must be run from the utils/ directory.\n"
+            "\n❌  This command must be run from the utils/ directory, or "
+            "from the project root (with utils/ on PYTHONPATH).\n"
             "\n"
             "    Correct usage:\n"
             "        cd <project_root>/utils\n"

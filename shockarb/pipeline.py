@@ -586,19 +586,10 @@ def score_universe(
     """
     Score a universe using a single shared coordinator instance.
 
-    Three modes, selected by flags and market state:
-
-      Path A — Market closed (daily), or forced via force_daily:
-        Two daily DataRequests (ETF + stock), one coordinator, one fulfill().
-        Returns are computed from adj_close price series via pct_change().
-
-      Path B — Market open (intraday), default:
-        Returns = latest_15m_close / yesterday's_daily_close - 1.
-        Captures the overnight gap plus today's move.
-
-      Path B with from_open:
-        Returns = latest_15m_close / today's_first_15m_open - 1.
-        Pure intraday move since the bell, stripping the overnight gap.
+    Thin dispatcher: resolves tickers, opens one coordinator and a base
+    ScoreProvenance, then delegates to _score_intraday() or _score_daily()
+    depending on market state and force_daily. See those functions for the
+    exact formula used by each path.
 
     Parameters
     ----------
@@ -607,10 +598,10 @@ def score_universe(
         Already-loaded model. Must be fitted.
     exec_config : ExecutionConfig, optional
     force_daily : bool
-        Force Path A regardless of market state.  CLI: --use-prior-close / -p.
+        Force the daily path regardless of market state. CLI: --use-prior-close / -p.
     from_open : bool
-        Use today's session open as denominator instead of yesterday's close.
-        CLI: --from-open / -o.  Ignored when market is closed.
+        Intraday path only: use today's session open as denominator instead
+        of yesterday's close. CLI: --from-open / -o. Ignored on the daily path.
 
     Returns
     -------
@@ -620,9 +611,13 @@ def score_universe(
     ------
     ValueError
         If the coordinator returns empty data for either leg.
-    """
-    from datetime import date, timedelta
 
+    Example
+    -------
+        model = pipeline.load_model(path)
+        scores, prov = pipeline.score_universe(universe, model)
+        print(prov.summary())
+    """
     exec_cfg = _exec(exec_config)
 
     # Ticker source: prefer live columns from the model (available right after
@@ -647,23 +642,7 @@ def score_universe(
         n_stocks = len(stock_tickers),
     )
 
-    # Early-session warning: within 30 minutes of the open, intraday bars
-    # are thin (1-2 bars).  Suggest --use-prior-close if not already set.
-    if not force_daily and _market_is_open():
-        now_et = _now_et()
-        minutes_since_open = (
-            (now_et.hour - 9) * 60 + (now_et.minute - 30)
-        )
-        if 0 <= minutes_since_open < 30:
-            logger.warning(
-                f"⚠️  Only {minutes_since_open} minutes since market open — "
-                f"intraday data is thin ({minutes_since_open // 15 + 1} bar(s)). "
-                f"Consider using --use-prior-close / -p for yesterday's "
-                f"full-day returns."
-            )
-
     use_intraday = _market_is_open() and not force_daily
-
     if force_daily and _market_is_open():
         logger.info(
             f"{_market_status_phrase()} but --use-prior-close is set — "
@@ -671,122 +650,203 @@ def score_universe(
         )
 
     if use_intraday:
-        # -----------------------------------------------------------------
-        # Path B — intraday: single request, all tickers combined, no cache
-        # -----------------------------------------------------------------
-        today = date.today().strftime("%Y-%m-%d")
-        all_tickers = etf_tickers + stock_tickers
+        return _score_intraday(
+            universe, model, coordinator, prov, etf_tickers, stock_tickers, from_open,
+        )
+    return _score_daily(
+        universe, model, coordinator, prov, etf_tickers, stock_tickers, force_daily,
+    )
 
-        if from_open:
-            logger.info(f"{_market_status_phrase()} — using intraday path (--from-open: today's open as denominator).")
-            prov.path = "intraday (from open)"
-        else:
-            logger.info(f"{_market_status_phrase()} — using intraday coordinator path.")
-            prov.path = "intraday"
-        prov.interval     = "15m"
-        prov.fetch_period = "1d"
 
-        # Daily cache is needed for the default mode (prev close denominator).
-        # Skip it when --from-open since the denominator comes from the 15m bars.
-        if not from_open:
-            # Request through YESTERDAY — not today.
-            # TODO Step 2c: run-log check + backfill if nightly run was missed.
-            yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
-            start_daily = (date.today() - timedelta(days=7)).strftime("%Y-%m-%d")
-            coordinator.register(DataRequest(
-                tickers   = tuple(all_tickers),
-                start     = start_daily,
-                end       = yesterday,
-                frequency = Frequency.DAILY,
-                retention = "permanent",
-                requester = f"{universe.name}.prev_close",
-            ))
+def _score_intraday(
+    universe: UniverseConfig,
+    model: "FactorModel",
+    coordinator: DataCoordinator,
+    prov: ScoreProvenance,
+    etf_tickers: List[str],
+    stock_tickers: List[str],
+    from_open: bool,
+) -> Tuple["pd.DataFrame", ScoreProvenance]:
+    """
+    Path B — intraday scoring (market open, force_daily=False).
 
-        # Intraday fetch — all tickers in one DataRequest, cache=False.
+    Default: returns = latest_15m_close / yesterday's_daily_close - 1,
+    capturing the overnight gap plus today's move.
+
+    from_open=True: returns = latest_15m_close / today's_first_15m_open - 1,
+    the pure intraday move since the bell, stripping the overnight gap.
+
+    Single intraday DataRequest for all tickers combined (cache=False); a
+    second daily DataRequest supplies yesterday's close unless from_open is
+    set, in which case the denominator comes from the first 15m bar itself.
+
+    Raises
+    ------
+    ValueError
+        If the coordinator returns empty intraday or prev-close data, or if
+        the resulting ETF/stock return slices are empty.
+
+    Example
+    -------
+        # called via score_universe() when the market is open:
+        scores, prov = pipeline.score_universe(universe, model, from_open=True)
+        print(prov.return_formula)
+    """
+    from datetime import date, timedelta
+
+    # Early-session warning: within 30 minutes of the open, intraday bars
+    # are thin (1-2 bars). Suggest --use-prior-close if not already set.
+    now_et = _now_et()
+    minutes_since_open = (now_et.hour - 9) * 60 + (now_et.minute - 30)
+    if 0 <= minutes_since_open < 30:
+        logger.warning(
+            f"⚠️  Only {minutes_since_open} minutes since market open — "
+            f"intraday data is thin ({minutes_since_open // 15 + 1} bar(s)). "
+            f"Consider using --use-prior-close / -p for yesterday's "
+            f"full-day returns."
+        )
+
+    today = date.today().strftime("%Y-%m-%d")
+    all_tickers = etf_tickers + stock_tickers
+
+    if from_open:
+        logger.info(f"{_market_status_phrase()} — using intraday path (--from-open: today's open as denominator).")
+        prov.path = "intraday (from open)"
+    else:
+        logger.info(f"{_market_status_phrase()} — using intraday coordinator path.")
+        prov.path = "intraday"
+    prov.interval     = "15m"
+    prov.fetch_period = "1d"
+
+    # Daily cache is needed for the default mode (prev close denominator).
+    # Skip it when --from-open since the denominator comes from the 15m bars.
+    if not from_open:
+        # Request through YESTERDAY — not today.
+        # TODO Step 2c: run-log check + backfill if nightly run was missed.
+        yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+        start_daily = (date.today() - timedelta(days=7)).strftime("%Y-%m-%d")
         coordinator.register(DataRequest(
-            tickers    = tuple(all_tickers),
-            start      = today,
-            end        = today,
-            frequency  = Frequency.INTRADAY_15M,
-            retention  = "ephemeral",
-            requester  = f"{universe.name}.intraday",
-            trade_date = today,
-            cache      = False,
+            tickers   = tuple(all_tickers),
+            start     = start_daily,
+            end       = yesterday,
+            frequency = Frequency.DAILY,
+            retention = "permanent",
+            requester = f"{universe.name}.prev_close",
         ))
 
-        results = coordinator.fulfill()
+    # Intraday fetch — all tickers in one DataRequest, cache=False.
+    coordinator.register(DataRequest(
+        tickers    = tuple(all_tickers),
+        start      = today,
+        end        = today,
+        frequency  = Frequency.INTRADAY_15M,
+        retention  = "ephemeral",
+        requester  = f"{universe.name}.intraday",
+        trade_date = today,
+        cache      = False,
+    ))
 
-        # Intraday bars (needed for both modes)
-        intraday_raw = results.get(f"{universe.name}.intraday", pd.DataFrame())
-        if intraday_raw is None or intraday_raw.empty:
-            raise ValueError(
-                f"score_universe({universe.name!r}): coordinator returned no intraday data."
-            )
+    results = coordinator.fulfill()
 
-        if from_open:
-            # --from-open: denominator = today's session open (first 15m bar)
-            denominator, open_bar_ts = _open_prices_from_frame(intraday_raw)
-            denom_label = "open"
-            denom_timestamp = open_bar_ts + " (first 15m bar open)"
-        else:
-            # Default: denominator = yesterday's daily close
-            prev_prices = results.get(f"{universe.name}.prev_close", pd.DataFrame())
-            if prev_prices is None or prev_prices.empty:
-                raise ValueError(
-                    f"score_universe({universe.name!r}): no daily data for prev close."
-                )
-            yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
-            yesterday_ts = pd.Timestamp(yesterday)
-            prev_prices = prev_prices[prev_prices.index <= yesterday_ts]
-            if prev_prices.empty:
-                raise ValueError(
-                    f"score_universe({universe.name!r}): no daily data on or before "
-                    f"{yesterday} for prev close."
-                )
-            denominator = prev_prices.ffill().iloc[-1]
-            prev_close_date = str(prev_prices.index[-1].date())
-            denom_label = "adj_close"
-            denom_timestamp = prev_close_date + " (daily cache, last row)"
-
-        # Compute returns: latest_15m_close / denominator - 1
-        all_returns, field_used, latest_bar_ts, latest_values, n_bars = \
-            _intraday_returns_from_frame(intraday_raw, denominator)
-
-        # Populate provenance
-        now_et = _now_et()
-        prov.timestamp_utc        = datetime.utcnow().isoformat() + "Z"
-        prov.timestamp_et         = now_et.isoformat()
-        prov.numerator_field      = field_used
-        prov.numerator_timestamp  = latest_bar_ts
-        prov.denominator_field    = denom_label
-        prov.denominator_timestamp = denom_timestamp
-        prov.n_intraday_bars      = n_bars
-        prov.return_formula       = (
-            f"{field_used} @ {latest_bar_ts} / "
-            f"{denom_label} @ {denom_timestamp} - 1"
-        )
-        prov.sample_tickers = _sample_tickers(
-            latest_values, denominator, all_returns,
+    # Intraday bars (needed for both modes)
+    intraday_raw = results.get(f"{universe.name}.intraday", pd.DataFrame())
+    if intraday_raw is None or intraday_raw.empty:
+        raise ValueError(
+            f"score_universe({universe.name!r}): coordinator returned no intraday data."
         )
 
-        etf_returns   = all_returns.reindex(etf_tickers).dropna()
-        stock_returns = all_returns.reindex(stock_tickers).dropna()
-
-        if etf_returns.empty:
+    if from_open:
+        # --from-open: denominator = today's session open (first 15m bar)
+        denominator, open_bar_ts = _open_prices_from_frame(intraday_raw)
+        denom_label = "open"
+        denom_timestamp = open_bar_ts + " (first 15m bar open)"
+    else:
+        # Default: denominator = yesterday's daily close
+        prev_prices = results.get(f"{universe.name}.prev_close", pd.DataFrame())
+        if prev_prices is None or prev_prices.empty:
             raise ValueError(
-                f"score_universe({universe.name!r}): no intraday returns for ETFs."
+                f"score_universe({universe.name!r}): no daily data for prev close."
             )
-        if stock_returns.empty:
+        yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+        yesterday_ts = pd.Timestamp(yesterday)
+        prev_prices = prev_prices[prev_prices.index <= yesterday_ts]
+        if prev_prices.empty:
             raise ValueError(
-                f"score_universe({universe.name!r}): no intraday returns for stocks."
+                f"score_universe({universe.name!r}): no daily data on or before "
+                f"{yesterday} for prev close."
             )
+        denominator = prev_prices.ffill().iloc[-1]
+        prev_close_date = str(prev_prices.index[-1].date())
+        denom_label = "adj_close"
+        denom_timestamp = prev_close_date + " (daily cache, last row)"
 
-        scores = model.score(etf_returns, stock_returns)
-        return scores, prov
+    # Compute returns: latest_15m_close / denominator - 1
+    all_returns, field_used, latest_bar_ts, latest_values, n_bars = \
+        _intraday_returns_from_frame(intraday_raw, denominator)
 
-    # -----------------------------------------------------------------
-    # Path A — daily (after close): single coordinator, single fulfill()
-    # -----------------------------------------------------------------
+    # Populate provenance
+    now_et = _now_et()
+    prov.timestamp_utc        = datetime.utcnow().isoformat() + "Z"
+    prov.timestamp_et         = now_et.isoformat()
+    prov.numerator_field      = field_used
+    prov.numerator_timestamp  = latest_bar_ts
+    prov.denominator_field    = denom_label
+    prov.denominator_timestamp = denom_timestamp
+    prov.n_intraday_bars      = n_bars
+    prov.return_formula       = (
+        f"{field_used} @ {latest_bar_ts} / "
+        f"{denom_label} @ {denom_timestamp} - 1"
+    )
+    prov.sample_tickers = _sample_tickers(
+        latest_values, denominator, all_returns,
+    )
+
+    etf_returns   = all_returns.reindex(etf_tickers).dropna()
+    stock_returns = all_returns.reindex(stock_tickers).dropna()
+
+    if etf_returns.empty:
+        raise ValueError(
+            f"score_universe({universe.name!r}): no intraday returns for ETFs."
+        )
+    if stock_returns.empty:
+        raise ValueError(
+            f"score_universe({universe.name!r}): no intraday returns for stocks."
+        )
+
+    scores = model.score(etf_returns, stock_returns)
+    return scores, prov
+
+
+def _score_daily(
+    universe: UniverseConfig,
+    model: "FactorModel",
+    coordinator: DataCoordinator,
+    prov: ScoreProvenance,
+    etf_tickers: List[str],
+    stock_tickers: List[str],
+    force_daily: bool,
+) -> Tuple["pd.DataFrame", ScoreProvenance]:
+    """
+    Path A — daily close-to-close scoring (market closed, or force_daily=True).
+
+    Two daily DataRequests (ETF + stock), one coordinator, one fulfill().
+    Returns are computed from adj_close price series via pct_change(), after
+    aligning both legs to their common date index.
+
+    Raises
+    ------
+    ValueError
+        If the coordinator returns empty ETF/stock data, or if the aligned
+        price histories share fewer than 2 common dates.
+
+    Example
+    -------
+        # called via score_universe() after market close, or with force_daily=True:
+        scores, prov = pipeline.score_universe(universe, model, force_daily=True)
+        print(prov.return_formula)
+    """
+    from datetime import date, timedelta
+
     prov.path         = "daily (forced via --use-prior-close)" if force_daily else "daily"
     prov.interval     = "1d"
     prov.fetch_period = "5d"
@@ -1518,70 +1578,12 @@ def _synthetic_prices(tickers: List[str], start: str, end: str) -> pd.DataFrame:
     market = rng.normal(0, 0.010, T)
 
     prices = {}
+    prices = {}
     for t in tickers:
         beta = -0.3 if t in _SAFE_HAVENS else 0.7
-        rets = beta * market + rng.normal(_CRISIS_DRIFT.get(t, -0.0014), 0.012, T)
+        drift = _CRISIS_DRIFT.get(t, -0.0014)
+        noise = rng.normal(0, 0.004, T)
+        rets = drift + beta * market + noise
         prices[t] = 100 * np.cumprod(1 + rets)
 
     return pd.DataFrame(prices, index=dates)
-
-
-def fetch_live_prices(
-    tickers: List[str],
-    period: str = "5d",
-    save_path: Optional[str] = None,
-) -> pd.DataFrame:
-    """
-    Fetch recent OHLCV prices and optionally save them as parquet.
-
-    Returns the raw multi-level OHLCV DataFrame from yfinance — one row per
-    trading day, columns are a MultiIndex of (field, ticker).  This is the
-    data *before* pct_change, suitable for auditing, replaying, or feeding
-    back into prices_to_returns().
-
-    Parameters
-    ----------
-    tickers : list of str
-    period : str
-        yfinance period string.  Default "5d" (enough to compute one return).
-    save_path : str, optional
-        If provided, the OHLCV DataFrame is written to this path as parquet
-        before being returned.  The directory is created if it does not exist.
-        File naming convention used by the CLI:
-          {data_dir}/prices_{name}_{YYYYMMDD_HHMMSS}.parquet
-
-    Returns
-    -------
-    DataFrame
-        Raw OHLCV MultiIndex DataFrame (dates × (field, ticker)).
-
-    Raises
-    ------
-    ValueError
-        If yfinance returns no data.
-
-    Example
-    -------
-        ohlcv = fetch_live_prices(["VOO", "TLT"], save_path="data/prices_etf.parquet")
-        prices = CacheManager.extract_adj_close(ohlcv)   # or mgr.extract_adj_close()
-        returns = prices_to_returns(prices)
-    """
-    logger.info(f"Fetching live OHLCV for {len(tickers)} tickers (period={period})…")
-    raw = yf.download(tickers, period=period, progress=False, auto_adjust=False)
-
-    if raw.empty:
-        raise ValueError("yfinance returned no data for fetch_live_prices")
-
-    # Normalise to MultiIndex even for a single ticker
-    if not isinstance(raw.columns, pd.MultiIndex):
-        raw.columns = pd.MultiIndex.from_tuples(
-            [("Close", raw.columns[0])] if len(tickers) == 1
-            else [("Close", t) for t in raw.columns]
-        )
-
-    if save_path:
-        os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
-        raw.to_parquet(save_path)
-        logger.info(f"Prices saved → {os.path.basename(save_path)}")
-
-    return raw

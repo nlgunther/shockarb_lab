@@ -106,31 +106,76 @@ goto :end
 REM ── DUAL_EOD (both regimes scored + compared) ────────────────
 :dual_eod
 echo [DUAL EOD] Starting dual-regime end-of-day workflow...
+set /a DUAL_EOD_FAILURES=0
+set DUAL_EOD_VERDICTS_OK=1
+
 echo Step 1/7: Ukraine shock score
 python -m shockarb score --regime ukraine_shock --out data\live_alpha_us.csv
+if errorlevel 1 (echo [DUAL EOD] Step 1/7 FAILED - see traceback above & set /a DUAL_EOD_FAILURES+=1)
+
 echo Step 2/7: Iran shock score
 python -m shockarb score --regime iran_shock --out data\live_alpha_iran.csv
+if errorlevel 1 (echo [DUAL EOD] Step 2/7 FAILED - see traceback above & set /a DUAL_EOD_FAILURES+=1)
+
 echo Step 3/7: News + fundamentals
 python utils\news_scanner.py
+if errorlevel 1 (echo [DUAL EOD] Step 3/7 FAILED - see traceback above & set /a DUAL_EOD_FAILURES+=1)
+
 echo Step 4/7: Market snapshot
 python utils\market_data.py
+if errorlevel 1 (echo [DUAL EOD] Step 4/7 FAILED - see traceback above & set /a DUAL_EOD_FAILURES+=1)
+
 echo Step 5/7: MarketFit report (timestamped)
 python -m marketfit report --timestamp
+if errorlevel 1 (echo [DUAL EOD] Step 5/7 FAILED - see traceback above & set /a DUAL_EOD_FAILURES+=1)
+
 echo Step 6/7: Ukraine stock report (timestamped + verdicts)
 python -m stockfit report --timestamp --save-verdicts%EXTRA_ARGS%
+if errorlevel 1 (echo [DUAL EOD] Step 6/7 FAILED - see traceback above & set /a DUAL_EOD_FAILURES+=1 & set DUAL_EOD_VERDICTS_OK=0)
+
 echo Step 7/7: Iran stock report (timestamped + verdicts)
 python -m stockfit report --scores data\live_alpha_iran.csv --timestamp --save-verdicts --reports-dir reports\iran_shock%EXTRA_ARGS%
+if errorlevel 1 (echo [DUAL EOD] Step 7/7 FAILED - see traceback above & set /a DUAL_EOD_FAILURES+=1 & set DUAL_EOD_VERDICTS_OK=0)
+
+if %DUAL_EOD_FAILURES% GTR 0 (
+    echo [DUAL EOD] %DUAL_EOD_FAILURES% of 7 steps FAILED. Reports are missing or incomplete — see errors above.
+    if "%DUAL_EOD_VERDICTS_OK%"=="0" (
+        echo [DUAL EOD] Skipping compare — one or both verdicts CSVs were not written this run.
+        exit /b 1
+    )
+)
+
 echo [DUAL EOD] Reports written. Running compare...
 call %~f0 compare_latest
+if errorlevel 1 (
+    echo [DUAL EOD] compare_latest failed.
+    exit /b 1
+)
+if %DUAL_EOD_FAILURES% GTR 0 exit /b 1
 goto :end
 
 REM ── COMPARE_LATEST (auto-discover two newest verdicts CSVs) ──
+REM 2026-08-30 (1st fix): was `dir /b` (non-recursive), which only ever sees
+REM verdicts CSVs written directly into reports\ -- never the ones dual_eod's
+REM own iran-regime step writes into reports\iran_shock\ (or eod5's
+REM reports\global\), so "compare" reported "only one verdicts CSV found"
+REM on every single dual_eod run.
+REM
+REM 2026-08-30 (2nd fix, same day): switching to `dir /s` fixed that error,
+REM but `dir /s /o-d` does NOT produce one globally date-sorted list across
+REM subfolders -- it sorts each directory's matches separately, then lists
+REM directory blocks in traversal order. Since reports\ (containing the
+REM Ukraine-regime CSVs) is traversed before reports\iran_shock\, F1/F2 kept
+REM landing on the two most recent *Ukraine* runs instead of Ukraine vs.
+REM Iran from the same run -- which defeats the point of "BOTH regimes
+REM scored + compared". Replaced with a PowerShell one-liner, which sorts
+REM correctly across the whole recursive result set in a single pass.
 :compare_latest
 echo [Compare] Finding two most recent verdicts CSVs...
 set "F1="
 set "F2="
-for /f "delims=" %%A in ('dir /b /o-d reports\stock_report_*_verdicts.csv 2^>nul') do (
-    if not defined F1 (set "F1=reports\%%A") else if not defined F2 (set "F2=reports\%%A")
+for /f "delims=" %%A in ('powershell -NoProfile -Command "Get-ChildItem -Path reports -Filter stock_report_*_verdicts.csv -Recurse ^| Sort-Object LastWriteTime -Descending ^| Select-Object -First 2 -ExpandProperty FullName" 2^>nul') do (
+    if not defined F1 (set "F1=%%A") else if not defined F2 (set "F2=%%A")
 )
 if not defined F1 (echo No verdicts CSVs found in reports\. Run with --save-verdicts first. && goto :end)
 if not defined F2 (echo Only one verdicts CSV found — need two to compare. && goto :end)

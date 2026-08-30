@@ -96,6 +96,19 @@ def _load_picks(path: str):
         df.columns = [c.strip() for c in df.columns]
         if "ticker" in df.columns and "Ticker" not in df.columns:
             df.rename(columns={"ticker": "Ticker"}, inplace=True)
+        # 2026-08-30: shockarb's own writer saves live_alpha_us.csv with the
+        # ticker as an unlabeled index column (blank header before the first
+        # comma) rather than a "Ticker"/"ticker" column -- pandas reads that
+        # as "Unnamed: 0". stockfit/features.py._load_scores already handles
+        # this (raw.get("Ticker") or raw.get("ticker") or raw.get("")), which
+        # is why stockfit's reports show tickers correctly; this loader was
+        # missing the same fallback, so "Ticker" never existed here and the
+        # Fundamental Cross-Check section's picks_df.merge(..., left_on=
+        # "Ticker", ...) always raised KeyError -- silently, since the merge
+        # is wrapped in a bare `except Exception: pass` in report.py, so the
+        # section printed its header and nothing else, with no error shown.
+        if "Ticker" not in df.columns and "Unnamed: 0" in df.columns:
+            df.rename(columns={"Unnamed: 0": "Ticker"}, inplace=True)
         return df
     except Exception as exc:
         logger.warning(f"Could not load picks from {path}: {exc}")
