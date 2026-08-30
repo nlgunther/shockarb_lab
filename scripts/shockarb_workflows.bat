@@ -155,12 +155,27 @@ if %DUAL_EOD_FAILURES% GTR 0 exit /b 1
 goto :end
 
 REM ── COMPARE_LATEST (auto-discover two newest verdicts CSVs) ──
+REM 2026-08-30 (1st fix): was `dir /b` (non-recursive), which only ever sees
+REM verdicts CSVs written directly into reports\ -- never the ones dual_eod's
+REM own iran-regime step writes into reports\iran_shock\ (or eod5's
+REM reports\global\), so "compare" reported "only one verdicts CSV found"
+REM on every single dual_eod run.
+REM
+REM 2026-08-30 (2nd fix, same day): switching to `dir /s` fixed that error,
+REM but `dir /s /o-d` does NOT produce one globally date-sorted list across
+REM subfolders -- it sorts each directory's matches separately, then lists
+REM directory blocks in traversal order. Since reports\ (containing the
+REM Ukraine-regime CSVs) is traversed before reports\iran_shock\, F1/F2 kept
+REM landing on the two most recent *Ukraine* runs instead of Ukraine vs.
+REM Iran from the same run -- which defeats the point of "BOTH regimes
+REM scored + compared". Replaced with a PowerShell one-liner, which sorts
+REM correctly across the whole recursive result set in a single pass.
 :compare_latest
 echo [Compare] Finding two most recent verdicts CSVs...
 set "F1="
 set "F2="
-for /f "delims=" %%A in ('dir /b /o-d reports\stock_report_*_verdicts.csv 2^>nul') do (
-    if not defined F1 (set "F1=reports\%%A") else if not defined F2 (set "F2=reports\%%A")
+for /f "delims=" %%A in ('powershell -NoProfile -Command "Get-ChildItem -Path reports -Filter stock_report_*_verdicts.csv -Recurse ^| Sort-Object LastWriteTime -Descending ^| Select-Object -First 2 -ExpandProperty FullName" 2^>nul') do (
+    if not defined F1 (set "F1=%%A") else if not defined F2 (set "F2=%%A")
 )
 if not defined F1 (echo No verdicts CSVs found in reports\. Run with --save-verdicts first. && goto :end)
 if not defined F2 (echo Only one verdicts CSV found — need two to compare. && goto :end)
